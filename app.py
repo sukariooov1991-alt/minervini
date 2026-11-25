@@ -53,6 +53,18 @@ class ScanController:
             "reasons": [],
         }
         self._cards: dict[str, dict[str, Any]] = {}
+        try:
+            # Restore cards before Flask can serve the first /api/state or SSE snapshot.
+            self._cards = {
+                str(card["symbol"]).upper(): card
+                for card in self.storage.load_watchlist_cards()
+                if card.get("symbol")
+            }
+            if self._cards:
+                log.info("Restored %s watchlist cards from SQLite", len(self._cards))
+        except Exception:
+            log.exception("Failed to restore persisted watchlist cards")
+            self._cards = {}
         self._live_prices: dict[str, float] = {}
         self._realtime_locks: dict[str, threading.Lock] = {}
         self._ws_connected: bool = False
@@ -224,6 +236,7 @@ class ScanController:
                             item["passed"] = market_favorable
                             item["pending"] = not setup_passed
                     card["smart_reading"] = self._build_smart_reading_from_card(card)
+                    self.storage.save_watchlist_card(card)
                     if not was_entry_ready and card["entry_ready"]:
                         alert_card = dict(card)
                     self._notify_state_changed_locked()
@@ -250,6 +263,10 @@ class ScanController:
                         if range_note and range_note not in card.get("notes", []):
                             card["notes"] = [range_note] + list(card.get("notes") or [])
                         card["smart_reading"] = self._build_smart_reading_from_card(card)
+                        try:
+                            self.storage.save_watchlist_card(card)
+                        except Exception:
+                            log.exception("Failed to persist realtime fallback card for %s", sym)
                     self._notify_state_changed_locked()
 
     def _build_smart_reading_from_card(self, card: dict[str, Any]) -> str:
@@ -436,7 +453,13 @@ class ScanController:
                         log.exception("Candidate card construction failed for %s", row.get("symbol"))
                 if not qualified: return
                 with self._state_cv:
-                    for card in qualified: self._cards[card["symbol"]] = card
+                    for card in qualified:
+                        symbol = str(card["symbol"]).upper()
+                        self._cards[symbol] = card
+                        try:
+                            self.storage.save_watchlist_card(card)
+                        except Exception:
+                            log.exception("Failed to persist watchlist card for %s", symbol)
                     self._notify_state_changed_locked()
                 for card in qualified:
                     if not card.get("entry_ready"):
@@ -474,6 +497,10 @@ class ScanController:
                     for stale_symbol in removed:
                         self._cards.pop(stale_symbol, None)
                         self._live_prices.pop(stale_symbol, None)
+                        try:
+                            self.storage.delete_watchlist_card(stale_symbol)
+                        except Exception:
+                            log.exception("Failed to delete stale persisted card for %s", stale_symbol)
                 self._notify_state_changed_locked()
             download_errors = sum(1 for failure in failures if failure.get("phase") == "download")
             analysis_errors = sum(1 for failure in failures if failure.get("phase") == "analysis")
@@ -537,6 +564,10 @@ class ScanController:
         clean = symbol.upper().strip()
         with self._state_cv:
             self._cards.pop(clean, None)
+            try:
+                self.storage.delete_watchlist_card(clean)
+            except Exception:
+                log.exception("Failed to delete persisted watchlist card for %s", clean)
             self._notify_state_changed_locked()
         if self.lb_client.has_credentials():
             try:
