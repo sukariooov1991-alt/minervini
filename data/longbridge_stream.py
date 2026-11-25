@@ -61,10 +61,12 @@ class LongbridgeRealtimeClient:
                 "Longbridge SDK is not installed (pip install longbridge)."
             ) from exc
 
-        config = Config(
-            app_key=self.app_key,
-            app_secret=self.app_secret,
-            access_token=self.access_token,
+        # Config is a Rust-backed SDK type and is not directly constructible.
+        # Use the supported factory for legacy App Key credentials.
+        config = Config.from_apikey(
+            self.app_key,
+            self.app_secret,
+            self.access_token,
         )
         ctx = QuoteContext(config)
 
