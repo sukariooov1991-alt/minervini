@@ -287,7 +287,14 @@ class ScanController:
             with self._state_cv:
                 self._market_status = market_status
                 self._notify_state_changed_locked()
-            log.info("Scan finished: %s analyzed, %s data errors", 0 if result_df is None else len(result_df), len(failures))
+            download_errors = sum(1 for failure in failures if failure.get("phase") == "download")
+            analysis_errors = sum(1 for failure in failures if failure.get("phase") == "analysis")
+            log.info(
+                "Scan finished: %s stocks passed Trend Template, %s download errors, %s analysis errors",
+                0 if result_df is None else len(result_df),
+                download_errors,
+                analysis_errors,
+            )
         except Exception as exc:
             log.exception("Scan cycle failed")
             with self._state_cv:
