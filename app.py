@@ -172,17 +172,13 @@ class ScanController:
         ad_acc = bool(row.get("accumulation", False))
         earn_passed = bool(row.get("earnings_passed", False))
 
-        all_passed = bool(
-            tt_passed
-            and vcp_passed
-            and br
-            and pullback_passed
-            and ad_acc
-            and earn_passed
-            and market_favorable
-        )
-        if not all_passed:
+        watchlist_eligible = bool(tt_passed and ad_acc and earn_passed)
+        if not watchlist_eligible:
             return None
+
+        # VCP and Pullback are alternative setup paths, not cumulative gates.
+        setup_passed = bool(vcp_passed or pullback_passed)
+        entry_ready = bool(setup_passed and market_favorable)
 
         with self._lock:
             live_p = self._live_prices.get(sym)
@@ -197,13 +193,35 @@ class ScanController:
 
         pivot_price = row.get("pivot_price")
         final_low = row.get("final_low")
-        plan = build_trade_levels(
-            symbol=sym,
-            current_price=current_price,
-            pivot_price=pivot_price,
-            candles_df=df,
-            final_low=final_low,
-        ).to_dict()
+        plan = (
+            build_trade_levels(
+                symbol=sym,
+                current_price=current_price,
+                pivot_price=pivot_price,
+                candles_df=df,
+                final_low=final_low,
+            ).to_dict()
+            if setup_passed else {
+                "pivot_price": pivot_price,
+                "final_low": final_low,
+                "entry_zones": [],
+                "targets": [],
+                "shared_stop_loss": None,
+                "status": "بانتظار نموذج الدخول",
+                "within_entry_range": None,
+                "notes": ["السهم مؤهل؛ المراقبة مستمرة حتى تحقق VCP أو Pullback."],
+            }
+        )
+
+        if not setup_passed:
+            card_status = "انتظار — مراقبة VCP أو Pullback"
+            card_stage = "المرحلة 1: سهم مؤهل للمراقبة"
+        elif not market_favorable:
+            card_status = "النموذج تحقق — السوق غير مناسب"
+            card_stage = "المرحلة 3: تقييم حالة السوق"
+        else:
+            card_status = "إشارة مكتملة — النموذج والسوق مؤهلان"
+            card_stage = "المرحلة 4: إشارة جاهزة للتقييم"
 
         card = {
             "symbol": sym,
@@ -213,8 +231,8 @@ class ScanController:
             "final_low": plan["final_low"],
             "rs_rating": rs_val,
             "market_regime": row.get("market_regime", "UNKNOWN"),
-            "status": "مؤهل — اجتاز جميع الفلاتر",
-            "stage": "المرحلة 2 (Stage 2 Uptrend)",
+            "status": card_status,
+            "stage": card_stage,
             "entry_zones": plan["entry_zones"],
             "targets": plan["targets"],
             "shared_stop_loss": plan["shared_stop_loss"],
@@ -222,7 +240,10 @@ class ScanController:
             "within_entry_range": plan["within_entry_range"],
             "notes": plan["notes"],
             "filters": self._build_filters_detail(row),
-            "passed_all_filters": True,
+            "watchlist_eligible": True,
+            "setup_passed": setup_passed,
+            "entry_ready": entry_ready,
+            "passed_all_filters": entry_ready,
             "shown_on_main_page": True,
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
@@ -250,9 +271,9 @@ class ScanController:
         with self._state_cv:
             self._running = True
             self._last_error = None
-            # Cards belong to one scan cycle; do not leave candidates from a
-            # previous run visible when they no longer pass the current filters.
-            self._cards.clear()
+            # Keep existing watchlist cards visible while the next scan runs.
+            # They are reconciled against the new eligible universe after a
+            # complete scan, so a temporary scan gap does not blank the UI.
             self._market_session_label = self._detect_market_session()
             self._notify_state_changed_locked()
         try:
@@ -260,7 +281,7 @@ class ScanController:
             def publish_batch(rows: list[dict[str, Any]], market_status: dict[str, Any]) -> None:
                 qualified = []
                 for row in rows:
-                    if not row.get("passed_all_filters"): continue
+                    if not row.get("watchlist_eligible"): continue
                     try:
                         card = self._evaluate_candidate(row, bool(market_status.get("market_favorable", False)))
                         if card: qualified.append(card)
@@ -271,6 +292,8 @@ class ScanController:
                     for card in qualified: self._cards[card["symbol"]] = card
                     self._notify_state_changed_locked()
                 for card in qualified:
+                    if not card.get("entry_ready"):
+                        continue
                     try: self.notifier.send_stock_appearance_alert(card)
                     except Exception: log.exception("Telegram alert failed for %s", card.get("symbol"))
                 if self.lb_client.has_credentials():
@@ -286,6 +309,16 @@ class ScanController:
             )
             with self._state_cv:
                 self._market_status = market_status
+                if not self._stop_event.is_set():
+                    eligible_symbols = (
+                        set(result_df.loc[result_df.get("watchlist_eligible", False) == True, "symbol"].astype(str))
+                        if result_df is not None and not result_df.empty and "watchlist_eligible" in result_df
+                        else set()
+                    )
+                    removed = set(self._cards) - eligible_symbols
+                    for stale_symbol in removed:
+                        self._cards.pop(stale_symbol, None)
+                        self._live_prices.pop(stale_symbol, None)
                 self._notify_state_changed_locked()
             download_errors = sum(1 for failure in failures if failure.get("phase") == "download")
             analysis_errors = sum(1 for failure in failures if failure.get("phase") == "analysis")
