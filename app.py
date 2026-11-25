@@ -52,6 +52,7 @@ class ScanController:
         self._live_prices: dict[str, float] = {}
         self._ws_connected: bool = False
         self._last_error: str | None = None
+        self._scan_errors: list[dict[str, str]] = []
         self._scan_progress: dict[str, Any] = {"phase": "idle", "completed": 0, "total": 0, "percent": 0, "current_symbol": ""}
 
     def _notify_state_changed_locked(self) -> None:
@@ -234,6 +235,13 @@ class ScanController:
                 **progress,
                 "percent": min(100, int(completed * 100 / total)) if total else 0,
             }
+            if progress.get("error"):
+                self._scan_errors.append({
+                    "symbol": str(progress.get("current_symbol") or "SYSTEM"),
+                    "phase": str(progress.get("phase") or "unknown"),
+                    "message": str(progress["error"]),
+                })
+                self._scan_errors = self._scan_errors[-50:]
             self._notify_state_changed_locked()
 
     def run_once(self, symbols: list[str] | None = None, update: bool = True) -> None:
@@ -298,7 +306,8 @@ class ScanController:
             self._stop_event.clear()
             self._running = True
             self._last_error = None
-            self._scan_progress = {"phase": "starting", "completed": 0, "total": len(symbols or SP500_SYMBOLS), "percent": 0, "current_symbol": ""}
+            self._scan_errors = []
+            self._scan_progress = {"phase": "starting", "completed": 0, "total": len(symbols or SP500_SYMBOLS) * 2, "percent": 0, "current_symbol": ""}
             self._notify_state_changed_locked()
             t = threading.Thread(
                 target=self.run_once,
@@ -339,6 +348,7 @@ class ScanController:
                 "market_status": self._market_status,
                 "last_error": self._last_error,
                 "scan_progress": self._scan_progress,
+                "scan_errors": list(self._scan_errors),
                 "cards": list(self._cards.values()),
             }
 
