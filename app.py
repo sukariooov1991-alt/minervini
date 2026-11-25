@@ -71,6 +71,13 @@ class ScanController:
         self._last_error: str | None = None
         self._scan_errors: list[dict[str, str]] = []
         self._scan_progress: dict[str, Any] = {"phase": "idle", "completed": 0, "total": 0, "percent": 0, "current_symbol": ""}
+        if self._cards and self.lb_client.has_credentials():
+            try:
+                self.lb_client.subscribe(list(self._cards))
+                self._ws_connected = True
+                log.info("Restored Longbridge subscriptions for %s watchlist cards", len(self._cards))
+            except Exception:
+                log.exception("Failed to restore Longbridge subscriptions for persisted cards")
 
     def _notify_state_changed_locked(self) -> None:
         self._state_version += 1
