@@ -130,10 +130,12 @@ class ScanController:
         else:
             range_note = "حالة نطاق الدخول غير محددة لعدم توفر نقطة ارتكاز."
 
-        if failed_filters:
-            filters_note = f"تنبيه: توجد فلاتر غير محققة ({', '.join(failed_filters)})."
+        if card.get("setup_passed") and card.get("entry_ready"):
+            filters_note = "اكتمل نموذج الدخول واجتازت حالة السوق شرط الملاءمة."
+        elif card.get("setup_passed"):
+            filters_note = "تحقق أحد نموذجي الدخول، لكن حالة السوق لا تسمح حاليًا."
         else:
-            filters_note = "جميع الفلاتر الفنية والأساسية وحالة السوق محققة."
+            filters_note = "السهم مؤهل للمراقبة؛ ننتظر تحقق VCP أو Pullback قبل تقييم السوق."
 
         return (
             f"السهم {sym} (السعر الحالي: {cur} عبر {src}) — {filters_note} "
@@ -154,7 +156,11 @@ class ScanController:
             {"name": "Pullback Check", "passed": bool(row.get("pullback_passed", False))},
             {"name": "Accumulation", "passed": bool(row.get("accumulation", False))},
             {"name": "Earnings Growth", "passed": bool(row.get("earnings_passed", False))},
-            {"name": "Market Regime Favorable", "passed": bool(row.get("market_favorable", False))},
+            {
+                "name": "Market Regime Favorable",
+                "passed": bool(row.get("market_favorable", False)),
+                "pending": not bool(row.get("vcp_passed", False) or row.get("pullback_passed", False)),
+            },
         ])
         return filters
 
