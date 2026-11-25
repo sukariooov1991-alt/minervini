@@ -352,7 +352,7 @@
         let quoteDate = null;
         if (rawQuoteTime !== null && rawQuoteTime !== undefined && rawQuoteTime !== '') {
           const rawTimeText = String(rawQuoteTime);
-          const timeValue = (typeof rawQuoteTime === 'number' || /^\\d+(\\.\\d+)?$/.test(rawTimeText))
+          const timeValue = (typeof rawQuoteTime === 'number' || /^\d+(\.\d+)?$/.test(rawTimeText))
             ? Number(rawQuoteTime) * 1000
             : rawQuoteTime;
           const parsedQuoteDate = new Date(timeValue);
