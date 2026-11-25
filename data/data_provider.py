@@ -221,7 +221,7 @@ class DataProvider:
             raise RuntimeError(f"Alpha Vantage: {message}")
         frame = pd.DataFrame.from_dict(payload[series_key], orient="index").rename(columns={
             "1. open": "open", "2. high": "high", "3. low": "low",
-            "4. close": "close", "6. volume": "volume",
+            "4. close": "close", "5. volume": "volume", "6. volume": "volume",
         })
         frame.index = pd.to_datetime(frame.index, errors="coerce")
         frame = frame[frame.index >= pd.Timestamp(_period_start(period))]
