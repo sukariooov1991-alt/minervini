@@ -137,6 +137,38 @@ class StorageManager:
             )
         return len(cleaned)
 
+    def replace_candles_bulk(
+        self,
+        symbol: str,
+        rows: Iterable[tuple[str, float, float, float, float, float]],
+    ) -> int:
+        """Atomically replace one symbol's history with a newly validated provider series."""
+        sym = symbol.upper().strip()
+        cleaned: list[tuple[str, str, float, float, float, float, float]] = []
+        for item in rows:
+            if len(item) != 6:
+                continue
+            dt_str, o, h, l, close_, volume = item
+            row = self._clean_candle_row(sym, dt_str, o, h, l, close_, volume)
+            if row is not None:
+                cleaned.append(row)
+
+        if not cleaned:
+            return 0
+
+        with self._get_conn() as conn:
+            conn.execute("DELETE FROM candles WHERE symbol=?", (sym,))
+            conn.executemany(
+                "INSERT OR REPLACE INTO candles VALUES (?,?,?,?,?,?,?)",
+                cleaned,
+            )
+            conn.execute(
+                """DELETE FROM candles WHERE symbol=? AND date NOT IN (
+                   SELECT date FROM candles WHERE symbol=? ORDER BY date DESC LIMIT ?)""",
+                (sym, sym, self.MAX_CANDLES),
+            )
+        return len(cleaned)
+
     def get_candles_df(self, symbol: str) -> pd.DataFrame:
         with self._get_conn() as conn:
             rows = conn.execute(
