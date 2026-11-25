@@ -82,7 +82,13 @@ class DataProvider:
     def get_fundamentals_dataframe(self) -> pd.DataFrame:
         """Return quarterly fundamentals; absent fields remain NaN, never fabricated."""
         q = self.ticker.quarterly_financials
-        info = self.ticker.info or {}
+        # ROE is supplementary metadata; Yahoo may deny the quoteSummary/info
+        # endpoint even when quarterly financial statements are available.
+        # Do not discard usable EPS/revenue data because this optional request fails.
+        try:
+            info = self.ticker.info or {}
+        except Exception:
+            info = {}
         if q is None or q.empty:
             return pd.DataFrame()
 
