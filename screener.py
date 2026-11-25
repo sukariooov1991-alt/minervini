@@ -114,6 +114,9 @@ class DailyScreener:
     ) -> tuple[pd.DataFrame, list[dict], dict]:
         failures: list[dict] = []
         rows: list[dict] = []
+        # Symbols are added only after their eligibility decision is complete.
+        # This is separate from result rows, which intentionally omit TT failures.
+        evaluated_symbols: set[str] = set()
         total = len(self.symbols)
         processed = 0
         analysis_processed = 0
@@ -250,16 +253,25 @@ class DailyScreener:
                         continue
                     df = frames.get(sym)
                     if df is None or len(df) < 252:
+                        available = 0 if df is None else len(df)
                         log.warning(
                             "Skipping %s during analysis: insufficient daily candles (%s; need 252)",
-                            sym, 0 if df is None else len(df),
+                            sym, available,
                         )
+                        failures.append({
+                            "symbol": sym,
+                            "error": f"Insufficient daily candles: {available}; 252 required",
+                            "phase": "analysis",
+                        })
                         continue
 
                     try:
                         rating = rs.get(sym, float("nan"))
                         tt = check_trend_template(df, rating)
                         if not tt["passed"]:
+                            # A valid completed TT failure is a definitive
+                            # ineligibility result and can safely reconcile a card.
+                            evaluated_symbols.add(sym)
                             continue
 
                         # Exclude the current candle from pattern construction;
@@ -274,6 +286,12 @@ class DailyScreener:
                         try:
                             fdf = self._get_provider(sym).get_fundamentals_dataframe()
                             latest = fdf.iloc[0].to_dict() if not fdf.empty else {}
+                            if fdf.empty:
+                                failures.append({
+                                    "symbol": sym,
+                                    "error": "Fundamental data unavailable; eligibility cannot be confirmed",
+                                    "phase": "analysis",
+                                })
                             earnings = check_earnings(
                                 latest.get("eps_current"),
                                 latest.get("eps_year_ago"),
@@ -348,6 +366,10 @@ class DailyScreener:
                             "screen_date": datetime.now(timezone.utc).date().isoformat(),
                         }
                         rows.append(row)
+                        # Missing fundamentals remain uncertain and therefore
+                        # are deliberately excluded from destructive reconciliation.
+                        if fundamental_status != "UNKNOWN":
+                            evaluated_symbols.add(sym)
                         if batch_callback:
                             try:
                                 batch_callback([row], market_status)
@@ -386,6 +408,8 @@ class DailyScreener:
                         "current_symbol": "",
                     })
 
+        # Keep reconciliation metadata out of the result table/JSON rows.
+        market_status = {**market_status, "evaluated_symbols": sorted(evaluated_symbols)}
         result = pd.DataFrame(rows)
         if not result.empty:
             result = result.sort_values(
