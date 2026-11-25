@@ -192,7 +192,8 @@ class ScanController:
             price_source = "Longbridge WebSocket"
         else:
             current_price = float(df["close"].iloc[-1])
-            price_source = "Yahoo Finance (Daily Close)"
+            historical_source = str(row.get("data_source") or "Stored daily data")
+            price_source = f"{historical_source} (Daily Close)"
 
         pivot_price = row.get("pivot_price")
         final_low = row.get("final_low")
