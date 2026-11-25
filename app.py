@@ -293,7 +293,6 @@ class ScanController:
                 setup_passed = bool(vcp_passed or pullback_passed)
                 with self._state_cv:
                     if quote.get("source") != "longbridge_quote_api":
-                        if quote.get("source") != "longbridge_quote_api":
                         self._ws_connected = True
                     self._live_prices[sym] = price
                     card = self._cards.get(sym)
@@ -385,7 +384,8 @@ class ScanController:
                 # a provider candle or calculation is malformed.
                 log.exception("Realtime setup recalculation failed for %s", sym)
                 with self._state_cv:
-                    self._ws_connected = True
+                    if quote.get("source") != "longbridge_quote_api":
+                        self._ws_connected = True
                     self._live_prices[sym] = price
                     card = self._cards.get(sym)
                     if card is not None:
