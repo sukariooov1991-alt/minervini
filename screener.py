@@ -322,10 +322,20 @@ class DailyScreener:
                             "earnings_passed": bool(earnings.get("passed", False)),
                             "market_favorable": market_favorable,
                             "market_regime": market_status.get("regime", "UNKNOWN"),
-                            "passed_all_filters": bool(
+                            "watchlist_eligible": bool(
+                                tt["passed"]
+                                and ad.get("accumulation", False)
+                                and earnings.get("passed", False)
+                            ),
+                            "setup_passed": bool(
                                 vcp.get("passed", False)
-                                and br
-                                and pb.get("passed", False)
+                                or pb.get("passed", False)
+                            ),
+                            "passed_all_filters": bool(
+                                (
+                                    vcp.get("passed", False)
+                                    or pb.get("passed", False)
+                                )
                                 and ad.get("accumulation", False)
                                 and earnings.get("passed", False)
                                 and market_favorable
