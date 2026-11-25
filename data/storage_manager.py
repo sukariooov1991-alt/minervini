@@ -91,7 +91,19 @@ class StorageManager:
                 completed = []
             return {str(s).upper().strip() for s in completed}
 
-    def mark_scan_symbol_completed(self, scan_name: str, symbol: str) -> None:
+    def has_scan_checkpoint(self, scan_name: str, symbols: list[str]) -> bool:
+        """Check whether an interrupted scan exists for this exact symbol universe."""
+        symbols_json = json.dumps(
+            [str(s).upper().strip() for s in symbols], separators=(",", ":")
+        )
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT symbols_json FROM scan_checkpoints WHERE scan_name=?",
+                (scan_name,),
+            ).fetchone()
+        return row is not None and row["symbols_json"] == symbols_json
+
+    def mark_scan_symbol_completed(self, scan_name: str, symbol: str) -> None
         """Persist one successful symbol immediately so process restarts do not lose progress."""
         with self._get_conn() as conn:
             row = conn.execute(
