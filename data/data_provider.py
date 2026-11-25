@@ -21,8 +21,6 @@ log = logging.getLogger(__name__)
 _YAHOO_REQUEST_LOCK = threading.Lock()
 _YAHOO_NEXT_REQUEST_AT = 0.0
 _YAHOO_MIN_REQUEST_INTERVAL = 1.25
-_LONGBRIDGE_LOCK = threading.Lock()
-_LONGBRIDGE_CONTEXT = None
 
 
 class YahooRateLimitError(RuntimeError):
@@ -82,23 +80,6 @@ def _normalise_ohlcv(df: pd.DataFrame | None) -> pd.DataFrame:
     frame = frame[(frame["high"] >= frame[["open", "low", "close"]].max(axis=1)) &
                   (frame["low"] <= frame[["open", "high", "close"]].min(axis=1))]
     return frame[~frame.index.duplicated(keep="last")].sort_index()
-
-
-def _get_longbridge_context():
-    global _LONGBRIDGE_CONTEXT
-    with _LONGBRIDGE_LOCK:
-        if _LONGBRIDGE_CONTEXT is not None:
-            return _LONGBRIDGE_CONTEXT
-        app_key = os.getenv("LONGBRIDGE_APP_KEY", "").strip()
-        app_secret = os.getenv("LONGBRIDGE_APP_SECRET", "").strip()
-        access_token = os.getenv("LONGBRIDGE_ACCESS_TOKEN", "").strip()
-        if not (app_key and app_secret and access_token):
-            raise RuntimeError("Longbridge credentials are not configured")
-        from longbridge.openapi import Config, QuoteContext
-        _LONGBRIDGE_CONTEXT = QuoteContext(Config(
-            app_key=app_key, app_secret=app_secret, access_token=access_token
-        ))
-        return _LONGBRIDGE_CONTEXT
 
 
 def _find_nearest_prior_value(
@@ -210,31 +191,6 @@ class DataProvider:
             except (TypeError, ValueError):
                 continue
         return _normalise_ohlcv(pd.DataFrame(parsed))
-
-    def _fetch_longbridge(self, period: str) -> pd.DataFrame:
-        from longbridge.openapi import Period, AdjustType
-        ctx = _get_longbridge_context()
-        lb_symbol = self.symbol if self.symbol.endswith(".US") else f"{self.symbol}.US"
-        candles = ctx.history_candlesticks_by_date(
-            lb_symbol, Period.Day, AdjustType.ForwardAdjust,
-            _period_start(period), pd.Timestamp.now().date()
-        )
-        rows = []
-        for candle in candles or []:
-            stamp = getattr(candle, "timestamp", None)
-            if stamp is None:
-                continue
-            if isinstance(stamp, (int, float)):
-                stamp = pd.to_datetime(stamp, unit="s", utc=True)
-            rows.append({
-                "timestamp": stamp,
-                "open": getattr(candle, "open", None),
-                "high": getattr(candle, "high", None),
-                "low": getattr(candle, "low", None),
-                "close": getattr(candle, "close", None),
-                "volume": getattr(candle, "volume", None),
-            })
-        return _normalise_ohlcv(pd.DataFrame(rows))
 
     def _fetch_stooq(self, period: str) -> pd.DataFrame:
         symbol = self.symbol.lower().replace(".", "-")
