@@ -12,10 +12,11 @@
 Daily OHLCV candles are fetched automatically in this order:
 
 1. **Yahoo Finance** — primary source.
-2. **Longbridge OpenAPI** — historical daily candles; uses the existing `LONGBRIDGE_APP_KEY`, `LONGBRIDGE_APP_SECRET`, and `LONGBRIDGE_ACCESS_TOKEN` settings.
-3. **Stooq** — public daily CSV download; no API key required. Coverage and availability are not guaranteed for every ticker.
-4. **Alpha Vantage** — optional final fallback. Set `ALPHAVANTAGE_API_KEY` in the service environment to enable it.
+2. **Nasdaq public historical data** — automatic fallback with no API key or additional credentials; uses Nasdaq's public delayed historical endpoint.
+3. **Longbridge OpenAPI** — existing historical daily-candle integration is retained unchanged; uses the existing `LONGBRIDGE_APP_KEY`, `LONGBRIDGE_APP_SECRET`, and `LONGBRIDGE_ACCESS_TOKEN` settings.
+4. **Stooq** — additional public CSV fallback; availability and automated access are not guaranteed.
+5. **Alpha Vantage** — optional final fallback. Set `ALPHAVANTAGE_API_KEY` in the service environment to enable it.
 
 A failed or empty provider no longer aborts the symbol download: the next provider is attempted, and the successful source is written to the application log. If all providers fail, the error lists each provider's failure. No symbols are removed from the S&P 500 universe and the Minervini screening rules are unchanged.
 
-Longbridge's historical-candlestick endpoint has account-based monthly unique-symbol quotas. Stooq is a public data source rather than an SLA-backed API. Alpha Vantage requires an API key and its free-tier limits may restrict large scans.
+Nasdaq's public endpoint does not require a key, but it is an undocumented public endpoint and may change or throttle automated requests; its prices may be delayed. Longbridge's historical-candlestick endpoint has account-based monthly unique-symbol quotas. Stooq is an additional public source with no availability guarantee. Alpha Vantage requires an API key and its free-tier limits may restrict large scans.
