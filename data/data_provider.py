@@ -257,7 +257,7 @@ class DataProvider:
                      float(row.low), float(row.close), float(row.volume))
                     for idx, row in frame.iterrows()
                 ]
-                count = self.storage.upsert_candles_bulk(self.symbol, rows)
+                count = self.storage.replace_candles_bulk(self.symbol, rows)
                 if count <= 0:
                     raise RuntimeError("no valid candles remained after storage validation")
                 self.last_source = source
