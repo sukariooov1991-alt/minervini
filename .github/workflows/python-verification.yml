@@ -1,0 +1,93 @@
+name: Python verification
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DB_PATH: ":memory:"
+      OUTPUT_PATH: "watchlist.json"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Compile all Python modules
+        run: python -m compileall -q analysis data app.py screener.py
+      - name: Import application modules
+        run: |
+          python - <<'PY'
+          import app
+          import screener
+          import analysis
+          from data.data_provider import DataProvider
+          from data.storage_manager import StorageManager
+          assert hasattr(DataProvider, "_fetch_longbridge")
+          assert hasattr(StorageManager, "replace_candles_bulk")
+          print("Application imports and provider/storage contracts passed.")
+          PY
+      - name: Verify storage and provider failover
+        run: |
+          python - <<'PY'
+          import numpy as np
+          import pandas as pd
+          from data.data_provider import DataProvider
+          from data.storage_manager import StorageManager
+          from analysis.relative_strength import relative_strength_score
+          from analysis.trend_template import check_trend_template
+
+          storage = StorageManager(":memory:")
+          dates = pd.bdate_range(end=pd.Timestamp.today().normalize(), periods=252)
+          close = np.linspace(10.0, 30.0, len(dates))
+          frame = pd.DataFrame({
+              "open": close,
+              "high": close + 1.0,
+              "low": close - 1.0,
+              "close": close + 0.5,
+              "volume": np.full(len(dates), 100000.0),
+          }, index=dates)
+
+          provider = DataProvider("AAPL", storage)
+          attempted = []
+          def fail(name):
+              def _fetch(period):
+                  attempted.append(name)
+                  raise RuntimeError(name + " test failure")
+              return _fetch
+          provider._fetch_yahoo = fail("Yahoo Finance")
+          provider._fetch_stooq = fail("Stooq")
+          provider._fetch_nasdaq = fail("Nasdaq public data")
+          def longbridge_success(period):
+              attempted.append("Longbridge")
+              return frame
+          provider._fetch_longbridge = longbridge_success
+          provider._fetch_alpha_vantage = fail("Alpha Vantage")
+
+          count = provider.fetch_and_store_daily_candles("2y")
+          assert attempted == ["Yahoo Finance", "Stooq", "Nasdaq public data", "Longbridge"], attempted
+          assert count == 252, count
+          assert provider.last_source == "Longbridge", provider.last_source
+          stored = storage.get_candles_df("AAPL")
+          assert len(stored) == 252, len(stored)
+          assert np.isfinite(relative_strength_score(stored.set_index("date")["close"]))
+
+          rating = 99
+          trend = check_trend_template(stored.set_index("date"), rating)
+          assert trend["passed"], trend
+          print("Provider order, Longbridge fallback, 252-bar storage, RS and trend-template smoke checks passed.")
+          PY
