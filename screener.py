@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -425,10 +426,14 @@ class DailyScreener:
             "failures": failures,
             "results": result.to_dict(orient="records"),
         }
-        self.output_path.write_text(
+        # Write to a sibling temporary file and atomically replace the last
+        # complete snapshot. Startup recovery must never read a half-written JSON.
+        temp_output = self.output_path.with_name(self.output_path.name + ".tmp")
+        temp_output.write_text(
             json.dumps(payload, indent=2, default=str),
             encoding="utf-8",
         )
+        os.replace(temp_output, self.output_path)
         # Keep the checkpoint if the user stopped the scan or if any symbol
         # failed to download; otherwise the next run is a genuinely fresh scan.
         if update and not stopped and not download_failed_symbols:
