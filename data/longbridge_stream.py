@@ -3,8 +3,11 @@ from __future__ import annotations
 
 import os
 import math
+import logging
 from datetime import datetime
 from typing import Any, Callable
+
+log = logging.getLogger(__name__)
 
 
 def _value(obj: Any, name: str, default: Any = None) -> Any:
@@ -116,24 +119,43 @@ class LongbridgeRealtimeClient:
         self._sub_type_quote = SubType.Quote
         self._subscribed_symbols = []
 
-    def subscribe(self, symbols: list[str]) -> list[str]:
-        cleaned = sorted({
+    def ensure_subscriptions(self, symbols: list[str]) -> list[str]:
+        """Verify server-side subscriptions and restore missing quote subscriptions."""
+        desired = sorted({
             self._normalize_symbol(s) for s in symbols if s and str(s).strip()
         })
-        if not cleaned:
+        if not desired:
             return []
         if self._ctx is None:
             self.connect()
 
-        # Idempotent: never send duplicate subscriptions for symbols already
-        # registered on this live QuoteContext.
-        already = set(self._subscribed_symbols)
-        new_symbols = [symbol for symbol in cleaned if symbol not in already]
-        if not new_symbols:
-            return []
-        self._ctx.subscribe(new_symbols, [self._sub_type_quote])
-        self._subscribed_symbols = sorted(already | set(new_symbols))
-        return [self._denormalize_symbol(symbol) for symbol in new_symbols]
+        active: set[str] = set()
+        try:
+            for item in self._ctx.subscriptions():
+                symbol = self._normalize_symbol(_value(item, "symbol", ""))
+                sub_types = _value(item, "sub_types", []) or []
+                if self._sub_type_quote in sub_types:
+                    active.add(symbol)
+        except Exception:
+            # A failed subscription query indicates that this context can no
+            # longer be trusted. Recreate it, then rebuild the full desired set.
+            log.exception("Longbridge subscription verification failed; reconnecting QuoteContext")
+            self.close()
+            self.connect()
+            active = set()
+
+        missing = [symbol for symbol in desired if symbol not in active]
+        if missing:
+            self._ctx.subscribe(missing, [self._sub_type_quote])
+            log.warning("Longbridge restored %s missing quote subscriptions", len(missing))
+
+        self._subscribed_symbols = sorted(active | set(desired))
+        return [self._denormalize_symbol(symbol) for symbol in missing]
+
+    def subscribe(self, symbols: list[str]) -> list[str]:
+        # Idempotent and server-verified: repeated eligible batches do not
+        # duplicate subscriptions, while missing subscriptions are restored.
+        return self.ensure_subscriptions(symbols)
 
     def unsubscribe(self, symbols: list[str]) -> None:
         cleaned = sorted({
