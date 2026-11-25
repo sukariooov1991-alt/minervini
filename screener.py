@@ -40,8 +40,9 @@ class DailyScreener:
             self._providers[symbol] = DataProvider(symbol, self.storage)
         return self._providers[symbol]
 
-    def update_universe_data(self, period: str = "2y") -> list[dict]:
+    def update_universe_data(self, period: str = "2y", progress_callback=None) -> list[dict]:
         failures: list[dict] = []
+        total = len(self.symbols)
         for i, sym in enumerate(self.symbols, 1):
             try:
                 n = self._get_provider(sym).fetch_and_store_daily_candles(period)
@@ -49,6 +50,8 @@ class DailyScreener:
             except Exception as exc:
                 failures.append({"symbol": sym, "error": str(exc)})
                 log.warning("%s: %s", sym, exc)
+            if progress_callback:
+                progress_callback({"phase": "تحميل البيانات", "completed": i, "total": total, "current_symbol": sym})
         return failures
 
     def compute_rs_ratings(self) -> tuple[dict, dict]:
@@ -92,8 +95,9 @@ class DailyScreener:
         period: str = "2y",
         market_symbol: str = "^GSPC",
         skip_market_check: bool = False,
+        progress_callback=None,
     ) -> tuple[pd.DataFrame, list[dict], dict]:
-        failures = self.update_universe_data(period) if update else []
+        failures = self.update_universe_data(period, progress_callback) if update else []
 
         market_status = (
             {"market_favorable": True, "regime": "SKIPPED", "reasons": ["market check disabled"]}
@@ -105,7 +109,10 @@ class DailyScreener:
         rs, frames = self.compute_rs_ratings()
 
         rows = []
-        for sym, df in frames.items():
+        total_frames = len(frames)
+        if progress_callback:
+            progress_callback({"phase": "تحليل الأسهم", "completed": 0, "total": total_frames, "current_symbol": ""})
+        for index, (sym, df) in enumerate(frames.items(), 1):
             rating = rs.get(sym, float("nan"))
             tt = check_trend_template(df, rating)
             if not tt["passed"]:
@@ -166,6 +173,8 @@ class DailyScreener:
                 "passed_all_filters": passed_all,
                 "screen_date": datetime.now(timezone.utc).date().isoformat(),
             })
+            if progress_callback:
+                progress_callback({"phase": "تحليل الأسهم", "completed": index, "total": total_frames, "current_symbol": sym})
 
         result = pd.DataFrame(rows)
         if not result.empty:
