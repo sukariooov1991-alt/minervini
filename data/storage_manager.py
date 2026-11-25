@@ -103,7 +103,7 @@ class StorageManager:
             ).fetchone()
         return row is not None and row["symbols_json"] == symbols_json
 
-    def mark_scan_symbol_completed(self, scan_name: str, symbol: str) -> None
+    def mark_scan_symbol_completed(self, scan_name: str, symbol: str) -> None:
         """Persist one successful symbol immediately so process restarts do not lose progress."""
         with self._get_conn() as conn:
             row = conn.execute(
