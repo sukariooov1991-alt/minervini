@@ -71,7 +71,7 @@
     }
     .controls button { width: 100%; }
     .scan-progress {
-      display: none;
+      display: block;
       margin: -6px 0 18px;
       padding: 12px;
       background: var(--card);
@@ -79,6 +79,8 @@
       border-radius: 10px;
     }
     .scan-progress.visible { display: block; }
+    .scan-errors { margin-top: 10px; color: #fca5a5; font-size: .78rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .scan-errors:empty { display: none; }
     .scan-progress-top { display: flex; justify-content: space-between; gap: 10px; margin-bottom: 9px; font-size: .88rem; }
     .progress-track { height: 10px; overflow: hidden; border-radius: 99px; background: #263244; }
     .progress-fill { width: 0%; height: 100%; border-radius: inherit; background: var(--entry); transition: width .25s ease; }
@@ -196,7 +198,8 @@
       <div class="progress-track" role="progressbar" aria-label="تقدم الفحص" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="scanProgressTrack">
         <div class="progress-fill" id="scanProgressFill"></div>
       </div>
-      <div class="scan-message" id="scanDetails"></div>
+      <div class="scan-message" id="scanDetails">اضغط «فحص» لبدء فحص الأسهم على دفعات من خمسة.</div>
+      <div class="scan-errors" id="scanErrors" aria-live="polite"></div>
     </section>
     <div class="cards" id="cardsContainer"></div>
   </div>
@@ -237,7 +240,6 @@
     function renderScanProgress(data) {
       const p = data.scan_progress || {};
       const box = document.getElementById('scanProgress');
-      if (!data.running && (!p.phase || p.phase === 'idle')) return;
       box.classList.add('visible');
       const percent = Math.max(0, Math.min(100, Number(p.percent) || 0));
       document.getElementById('scanProgressFill').style.width = percent + '%';
@@ -245,6 +247,7 @@
       document.getElementById('scanProgressTrack').setAttribute('aria-valuenow', String(percent));
       const labels = {
         starting: 'بدأ الفحص...',
+        'فحص حالة السوق': 'جارٍ فحص حالة السوق قبل الأسهم...',
         'تحميل الدفعة': 'جارٍ تحميل دفعة جديدة...',
         'تحميل البيانات': 'جارٍ تحميل بيانات الأسهم...',
         'تحليل الدفعة': 'جارٍ تحليل الدفعة...',
@@ -258,8 +261,12 @@
       const total = Number(p.total) || 0;
       const completed = Number(p.completed) || 0;
       let details = total ? 'تم تحميل ' + completed + ' من ' + total + ' — الدفعة ' + (p.batch || 1) : '';
+      if (p.batch_total) details += ' — إجمالي الدفعات: ' + p.batch_total;
       if (p.current_symbol) details += (details ? ' — ' : '') + 'السهم: ' + p.current_symbol;
+      if (p.error) details += (details ? '\\n' : '') + 'خطأ: ' + p.error;
       document.getElementById('scanDetails').textContent = details;
+      const errors = Array.isArray(data.scan_errors) ? data.scan_errors : [];
+      document.getElementById('scanErrors').textContent = errors.slice(-5).map(e => e.symbol + ' [' + e.phase + ']: ' + e.message).join('\\n');
     }
 
     async function deleteCard(event, sym) {
