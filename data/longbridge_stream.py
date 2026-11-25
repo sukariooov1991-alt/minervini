@@ -1,11 +1,11 @@
 """Longbridge realtime price & WebSocket adapter for MINERVINI.
 
-Responsibility per specification:
-- Realtime prices
-- Realtime market data
-- WebSocket connection
+Responsibility:
+- Longbridge realtime prices and market quotes
+- WebSocket connection and subscriptions
 
-Daily completed candles, earnings data, and news remain strictly with Yahoo Finance.
+Daily historical candles use the Yahoo Finance -> Stooq -> Nasdaq fallback chain
+(with optional Alpha Vantage last). Earnings data and news continue to use Yahoo Finance.
 """
 from __future__ import annotations
 
