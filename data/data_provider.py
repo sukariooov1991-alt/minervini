@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any
+import time
 import pandas as pd
 
 from data.storage_manager import StorageManager
@@ -51,9 +52,25 @@ class DataProvider:
         self.storage = storage or StorageManager()
 
     def fetch_and_store_daily_candles(self, period: str = "2y") -> int:
-        df = self.ticker.history(period=period, interval="1d", auto_adjust=True)
+        # Yahoo occasionally returns an empty response during transient crumb/session
+        # failures. Retry the same request with bounded backoff before reporting failure.
+        df = None
+        last_error: Exception | None = None
+        for attempt in range(3):
+            try:
+                df = self.ticker.history(
+                    period=period, interval="1d", auto_adjust=True
+                )
+                if df is not None and not df.empty:
+                    break
+            except Exception as exc:
+                last_error = exc
+            if attempt < 2:
+                time.sleep(2 ** attempt)
+
         if df is None or df.empty:
-            raise ValueError(f"No daily data for {self.symbol}")
+            detail = f": {last_error}" if last_error else ""
+            raise ValueError(f"No daily data for {self.symbol} after 3 attempts{detail}")
 
         rename = {"Open": "open", "High": "high", "Low": "low", "Close": "close", "Volume": "volume"}
         df = df.rename(columns=rename)
@@ -81,7 +98,10 @@ class DataProvider:
 
     def get_fundamentals_dataframe(self) -> pd.DataFrame:
         """Return quarterly fundamentals; absent fields remain NaN, never fabricated."""
-        q = self.ticker.quarterly_financials
+        try:
+            q = self.ticker.quarterly_financials
+        except Exception:
+            return pd.DataFrame()
         # ROE is supplementary metadata; Yahoo may deny the quoteSummary/info
         # endpoint even when quarterly financial statements are available.
         # Do not discard usable EPS/revenue data because this optional request fails.
