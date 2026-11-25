@@ -139,6 +139,7 @@ class DailyScreener:
                 tt["passed"]
                 and vcp.get("passed", False)
                 and br
+                and pb.get("passed", False)
                 and ad.get("accumulation", False)
                 and earnings.get("passed", False)
                 and market_favorable
