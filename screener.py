@@ -121,13 +121,31 @@ class DailyScreener:
         processed = 0
         analysis_processed = 0
         progress_total = total * 2
+        if progress_callback:
+            progress_callback({
+                "phase": "فحص حالة السوق",
+                "completed": 0,
+                "total": progress_total,
+                "batch": 0,
+                "batch_total": (total + batch_size - 1) // batch_size,
+                "current_symbol": market_symbol,
+            })
         market_status = ({"market_favorable": True, "regime": "SKIPPED", "reasons": ["market check disabled"]}
                          if skip_market_check else self.check_market(market_symbol, period))
         market_favorable = bool(market_status.get("market_favorable", False))
         batches = [self.symbols[i:i + batch_size] for i in range(0, total, batch_size)]
         for batch_no, batch in enumerate(batches, 1):
             if stop_callback and stop_callback(): break
-            if progress_callback: progress_callback({"phase":"تحميل الدفعة","completed":processed,"total":progress_total,"batch":batch_no,"current_symbol":""})
+            if progress_callback:
+                progress_callback({
+                    "phase": "تحميل الدفعة",
+                    "completed": processed,
+                    "total": progress_total,
+                    "batch": batch_no,
+                    "batch_total": len(batches),
+                    "batch_size": len(batch),
+                    "current_symbol": batch[0] if batch else "",
+                })
             if update:
                 for sym in batch:
                     if stop_callback and stop_callback(): break
@@ -184,11 +202,15 @@ class DailyScreener:
                            "screen_date":datetime.now(timezone.utc).date().isoformat()}
                     rows.append(row)
                     batch_rows.append(row)
+                    # Publish this symbol as soon as its analysis finishes; do not
+                    # wait for the other four symbols in the batch.
+                    if batch_callback:
+                        try:
+                            batch_callback([row], market_status)
+                        except Exception:
+                            log.exception("Result publish failed for %s in batch %s", sym, batch_no)
                 except Exception:
                     log.exception("Unexpected analysis error for symbol %s", sym)
-            if batch_callback and batch_rows:
-                try: batch_callback(batch_rows, market_status)
-                except Exception: log.exception("Batch callback failed for batch %s", batch_no)
             if progress_callback: progress_callback({"phase":"اكتملت الدفعة","completed":total + analysis_processed,"total":progress_total,"batch":batch_no,"current_symbol":""})
         result = pd.DataFrame(rows)
         if not result.empty:
