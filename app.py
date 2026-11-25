@@ -242,57 +242,41 @@ class ScanController:
             self._last_error = None
             self._market_session_label = self._detect_market_session()
             self._notify_state_changed_locked()
-
         try:
-            screener = DailyScreener(
-                db_path=self.db_path,
-                output_path=self.output_path,
-                symbols=symbols,
-            )
-            result_df, _, market_status = screener.run_screen(update=update, progress_callback=self._update_scan_progress)
-            market_favorable = bool(market_status.get("market_favorable", False))
-
-            with self._state_cv:
-                self._market_status = market_status
-                self._notify_state_changed_locked()
-
-            records = result_df.to_dict(orient="records") if result_df is not None and not result_df.empty else []
-            new_cards: dict[str, dict[str, Any]] = {}
-            qualified_symbols: list[str] = []
-
-            for row in records:
-                if self._stop_event.is_set():
-                    break
-                card = self._evaluate_candidate(row, market_favorable)
-                if card is None:
-                    continue
-                new_cards[card["symbol"]] = card
-                qualified_symbols.append(card["symbol"])
-
-                try:
-                    self.notifier.send_stock_appearance_alert(card)
-                except Exception as exc:
-                    log.warning("Telegram alert error for %s: %s", card["symbol"], exc)
-
-            with self._state_cv:
-                old_symbols = set(self._cards.keys())
-                self._cards = new_cards
-                self._notify_state_changed_locked()
-
-            removed_symbols = sorted(old_symbols - set(qualified_symbols))
-            if self.lb_client.has_credentials():
-                try:
-                    if removed_symbols:
-                        self.lb_client.unsubscribe(removed_symbols)
-                    if qualified_symbols:
-                        self.lb_client.subscribe(qualified_symbols)
+            screener = DailyScreener(db_path=self.db_path, output_path=self.output_path, symbols=symbols)
+            def publish_batch(rows: list[dict[str, Any]], market_status: dict[str, Any]) -> None:
+                qualified = []
+                for row in rows:
+                    if not row.get("passed_all_filters"): continue
+                    try:
+                        card = self._evaluate_candidate(row, bool(market_status.get("market_favorable", False)))
+                        if card: qualified.append(card)
+                    except Exception:
+                        log.exception("Candidate card construction failed for %s", row.get("symbol"))
+                if not qualified: return
+                with self._state_cv:
+                    for card in qualified: self._cards[card["symbol"]] = card
+                    self._notify_state_changed_locked()
+                for card in qualified:
+                    try: self.notifier.send_stock_appearance_alert(card)
+                    except Exception: log.exception("Telegram alert failed for %s", card.get("symbol"))
+                if self.lb_client.has_credentials():
+                    try:
+                        self.lb_client.subscribe([card["symbol"] for card in qualified])
                         with self._state_cv:
                             self._ws_connected = True
                             self._notify_state_changed_locked()
-                except Exception as exc:
-                    log.warning("Longbridge WebSocket subscribe error: %s", exc)
+                    except Exception: log.exception("Longbridge subscribe failed after batch")
+            result_df, failures, market_status = screener.run_screen(
+                update=update, progress_callback=self._update_scan_progress,
+                batch_callback=publish_batch, stop_callback=self._stop_event.is_set, batch_size=5,
+            )
+            with self._state_cv:
+                self._market_status = market_status
+                self._notify_state_changed_locked()
+            log.info("Scan finished: %s analyzed, %s data errors", 0 if result_df is None else len(result_df), len(failures))
         except Exception as exc:
-            log.exception("Scan cycle failed: %s", exc)
+            log.exception("Scan cycle failed")
             with self._state_cv:
                 self._last_error = str(exc)
                 self._notify_state_changed_locked()
@@ -300,12 +284,9 @@ class ScanController:
             with self._state_cv:
                 was_stopped = self._stop_event.is_set()
                 self._running = False
-                if was_stopped:
-                    self._scan_progress = {**self._scan_progress, "phase": "stopped"}
-                elif self._last_error:
-                    self._scan_progress = {**self._scan_progress, "phase": "error"}
-                else:
-                    self._scan_progress = {"phase": "completed", "completed": 1, "total": 1, "percent": 100, "current_symbol": ""}
+                if was_stopped: self._scan_progress = {**self._scan_progress, "phase":"stopped"}
+                elif self._last_error: self._scan_progress = {**self._scan_progress, "phase":"error"}
+                else: self._scan_progress = {**self._scan_progress, "phase":"completed", "percent":100, "completed":self._scan_progress.get("total",0)}
                 self._notify_state_changed_locked()
 
     def start_scan(self, symbols: list[str] | None = None, update: bool = True) -> bool:
