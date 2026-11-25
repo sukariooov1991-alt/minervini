@@ -12,10 +12,11 @@
 Daily OHLCV candles are fetched automatically in this order:
 
 1. **Yahoo Finance** — primary source.
-2. **Nasdaq public historical data** — automatic fallback with no API key or additional credentials; uses Nasdaq's public delayed historical endpoint.
-3. **Longbridge OpenAPI** — existing historical daily-candle integration is retained unchanged; uses the existing `LONGBRIDGE_APP_KEY`, `LONGBRIDGE_APP_SECRET`, and `LONGBRIDGE_ACCESS_TOKEN` settings.
-4. **Stooq** — additional public CSV fallback; availability and automated access are not guaranteed.
-5. **Alpha Vantage** — optional final fallback. Set `ALPHAVANTAGE_API_KEY` in the service environment to enable it.
+2. **Stooq** — public daily CSV fallback; no API key required.
+3. **Nasdaq public historical data** — additional automatic fallback with no API key or credentials; uses Nasdaq's public delayed historical endpoint.
+4. **Alpha Vantage** — optional final fallback. Set `ALPHAVANTAGE_API_KEY` in the service environment to enable it.
+
+Longbridge remains connected through its existing separate price/realtime integration and is not changed by this daily-history fallback order.
 
 A failed or empty provider no longer aborts the symbol download: the next provider is attempted, and the successful source is written to the application log. If all providers fail, the error lists each provider's failure. No symbols are removed from the S&P 500 universe and the Minervini screening rules are unchanged.
 
