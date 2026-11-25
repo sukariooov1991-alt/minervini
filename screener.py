@@ -123,8 +123,9 @@ class DailyScreener:
         total = len(self.symbols)
         processed = 0
         analysis_processed = 0
-        download_failed_symbols: set[str] = set()
         progress_total = total * 2
+        stopped = False
+
         if progress_callback:
             progress_callback({
                 "phase": "فحص حالة السوق",
@@ -134,111 +135,206 @@ class DailyScreener:
                 "batch_total": (total + batch_size - 1) // batch_size,
                 "current_symbol": market_symbol,
             })
-        market_status = ({"market_favorable": True, "regime": "SKIPPED", "reasons": ["market check disabled"]}
-                         if skip_market_check else self.check_market(market_symbol, period))
+
+        market_status = (
+            {"market_favorable": True, "regime": "SKIPPED", "reasons": ["market check disabled"]}
+            if skip_market_check else self.check_market(market_symbol, period)
+        )
         market_favorable = bool(market_status.get("market_favorable", False))
-        batches = [self.symbols[i:i + batch_size] for i in range(0, total, batch_size)]
-        for batch_no, batch in enumerate(batches, 1):
-            if stop_callback and stop_callback(): break
+
+        # Complete the download phase before calculating cross-sectional RS.
+        # Otherwise early batches would be ranked against stale rows from symbols
+        # that have not yet been refreshed in this scan.
+        download_failed_symbols: set[str] = set()
+        if update:
+            for i, sym in enumerate(self.symbols, 1):
+                if stop_callback and stop_callback():
+                    stopped = True
+                    break
+                try:
+                    n = self._get_provider(sym).fetch_and_store_daily_candles(period)
+                    log.info("[%s/%s] %s: stored %s bars", i, total, sym, n)
+                except Exception as exc:
+                    download_failed_symbols.add(sym)
+                    failures.append({"symbol": sym, "error": str(exc), "phase": "download"})
+                    log.warning("Data download failed for %s: %s", sym, exc)
+                    if progress_callback:
+                        progress_callback({
+                            "phase": "خطأ أثناء تحميل البيانات",
+                            "completed": processed,
+                            "total": progress_total,
+                            "current_symbol": sym,
+                            "error": str(exc),
+                        })
+                processed = i
+                if progress_callback:
+                    progress_callback({
+                        "phase": "تحميل البيانات",
+                        "completed": processed,
+                        "total": progress_total,
+                        "batch": (i - 1) // batch_size + 1,
+                        "batch_total": (total + batch_size - 1) // batch_size,
+                        "current_symbol": sym,
+                    })
+        else:
+            processed = total
             if progress_callback:
                 progress_callback({
-                    "phase": "تحميل الدفعة",
-                    "completed": processed,
+                    "phase": "تحميل البيانات",
+                    "completed": total,
                     "total": progress_total,
-                    "batch": batch_no,
-                    "batch_total": len(batches),
-                    "batch_size": len(batch),
-                    "current_symbol": batch[0] if batch else "",
+                    "current_symbol": "",
                 })
-            stop_requested = False
-            if update:
-                for sym in batch:
-                    if stop_callback and stop_callback():
-                        stop_requested = True
-                        break
-                    try:
-                        n = self._get_provider(sym).fetch_and_store_daily_candles(period)
-                        log.info("[%s/%s] %s stored %s bars; batch %s/%s", processed+1,total,sym,n,batch_no,len(batches))
-                    except YahooRateLimitError as exc:
-                        log.exception("Yahoo rate limit while downloading %s", sym)
-                        download_failed_symbols.add(sym)
-                        failures.append({"symbol":sym,"error":str(exc)})
-                        failures.extend({"symbol":x,"error":"Deferred after Yahoo rate limit"} for x in self.symbols[processed+1:])
-                        if progress_callback:
-                            progress_callback({
-                                "phase": "توقف بسبب حد Yahoo",
-                                "completed": processed,
-                                "total": progress_total,
-                                "batch": batch_no,
-                                "batch_total": len(batches),
-                                "current_symbol": sym,
-                                "error": str(exc),
-                            })
-                        raise
-                    except Exception as exc:
-                        log.exception("Data download failed for %s", sym)
-                        download_failed_symbols.add(sym)
-                        failures.append({"symbol":sym,"error":str(exc)})
-                        if progress_callback:
-                            progress_callback({
-                                "phase": "خطأ أثناء تحميل البيانات",
-                                "completed": processed,
-                                "total": progress_total,
-                                "batch": batch_no,
-                                "batch_total": len(batches),
-                                "current_symbol": sym,
-                                "error": str(exc),
-                            })
-                    processed += 1
-                    if progress_callback: progress_callback({"phase":"تحميل البيانات","completed":processed,"total":progress_total,"batch":batch_no,"current_symbol":sym})
-            # Do not analyze stale database rows for symbols whose current download
-            # failed, and do not publish the rest of a batch after a stop request.
-            if stop_requested or (stop_callback and stop_callback()):
-                break
-            if not update:
-                processed = total
+
+        # A stopped or failed download is never silently replaced by old stored
+        # candles. Failed symbols are excluded from both RS ranking and analysis.
+        if stopped or (stop_callback and stop_callback()):
+            stopped = True
+            rs, frames = {}, {}
+        else:
             rs, frames = self.compute_rs_ratings(
                 exclude_symbols=download_failed_symbols if update else None
             )
-            batch_rows = []
-            for sym in batch:
+
+        batches = [
+            self.symbols[i:i + batch_size]
+            for i in range(0, total, batch_size)
+        ]
+        if not stopped:
+            for batch_no, batch in enumerate(batches, 1):
                 if stop_callback and stop_callback():
-                    stop_requested = True
+                    stopped = True
                     break
-                if update and sym in download_failed_symbols:
+                if progress_callback:
+                    progress_callback({
+                        "phase": "تحميل الدفعة",
+                        "completed": total + analysis_processed,
+                        "total": progress_total,
+                        "batch": batch_no,
+                        "batch_total": len(batches),
+                        "batch_size": len(batch),
+                        "current_symbol": batch[0] if batch else "",
+                    })
+
+                for sym in batch:
+                    if stop_callback and stop_callback():
+                        stopped = True
+                        break
                     analysis_processed += 1
                     if progress_callback:
-                        progress_callback({"phase":"تحليل الدفعة","completed":total + analysis_processed,"total":progress_total,"batch":batch_no,"current_symbol":sym})
-                    continue
-                analysis_processed += 1
-                if progress_callback: progress_callback({"phase":"تحليل الدفعة","completed":total + analysis_processed,"total":progress_total,"batch":batch_no,"current_symbol":sym})
-                df = frames.get(sym)
-                if df is None or len(df) < 252:
-                    log.warning(
-                        "Skipping %s during analysis: insufficient daily candles (%s; need 252)",
-                        sym, 0 if df is None else len(df),
-                    )
-                    continue
-                try:
-                    rating = rs.get(sym, float("nan"))
-                    tt = check_trend_template(df, rating)
-                    if not tt["passed"]: continue
-                    base_df = df.iloc[:-1].copy()
-                    vcp = check_vcp(base_df)
-                    pivot_val = vcp.get("pivot_price")
-                    br = check_breakout(df, pivot=pivot_val) if vcp.get("passed") else False
-                    pb = check_pullback(df)
-                    ad = accumulation_distribution_summary(df)
+                        progress_callback({
+                            "phase": "تحليل الدفعة",
+                            "completed": total + analysis_processed,
+                            "total": progress_total,
+                            "batch": batch_no,
+                            "current_symbol": sym,
+                        })
+
+                    if update and sym in download_failed_symbols:
+                        continue
+                    df = frames.get(sym)
+                    if df is None or len(df) < 252:
+                        log.warning(
+                            "Skipping %s during analysis: insufficient daily candles (%s; need 252)",
+                            sym, 0 if df is None else len(df),
+                        )
+                        continue
+
                     try:
-                        fdf = self._get_provider(sym).get_fundamentals_dataframe()
-                        latest = fdf.iloc[0].to_dict() if not fdf.empty else {}
-                        earnings = check_earnings(latest.get("eps_current"),latest.get("eps_year_ago"),latest.get("revenue_current"),latest.get("revenue_year_ago"))
-                        fundamental_status = "UNKNOWN" if fdf.empty else ("PASS" if earnings["passed"] else "FAIL")
+                        rating = rs.get(sym, float("nan"))
+                        tt = check_trend_template(df, rating)
+                        if not tt["passed"]:
+                            continue
+
+                        # Exclude the current candle from pattern construction;
+                        # breakout validation is performed against the latest candle.
+                        base_df = df.iloc[:-1].copy()
+                        vcp = check_vcp(base_df)
+                        pivot_val = vcp.get("pivot_price")
+                        br = check_breakout(df, pivot=pivot_val) if vcp.get("passed") else False
+                        pb = check_pullback(df)
+                        ad = accumulation_distribution_summary(df)
+
+                        try:
+                            fdf = self._get_provider(sym).get_fundamentals_dataframe()
+                            latest = fdf.iloc[0].to_dict() if not fdf.empty else {}
+                            earnings = check_earnings(
+                                latest.get("eps_current"),
+                                latest.get("eps_year_ago"),
+                                latest.get("revenue_current"),
+                                latest.get("revenue_year_ago"),
+                            )
+                            fundamental_status = (
+                                "UNKNOWN" if fdf.empty
+                                else ("PASS" if earnings["passed"] else "FAIL")
+                            )
+                        except Exception as exc:
+                            log.exception("Fundamental data error for %s", sym)
+                            if progress_callback:
+                                progress_callback({
+                                    "phase": "خطأ في البيانات الأساسية",
+                                    "completed": total + analysis_processed,
+                                    "total": progress_total,
+                                    "batch": batch_no,
+                                    "batch_total": len(batches),
+                                    "current_symbol": sym,
+                                    "error": str(exc),
+                                })
+                            earnings = {"passed": False, "error": str(exc)}
+                            fundamental_status = "UNKNOWN"
+
+                        provider_source = (
+                            self._get_provider(sym).last_source if update
+                            else "Stored daily data"
+                        )
+                        row = {
+                            "symbol": sym,
+                            "data_source": provider_source,
+                            "rs_rating": rating,
+                            "trend_template": "PASS",
+                            "trend_conditions": tt.get("conditions", {}),
+                            "vcp_passed": bool(vcp.get("passed")),
+                            "breakout": bool(br),
+                            "pullback_passed": bool(pb.get("passed", False)),
+                            "pivot_price": pivot_val,
+                            "final_low": vcp.get("final_low"),
+                            "contraction_depths": vcp.get("contraction_depths", []),
+                            "volume_dry_up": vcp.get("volume_dry_up", False),
+                            "accumulation": ad.get("accumulation", False),
+                            "distribution": ad.get("distribution", False),
+                            "earnings_status": fundamental_status,
+                            "earnings_passed": bool(earnings.get("passed", False)),
+                            "market_favorable": market_favorable,
+                            "market_regime": market_status.get("regime", "UNKNOWN"),
+                            "passed_all_filters": bool(
+                                vcp.get("passed", False)
+                                and br
+                                and pb.get("passed", False)
+                                and ad.get("accumulation", False)
+                                and earnings.get("passed", False)
+                                and market_favorable
+                            ),
+                            "screen_date": datetime.now(timezone.utc).date().isoformat(),
+                        }
+                        rows.append(row)
+                        if batch_callback:
+                            try:
+                                batch_callback([row], market_status)
+                            except Exception:
+                                log.exception(
+                                    "Result publish failed for %s in batch %s",
+                                    sym, batch_no,
+                                )
                     except Exception as exc:
-                        log.exception("Fundamental data error for %s", sym)
+                        log.exception("Unexpected analysis error for symbol %s", sym)
+                        failures.append({
+                            "symbol": sym,
+                            "error": str(exc),
+                            "phase": "analysis",
+                        })
                         if progress_callback:
                             progress_callback({
-                                "phase": "خطأ في البيانات الأساسية",
+                                "phase": "خطأ أثناء تحليل السهم",
                                 "completed": total + analysis_processed,
                                 "total": progress_total,
                                 "batch": batch_no,
@@ -246,51 +342,38 @@ class DailyScreener:
                                 "current_symbol": sym,
                                 "error": str(exc),
                             })
-                        earnings = {"passed":False,"error":str(exc)}
-                        fundamental_status = "UNKNOWN"
-                    provider_source = self._get_provider(sym).last_source if update else "Stored daily data"
-                    row = {"symbol":sym,"data_source":provider_source,"rs_rating":rating,"trend_template":"PASS","trend_conditions":tt.get("conditions",{}),
-                           "vcp_passed":bool(vcp.get("passed")),"breakout":bool(br),"pullback_passed":bool(pb.get("passed",False)),
-                           "pivot_price":pivot_val,"final_low":vcp.get("final_low"),"contraction_depths":vcp.get("contraction_depths",[]),
-                           "volume_dry_up":vcp.get("volume_dry_up",False),"accumulation":ad.get("accumulation",False),
-                           "distribution":ad.get("distribution",False),"earnings_status":fundamental_status,
-                           "earnings_passed":bool(earnings.get("passed",False)),"market_favorable":market_favorable,
-                           "market_regime":market_status.get("regime","UNKNOWN"),
-                           "passed_all_filters":bool(vcp.get("passed",False) and br and pb.get("passed",False) and ad.get("accumulation",False) and earnings.get("passed",False) and market_favorable),
-                           "screen_date":datetime.now(timezone.utc).date().isoformat()}
-                    rows.append(row)
-                    batch_rows.append(row)
-                    # Publish this symbol as soon as its analysis finishes; do not
-                    # wait for the other four symbols in the batch.
-                    if batch_callback:
-                        try:
-                            batch_callback([row], market_status)
-                        except Exception:
-                            log.exception("Result publish failed for %s in batch %s", sym, batch_no)
-                except Exception as exc:
-                    log.exception("Unexpected analysis error for symbol %s", sym)
-                    failures.append({"symbol": sym, "error": str(exc), "phase": "analysis"})
-                    if progress_callback:
-                        progress_callback({
-                            "phase": "خطأ أثناء تحليل السهم",
-                            "completed": total + analysis_processed,
-                            "total": progress_total,
-                            "batch": batch_no,
-                            "batch_total": len(batches),
-                            "current_symbol": sym,
-                            "error": str(exc),
-                        })
-            if stop_requested:
-                break
-            if progress_callback: progress_callback({"phase":"اكتملت الدفعة","completed":total + analysis_processed,"total":progress_total,"batch":batch_no,"batch_total":len(batches),"current_symbol":""})
+
+                if stopped:
+                    break
+                if progress_callback:
+                    progress_callback({
+                        "phase": "اكتملت الدفعة",
+                        "completed": total + analysis_processed,
+                        "total": progress_total,
+                        "batch": batch_no,
+                        "batch_total": len(batches),
+                        "current_symbol": "",
+                    })
+
         result = pd.DataFrame(rows)
         if not result.empty:
-            result = result.sort_values(["passed_all_filters","breakout","vcp_passed","rs_rating"],ascending=[False,False,False,False])
-        self.output_path.parent.mkdir(parents=True,exist_ok=True)
-        payload = {"generated_at":datetime.now(timezone.utc).isoformat(),
-                   "strategy":"Minervini SEPA — TT gate, VCP, breakout, pullback, AD, earnings, market regime",
-                   "market_status":market_status,"failures":failures,"results":result.to_dict(orient="records")}
-        self.output_path.write_text(json.dumps(payload,indent=2,default=str),encoding="utf-8")
+            result = result.sort_values(
+                ["passed_all_filters", "breakout", "vcp_passed", "rs_rating"],
+                ascending=[False, False, False, False],
+            )
+
+        self.output_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "strategy": "Minervini SEPA — TT gate, VCP, breakout, pullback, AD, earnings, market regime",
+            "market_status": market_status,
+            "failures": failures,
+            "results": result.to_dict(orient="records"),
+        }
+        self.output_path.write_text(
+            json.dumps(payload, indent=2, default=str),
+            encoding="utf-8",
+        )
         return result, failures, market_status
 
 
