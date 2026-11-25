@@ -5,7 +5,7 @@
 - `data/`: Storage (`storage_manager.py`), multi-source daily market-data provider (`data_provider.py`), S&P 500 symbols (`sp500_symbols.py`), trade levels (`trade_levels.py`), Longbridge realtime client (`longbridge_stream.py`), and Telegram notifier (`telegram_notifier.py`).
 - `screener.py`: Daily SEPA candidate scanner.
 - `app.py` & `index.html`: Flask backend with `/api/stream` and dark mobile-first UI.
-- `Dockerfile`, `.dockerignore`, `.gitignore`: Container build, ignore rules, and Git exclusions.
+- `Dockerfile`: Container build configuration.
 
 ## Daily market-data provider failover
 
@@ -17,7 +17,7 @@ Daily OHLCV candles are fetched automatically in this order:
 4. **Longbridge OpenAPI** — uses the existing `LONGBRIDGE_APP_KEY`, `LONGBRIDGE_APP_SECRET`, and `LONGBRIDGE_ACCESS_TOKEN` credentials already configured for the app.
 5. **Alpha Vantage** — optional final fallback. Set `ALPHAVANTAGE_API_KEY` in the service environment to enable it.
 
-Longbridge is now used for historical daily candles only after Yahoo, Stooq, and Nasdaq fail; its existing realtime/WebSocket integration remains separate and unchanged.
+Longbridge is used for historical daily candles only after Yahoo, Stooq, and Nasdaq fail. Its realtime quote client is separate: it subscribes to eligible watchlist symbols, verifies/restores missing subscriptions, and refreshes quote snapshots as a fallback. US pre-market and post-market quotes are selected when their timestamps are newer than the regular-session quote. US overnight quotes are enabled with `LONGBRIDGE_ENABLE_OVERNIGHT=true` (already set in `render.yaml`); the same Longbridge LV1 quote permission covers pre-market, regular, after-hours, and overnight US stock quotes.
 
 A failed or empty provider no longer aborts the symbol download: the next provider is attempted, and the successful source is written to the application log. If all providers fail, the error lists each provider's failure. No symbols are removed from the S&P 500 universe and the Minervini screening rules are unchanged.
 
