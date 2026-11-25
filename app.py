@@ -110,6 +110,49 @@ class ScanController:
         self._scan_progress: dict[str, Any] = {"phase": "idle", "completed": 0, "total": 0, "percent": 0, "current_symbol": ""}
         if self._cards and self.lb_client.has_credentials():
             self._subscribe_and_seed_quotes(list(self._cards), context="startup restore")
+        self._realtime_watchdog = threading.Thread(
+            target=self._realtime_watchdog_loop,
+            name="longbridge-realtime-watchdog",
+            daemon=True,
+        )
+        self._realtime_watchdog.start()
+
+    def _realtime_watchdog_loop(self) -> None:
+        """Periodically verify subscriptions and refresh quotes if pushes stall."""
+        while True:
+            time.sleep(30)
+            if not self.lb_client.has_credentials():
+                continue
+            with self._lock:
+                symbols = sorted(self._cards)
+            if not symbols:
+                continue
+            try:
+                restored = self.lb_client.ensure_subscriptions(symbols)
+                if restored:
+                    log.warning(
+                        "Longbridge watchdog restored quote subscriptions: %s",
+                        ",".join(restored),
+                    )
+                quotes = self.lb_client.get_realtime_quotes(symbols)
+                received = 0
+                for quote in quotes:
+                    if quote.get("last_done") is None:
+                        continue
+                    self._on_realtime_quote({
+                        **quote,
+                        "source": "longbridge_quote_api",
+                    })
+                    received += 1
+                log.debug(
+                    "Longbridge watchdog quote refresh: %s/%s symbols",
+                    received, len(symbols),
+                )
+            except Exception:
+                log.exception("Longbridge realtime watchdog failed")
+                with self._state_cv:
+                    self._ws_connected = False
+                    self._notify_state_changed_locked()
 
     def _subscribe_and_seed_quotes(self, symbols: list[str], context: str) -> None:
         """Subscribe watchlist symbols and seed cards with the latest quote snapshot."""
