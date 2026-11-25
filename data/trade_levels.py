@@ -122,10 +122,11 @@ def default_entry_zones(
     candles_df: pd.DataFrame | None = None,
     final_low: float | None = None,
 ) -> list[float]:
-    base = piv_p if (piv_p is not None and np.isfinite(piv_p) and piv_p > 0) else cur_p
-    if base is None or not np.isfinite(base) or base <= 0:
+    # Never fabricate a strategy pivot from the current quote. Without a
+    # validated pivot, entry zones cannot be anchored to the setup.
+    if piv_p is None or not np.isfinite(piv_p) or piv_p <= 0:
         return []
-    base_f = float(base)
+    base_f = float(piv_p)
     max_pct = MAX_ENTRY_RANGE_PCT / 100.0
     step_pct = max_pct / (NUM_ZONES - 1) if NUM_ZONES > 1 else max_pct
     return [round(base_f * (1.0 + step_pct * idx), 4) for idx in range(NUM_ZONES)]
@@ -176,10 +177,11 @@ def default_shared_stop_loss(
     candles_df: pd.DataFrame | None = None,
     final_low: float | None = None,
 ) -> float | None:
+    # A stop must be anchored to the setup pivot, never a fabricated entry.
     anchor = (
         float(piv_p)
         if (piv_p is not None and np.isfinite(piv_p) and piv_p > 0)
-        else (float(entry_zones[0]) if entry_zones else None)
+        else None
     )
     if anchor is None or not np.isfinite(anchor) or anchor <= 0:
         return None
@@ -235,6 +237,23 @@ def build_trade_levels(
     within_range, range_note = evaluate_entry_range(cur_p, piv_p)
     if range_note:
         notes.append(range_note)
+
+    if piv_p is None:
+        notes.append("لا يمكن إنشاء مستويات تداول موثوقة دون نقطة ارتكاز صالحة للنموذج.")
+        return TradeLevelsPlan(
+            symbol=symbol.upper().strip(),
+            current_price=cur_p,
+            pivot_price=None,
+            final_low=low_p,
+            atr_value=atr_val,
+            daily_move_pct=daily_move,
+            within_entry_range=None,
+            entry_zones=[],
+            targets=[],
+            shared_stop_loss=None,
+            status="غير مكتمل — نقطة الارتكاز غير متوفرة",
+            notes=notes,
+        )
 
     active_entry_calc = entry_calculator or default_entry_zones
     active_target_calc = target_calculator or default_targets
