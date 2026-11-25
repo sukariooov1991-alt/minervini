@@ -4,7 +4,36 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 import time
+import threading
 import pandas as pd
+
+# Yahoo Finance is a public endpoint with undocumented request limits.
+# Serialize requests and leave a minimum gap between ticker requests.
+_YAHOO_REQUEST_LOCK = threading.Lock()
+_YAHOO_NEXT_REQUEST_AT = 0.0
+_YAHOO_MIN_REQUEST_INTERVAL = 1.25
+
+
+class YahooRateLimitError(RuntimeError):
+    """Yahoo Finance rejected requests because its rate limit was reached."""
+
+
+def _wait_for_yahoo_request_slot() -> None:
+    global _YAHOO_NEXT_REQUEST_AT
+    with _YAHOO_REQUEST_LOCK:
+        now = time.monotonic()
+        wait = max(0.0, _YAHOO_NEXT_REQUEST_AT - now)
+        if wait:
+            time.sleep(wait)
+        _YAHOO_NEXT_REQUEST_AT = time.monotonic() + _YAHOO_MIN_REQUEST_INTERVAL
+
+
+def _is_yahoo_rate_limit_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return any(token in message for token in (
+        "too many requests", "rate limited", "rate limit", "429",
+        "yfratelimiterror",
+    ))
 
 from data.storage_manager import StorageManager
 
@@ -52,12 +81,13 @@ class DataProvider:
         self.storage = storage or StorageManager()
 
     def fetch_and_store_daily_candles(self, period: str = "2y") -> int:
-        # Yahoo occasionally returns an empty response during transient crumb/session
-        # failures. Retry the same request with bounded backoff before reporting failure.
+        # Pace requests globally across all DataProvider instances. Do not retry
+        # rate-limit responses: repeated retries amplify Yahoo's throttling.
         df = None
         last_error: Exception | None = None
-        for attempt in range(3):
+        for attempt in range(2):
             try:
+                _wait_for_yahoo_request_slot()
                 df = self.ticker.history(
                     period=period, interval="1d", auto_adjust=True
                 )
@@ -65,12 +95,17 @@ class DataProvider:
                     break
             except Exception as exc:
                 last_error = exc
-            if attempt < 2:
-                time.sleep(2 ** attempt)
+                if _is_yahoo_rate_limit_error(exc):
+                    raise YahooRateLimitError(
+                        f"Yahoo Finance rate limit reached while fetching {self.symbol}; "
+                        "remaining downloads should be deferred"
+                    ) from exc
+            if attempt == 0:
+                time.sleep(3)
 
         if df is None or df.empty:
             detail = f": {last_error}" if last_error else ""
-            raise ValueError(f"No daily data for {self.symbol} after 3 attempts{detail}")
+            raise ValueError(f"No daily data for {self.symbol} after 2 attempts{detail}")
 
         rename = {"Open": "open", "High": "high", "Low": "low", "Close": "close", "Volume": "volume"}
         df = df.rename(columns=rename)
