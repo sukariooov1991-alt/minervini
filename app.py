@@ -250,6 +250,9 @@ class ScanController:
         with self._state_cv:
             self._running = True
             self._last_error = None
+            # Cards belong to one scan cycle; do not leave candidates from a
+            # previous run visible when they no longer pass the current filters.
+            self._cards.clear()
             self._market_session_label = self._detect_market_session()
             self._notify_state_changed_locked()
         try:
