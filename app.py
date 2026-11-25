@@ -60,12 +60,48 @@ class ScanController:
                 for card in self.storage.load_watchlist_cards()
                 if card.get("symbol")
             }
-            if self._cards:
-                log.info("Restored %s watchlist cards from SQLite", len(self._cards))
+            log.info(
+                "Watchlist startup restore: %s cards loaded from SQLite (db=%s)",
+                len(self._cards), self.db_path,
+            )
         except Exception:
             log.exception("Failed to restore persisted watchlist cards")
             self._cards = {}
-        self._live_prices: dict[str, float] = {}
+
+        # Recovery path: if the card table is empty (for example after a DB
+        # path/mount change), rebuild eligible cards from the last completed
+        # screener output. This file is written atomically at the end of a scan
+        # and lives beside the database on Render's persistent disk.
+        if not self._cards:
+            try:
+                output_file = Path(self.output_path)
+                if output_file.is_file():
+                    saved = json.loads(output_file.read_text(encoding="utf-8"))
+                    saved_rows = saved.get("results", [])
+                    saved_market = saved.get("market_status", {})
+                    recovered = 0
+                    for row in saved_rows:
+                        if not isinstance(row, dict) or not row.get("watchlist_eligible"):
+                            continue
+                        card = self._evaluate_candidate(
+                            row, bool(saved_market.get("market_favorable", False))
+                        )
+                        if card is None:
+                            continue
+                        symbol = str(card.get("symbol", "")).upper().strip()
+                        if not symbol:
+                            continue
+                        self._cards[symbol] = card
+                        self.storage.save_watchlist_card(card)
+                        recovered += 1
+                    log.warning(
+                        "Watchlist startup recovery: rebuilt %s eligible cards from %s",
+                        recovered, output_file,
+                    )
+            except Exception:
+                log.exception("Failed to recover watchlist cards from last screener output")
+
+        self._live_prices: dict[str, float] = {};
         self._realtime_locks: dict[str, threading.Lock] = {}
         self._ws_connected: bool = False
         self._last_error: str | None = None
