@@ -70,38 +70,44 @@ class ScanController:
             log.exception("Failed to restore persisted watchlist cards")
             self._cards = {}
 
-        # Recovery path: if the card table is empty (for example after a DB
-        # path/mount change), rebuild eligible cards from the last completed
-        # screener output. This file is written atomically at the end of a scan
-        # and lives beside the database on Render's persistent disk.
-        if not self._cards:
-            try:
-                output_file = Path(self.output_path)
-                if output_file.is_file():
-                    saved = json.loads(output_file.read_text(encoding="utf-8"))
-                    saved_rows = saved.get("results", [])
-                    saved_market = saved.get("market_status", {})
-                    recovered = 0
-                    for row in saved_rows:
-                        if not isinstance(row, dict) or not row.get("watchlist_eligible"):
-                            continue
+        # Merge missing cards from the last complete screener snapshot. This
+        # also repairs partial SQLite card tables after an interrupted write.
+        try:
+            output_file = Path(self.output_path)
+            if output_file.is_file():
+                saved = json.loads(output_file.read_text(encoding="utf-8"))
+                saved_rows = saved.get("results", [])
+                saved_market = saved.get("market_status", {})
+                if not isinstance(saved_rows, list):
+                    raise ValueError("last screener output has no valid results list")
+                if not isinstance(saved_market, dict):
+                    saved_market = {}
+                recovered = 0
+                for row in saved_rows:
+                    if not isinstance(row, dict) or not row.get("watchlist_eligible"):
+                        continue
+                    symbol = str(row.get("symbol", "")).upper().strip()
+                    if not symbol or symbol in self._cards:
+                        continue
+                    try:
                         card = self._evaluate_candidate(
                             row, bool(saved_market.get("market_favorable", False))
                         )
                         if card is None:
                             continue
-                        symbol = str(card.get("symbol", "")).upper().strip()
-                        if not symbol:
-                            continue
                         self._cards[symbol] = card
                         self.storage.save_watchlist_card(card)
                         recovered += 1
-                    log.warning(
-                        "Watchlist startup recovery: rebuilt %s eligible cards from %s",
-                        recovered, output_file,
-                    )
-            except Exception:
-                log.exception("Failed to recover watchlist cards from last screener output")
+                    except Exception:
+                        log.exception("Startup recovery failed for watchlist symbol %s", symbol)
+                log.warning(
+                    "Watchlist startup recovery: rebuilt %s missing eligible cards from %s",
+                    recovered, output_file,
+                )
+        except FileNotFoundError:
+            log.info("No previous screener snapshot available for startup card recovery")
+        except Exception:
+            log.exception("Failed to recover watchlist cards from last screener output")
 
         self._realtime_locks: dict[str, threading.Lock] = {}
         self._ws_connected: bool = False
