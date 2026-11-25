@@ -3,7 +3,7 @@ services:
     name: minervini-platform
     runtime: python
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 8
+    startCommand: gunicorn --config gunicorn.conf.py app:app --bind 0.0.0.0:$PORT --workers 1 --threads 8
     disk:
       name: minervini-data
       mountPath: /var/data
