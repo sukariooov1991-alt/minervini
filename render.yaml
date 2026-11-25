@@ -21,6 +21,8 @@ services:
         sync: false
       - key: LONGBRIDGE_ACCESS_TOKEN
         sync: false
+      - key: LONGBRIDGE_ENABLE_OVERNIGHT
+        value: "true"
       - key: TELEGRAM_BOT_TOKEN
         sync: false
       - key: TELEGRAM_CHAT_ID
