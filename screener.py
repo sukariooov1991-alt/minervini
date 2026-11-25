@@ -119,13 +119,15 @@ class DailyScreener:
         rows: list[dict] = []
         total = len(self.symbols)
         processed = 0
+        analysis_processed = 0
+        progress_total = total * 2
         market_status = ({"market_favorable": True, "regime": "SKIPPED", "reasons": ["market check disabled"]}
                          if skip_market_check else self.check_market(market_symbol, period))
         market_favorable = bool(market_status.get("market_favorable", False))
         batches = [self.symbols[i:i + batch_size] for i in range(0, total, batch_size)]
         for batch_no, batch in enumerate(batches, 1):
             if stop_callback and stop_callback(): break
-            if progress_callback: progress_callback({"phase":"تحميل الدفعة","completed":processed,"total":total,"batch":batch_no,"current_symbol":""})
+            if progress_callback: progress_callback({"phase":"تحميل الدفعة","completed":processed,"total":progress_total,"batch":batch_no,"current_symbol":""})
             if update:
                 for sym in batch:
                     if stop_callback and stop_callback(): break
@@ -141,11 +143,15 @@ class DailyScreener:
                         log.exception("Data download failed for %s", sym)
                         failures.append({"symbol":sym,"error":str(exc)})
                     processed += 1
-                    if progress_callback: progress_callback({"phase":"تحميل البيانات","completed":processed,"total":total,"batch":batch_no,"current_symbol":sym})
+                    if progress_callback: progress_callback({"phase":"تحميل البيانات","completed":processed,"total":progress_total,"batch":batch_no,"current_symbol":sym})
+            if not update:
+                processed = total
             rs, frames = self.compute_rs_ratings()
             batch_rows = []
             for sym in batch:
                 if stop_callback and stop_callback(): break
+                analysis_processed += 1
+                if progress_callback: progress_callback({"phase":"تحليل الدفعة","completed":total + analysis_processed,"total":progress_total,"batch":batch_no,"current_symbol":sym})
                 df = frames.get(sym)
                 if df is None or len(df) < 252: continue
                 try:
@@ -180,11 +186,10 @@ class DailyScreener:
                     batch_rows.append(row)
                 except Exception:
                     log.exception("Unexpected analysis error for symbol %s", sym)
-                if progress_callback: progress_callback({"phase":"تحليل الدفعة","completed":processed,"total":total,"batch":batch_no,"current_symbol":sym})
             if batch_callback and batch_rows:
                 try: batch_callback(batch_rows, market_status)
                 except Exception: log.exception("Batch callback failed for batch %s", batch_no)
-            if progress_callback: progress_callback({"phase":"اكتملت الدفعة","completed":processed,"total":total,"batch":batch_no,"current_symbol":""})
+            if progress_callback: progress_callback({"phase":"اكتملت الدفعة","completed":total + analysis_processed,"total":progress_total,"batch":batch_no,"current_symbol":""})
         result = pd.DataFrame(rows)
         if not result.empty:
             result = result.sort_values(["passed_all_filters","breakout","vcp_passed","rs_rating"],ascending=[False,False,False,False])
