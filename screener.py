@@ -152,10 +152,20 @@ class DailyScreener:
                     try:
                         n = self._get_provider(sym).fetch_and_store_daily_candles(period)
                         log.info("[%s/%s] %s stored %s bars; batch %s/%s", processed+1,total,sym,n,batch_no,len(batches))
-                    except YahooRateLimitError:
+                    except YahooRateLimitError as exc:
                         log.exception("Yahoo rate limit while downloading %s", sym)
-                        failures.append({"symbol":sym,"error":"Yahoo rate limit reached"})
+                        failures.append({"symbol":sym,"error":str(exc)})
                         failures.extend({"symbol":x,"error":"Deferred after Yahoo rate limit"} for x in self.symbols[processed+1:])
+                        if progress_callback:
+                            progress_callback({
+                                "phase": "توقف بسبب حد Yahoo",
+                                "completed": processed,
+                                "total": progress_total,
+                                "batch": batch_no,
+                                "batch_total": len(batches),
+                                "current_symbol": sym,
+                                "error": str(exc),
+                            })
                         raise
                     except Exception as exc:
                         log.exception("Data download failed for %s", sym)
@@ -181,7 +191,12 @@ class DailyScreener:
                 analysis_processed += 1
                 if progress_callback: progress_callback({"phase":"تحليل الدفعة","completed":total + analysis_processed,"total":progress_total,"batch":batch_no,"current_symbol":sym})
                 df = frames.get(sym)
-                if df is None or len(df) < 252: continue
+                if df is None or len(df) < 252:
+                    log.warning(
+                        "Skipping %s during analysis: insufficient daily candles (%s; need 252)",
+                        sym, 0 if df is None else len(df),
+                    )
+                    continue
                 try:
                     rating = rs.get(sym, float("nan"))
                     tt = check_trend_template(df, rating)
@@ -199,6 +214,16 @@ class DailyScreener:
                         fundamental_status = "UNKNOWN" if fdf.empty else ("PASS" if earnings["passed"] else "FAIL")
                     except Exception as exc:
                         log.exception("Fundamental data error for %s", sym)
+                        if progress_callback:
+                            progress_callback({
+                                "phase": "خطأ في البيانات الأساسية",
+                                "completed": total + analysis_processed,
+                                "total": progress_total,
+                                "batch": batch_no,
+                                "batch_total": len(batches),
+                                "current_symbol": sym,
+                                "error": str(exc),
+                            })
                         earnings = {"passed":False,"error":str(exc)}
                         fundamental_status = "UNKNOWN"
                     row = {"symbol":sym,"rs_rating":rating,"trend_template":"PASS","trend_conditions":tt.get("conditions",{}),
