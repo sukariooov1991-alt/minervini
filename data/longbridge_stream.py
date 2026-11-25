@@ -1,18 +1,23 @@
-"""Longbridge realtime price & WebSocket adapter for MINERVINI.
-
-Responsibility:
-- Longbridge realtime prices and market quotes
-- WebSocket connection and subscriptions
-
-Daily historical candles use the Yahoo Finance -> Stooq -> Nasdaq -> Longbridge
-fallback chain (with optional Alpha Vantage last). Earnings data and news continue
-to use Yahoo Finance.
-"""
+"""Longbridge realtime price & WebSocket adapter for MINERVINI."""
 from __future__ import annotations
 
 import os
 import math
 from typing import Any, Callable
+
+
+def _value(obj: Any, name: str, default: Any = None) -> Any:
+    if isinstance(obj, dict):
+        return obj.get(name, default)
+    return getattr(obj, name, default)
+
+
+def _valid_price(value: Any) -> float | None:
+    try:
+        price = float(value)
+    except (TypeError, ValueError):
+        return None
+    return price if math.isfinite(price) and price > 0 else None
 
 
 class LongbridgeRealtimeClient:
@@ -31,25 +36,24 @@ class LongbridgeRealtimeClient:
         self.on_quote = on_quote
         self._ctx: Any = None
         self._subscribed_symbols: list[str] = []
+        self._sub_type_quote: Any = None
 
     def has_credentials(self) -> bool:
         return bool(self.app_key and self.app_secret and self.access_token)
 
     def _normalize_symbol(self, symbol: str) -> str:
-        s = symbol.upper().strip()
+        s = str(symbol).upper().strip()
         suffix = f".{self.default_market}"
-        if s.endswith(suffix):
-            return s
-        return f"{s}{suffix}"
+        return s if s.endswith(suffix) else f"{s}{suffix}"
 
     def _denormalize_symbol(self, lb_symbol: str) -> str:
-        s = lb_symbol.upper().strip()
+        s = str(lb_symbol).upper().strip()
         suffix = f".{self.default_market}"
-        if s.endswith(suffix):
-            return s[: -len(suffix)]
-        return s
+        return s[:-len(suffix)] if s.endswith(suffix) else s
 
     def connect(self) -> None:
+        if self._ctx is not None:
+            return
         if not self.has_credentials():
             raise RuntimeError(
                 "Missing Longbridge credentials (LONGBRIDGE_APP_KEY, LONGBRIDGE_APP_SECRET, LONGBRIDGE_ACCESS_TOKEN)."
@@ -57,36 +61,34 @@ class LongbridgeRealtimeClient:
         try:
             from longbridge.openapi import Config, QuoteContext, SubType  # type: ignore
         except ImportError as exc:
-            raise RuntimeError(
-                "Longbridge SDK is not installed (pip install longbridge)."
-            ) from exc
+            raise RuntimeError("Longbridge SDK is not installed (pip install longbridge).") from exc
 
-        # Config is a Rust-backed SDK type and is not directly constructible.
-        # Use the supported factory for legacy App Key credentials.
+        enable_overnight = os.getenv("LONGBRIDGE_ENABLE_OVERNIGHT", "true").strip().lower() in {
+            "1", "true", "yes", "on",
+        }
         config = Config.from_apikey(
             self.app_key,
             self.app_secret,
             self.access_token,
+            enable_overnight=enable_overnight,
         )
         ctx = QuoteContext(config)
 
         def _handle_quote(symbol: str, event: Any) -> None:
             if self.on_quote is None:
                 return
-            last_done = getattr(event, "last_done", None)
-            try:
-                last_done = float(last_done) if last_done is not None else None
-            except (TypeError, ValueError):
-                return
-            if last_done is not None and (not math.isfinite(last_done) or last_done <= 0):
+            last_done = _valid_price(_value(event, "last_done"))
+            if last_done is None:
                 return
             payload = {
                 "symbol": self._denormalize_symbol(symbol),
                 "raw_symbol": symbol,
                 "last_done": last_done,
-                "timestamp": str(getattr(event, "timestamp", "")),
-                "volume": getattr(event, "volume", None),
-                "turnover": getattr(event, "turnover", None),
+                "timestamp": _value(event, "timestamp"),
+                "volume": _value(event, "volume"),
+                "turnover": _value(event, "turnover"),
+                "trade_session": _value(event, "trade_session"),
+                "trade_status": _value(event, "trade_status"),
                 "source": "longbridge_websocket",
             }
             self.on_quote(payload)
@@ -94,46 +96,106 @@ class LongbridgeRealtimeClient:
         ctx.set_on_quote(_handle_quote)
         self._ctx = ctx
         self._sub_type_quote = SubType.Quote
+        self._subscribed_symbols = []
 
-    def subscribe(self, symbols: list[str]) -> None:
-        cleaned = [self._normalize_symbol(s) for s in symbols if s and s.strip()]
-        if not cleaned:
-            return
-        if self._ctx is None:
-            self.connect()
-        self._ctx.subscribe(cleaned, [self._sub_type_quote])
-        self._subscribed_symbols = sorted(set(self._subscribed_symbols) | set(cleaned))
-
-    def unsubscribe(self, symbols: list[str]) -> None:
-        cleaned = [self._normalize_symbol(s) for s in symbols if s and s.strip()]
-        if not cleaned or self._ctx is None:
-            return
-        self._ctx.unsubscribe(cleaned, [self._sub_type_quote])
-        self._subscribed_symbols = [s for s in self._subscribed_symbols if s not in set(cleaned)]
-
-    def get_realtime_quotes(self, symbols: list[str]) -> list[dict[str, Any]]:
-        cleaned = [self._normalize_symbol(s) for s in symbols if s and s.strip()]
+    def subscribe(self, symbols: list[str]) -> list[str]:
+        cleaned = sorted({
+            self._normalize_symbol(s) for s in symbols if s and str(s).strip()
+        })
         if not cleaned:
             return []
         if self._ctx is None:
             self.connect()
-        resp = self._ctx.quote(cleaned)
+
+        # Idempotent: never send duplicate subscriptions for symbols already
+        # registered on this live QuoteContext.
+        already = set(self._subscribed_symbols)
+        new_symbols = [symbol for symbol in cleaned if symbol not in already]
+        if not new_symbols:
+            return []
+        self._ctx.subscribe(new_symbols, [self._sub_type_quote])
+        self._subscribed_symbols = sorted(already | set(new_symbols))
+        return [self._denormalize_symbol(symbol) for symbol in new_symbols]
+
+    def unsubscribe(self, symbols: list[str]) -> None:
+        cleaned = sorted({
+            self._normalize_symbol(s) for s in symbols if s and str(s).strip()
+        })
+        if not cleaned or self._ctx is None:
+            return
+        active = set(self._subscribed_symbols)
+        remove = [symbol for symbol in cleaned if symbol in active]
+        if not remove:
+            return
+        self._ctx.unsubscribe(remove, [self._sub_type_quote])
+        self._subscribed_symbols = sorted(active - set(remove))
+
+    @staticmethod
+    def _latest_session_quote(quote: Any) -> tuple[float | None, Any, str]:
+        # Longbridge returns separate US pre-market, post-market and overnight
+        # quotes. last_done alone is the regular-session last trade and can be
+        # stale while an extended session is actively trading.
+        candidates: list[tuple[int, float, Any, str]] = []
+        regular_price = _valid_price(_value(quote, "last_done"))
+        regular_ts = _value(quote, "timestamp")
+        try:
+            regular_order = int(regular_ts or 0)
+        except (TypeError, ValueError):
+            regular_order = 0
+        if regular_price is not None:
+            candidates.append((regular_order, regular_price, regular_ts, "regular"))
+
+        for field, label in (
+            ("pre_market_quote", "pre-market"),
+            ("post_market_quote", "post-market"),
+            ("over_night_quote", "overnight"),
+            ("overnight_quote", "overnight"),
+        ):
+            session_quote = _value(quote, field)
+            if session_quote is None:
+                continue
+            price = _valid_price(_value(session_quote, "last_done"))
+            if price is None:
+                continue
+            timestamp = _value(session_quote, "timestamp")
+            try:
+                order = int(timestamp or 0)
+            except (TypeError, ValueError):
+                order = 0
+            candidates.append((order, price, timestamp, label))
+
+        if not candidates:
+            return None, None, "unavailable"
+        _, price, timestamp, session = max(candidates, key=lambda item: item[0])
+        return price, timestamp, session
+
+    def get_realtime_quotes(self, symbols: list[str]) -> list[dict[str, Any]]:
+        cleaned = sorted({
+            self._normalize_symbol(s) for s in symbols if s and str(s).strip()
+        })
+        if not cleaned:
+            return []
+        if self._ctx is None:
+            self.connect()
+        response = self._ctx.quote(cleaned)
         items: list[dict[str, Any]] = []
-        for q in resp:
-            last_done = getattr(q, "last_done", None)
-            prev_close = getattr(q, "prev_close", None)
+        for quote in response:
+            price, timestamp, session = self._latest_session_quote(quote)
             items.append({
-                "symbol": self._denormalize_symbol(getattr(q, "symbol", "")),
-                "last_done": last_done,
-                "prev_close": float(prev_close) if prev_close is not None else None,
-                "timestamp": str(getattr(q, "timestamp", "")),
-                "source": "longbridge",
+                "symbol": self._denormalize_symbol(_value(quote, "symbol", "")),
+                "last_done": price,
+                "timestamp": timestamp,
+                "trade_session": session,
+                "prev_close": _value(quote, "prev_close"),
+                "source": "longbridge_quote_api",
             })
         return items
 
     def close(self) -> None:
         ctx = self._ctx
         self._ctx = None
+        self._subscribed_symbols = []
+        self._sub_type_quote = None
         if ctx is not None and hasattr(ctx, "close"):
             try:
                 ctx.close()
