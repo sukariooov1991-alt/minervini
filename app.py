@@ -563,7 +563,12 @@ class ScanController:
                         len(evaluated_symbols), len(eligible_symbols),
                         len(uncertain_symbols), len(removed),
                     )
-                    for stale_symbol in removed:
+                    for stale_symbol in sorted(removed):
+                        log.warning(
+                            "Watchlist reconciliation removing %s: fully_evaluated=true, "
+                            "eligible_in_current_scan=false",
+                            stale_symbol,
+                        )
                         self._cards.pop(stale_symbol, None)
                         self._live_prices.pop(stale_symbol, None)
                         try:
@@ -631,6 +636,7 @@ class ScanController:
 
     def remove_card(self, symbol: str) -> None:
         clean = symbol.upper().strip()
+        log.warning("Watchlist card manually deleted through API: %s", clean)
         with self._state_cv:
             self._cards.pop(clean, None)
             try:
