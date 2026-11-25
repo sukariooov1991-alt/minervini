@@ -251,10 +251,12 @@ class DataProvider:
                     from longbridge.openapi import Config, QuoteContext
                 except ImportError as exc:
                     raise RuntimeError("Longbridge SDK is not installed") from exc
-                config = Config(
-                    app_key=app_key,
-                    app_secret=app_secret,
-                    access_token=access_token,
+                # The SDK's Rust-backed Config must be created through
+                # its supported factory, not the unsupported direct constructor.
+                config = Config.from_apikey(
+                    app_key,
+                    app_secret,
+                    access_token,
                 )
                 _LONGBRIDGE_CONTEXT = QuoteContext(config)
             ctx = _LONGBRIDGE_CONTEXT
