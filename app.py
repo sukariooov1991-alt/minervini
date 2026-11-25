@@ -109,12 +109,45 @@ class ScanController:
         self._scan_errors: list[dict[str, str]] = []
         self._scan_progress: dict[str, Any] = {"phase": "idle", "completed": 0, "total": 0, "percent": 0, "current_symbol": ""}
         if self._cards and self.lb_client.has_credentials():
-            try:
-                self.lb_client.subscribe(list(self._cards))
+            self._subscribe_and_seed_quotes(list(self._cards), context="startup restore")
+
+    def _subscribe_and_seed_quotes(self, symbols: list[str], context: str) -> None:
+        """Subscribe watchlist symbols and seed cards with the latest quote snapshot."""
+        clean = sorted({str(s).upper().strip() for s in symbols if str(s).strip()})
+        if not clean:
+            return
+        if not self.lb_client.has_credentials():
+            log.warning("Longbridge realtime disabled: credentials are incomplete (%s)", context)
+            return
+        try:
+            self.lb_client.subscribe(clean)
+            with self._state_cv:
                 self._ws_connected = True
-                log.info("Restored Longbridge subscriptions for %s watchlist cards", len(self._cards))
-            except Exception:
-                log.exception("Failed to restore Longbridge subscriptions for persisted cards")
+                self._notify_state_changed_locked()
+            log.info("Longbridge WebSocket subscribed to %s symbols (%s)", len(clean), context)
+        except Exception:
+            with self._state_cv:
+                self._ws_connected = False
+                self._notify_state_changed_locked()
+            log.exception("Longbridge WebSocket subscription failed (%s)", context)
+            return
+
+        # A WebSocket only pushes when a quote event arrives. Fetch the latest
+        # quote snapshot as well, so cards do not stay on yesterday's close while
+        # waiting for the first stream event (or when the market is closed).
+        try:
+            quotes = self.lb_client.get_realtime_quotes(clean)
+            received = 0
+            for quote in quotes:
+                if quote.get("last_done") is not None:
+                    self._on_realtime_quote({**quote, "source": "longbridge_quote_api"})
+                    received += 1
+            log.info(
+                "Longbridge initial quote snapshot: %s/%s symbols returned (%s)",
+                received, len(clean), context,
+            )
+        except Exception:
+            log.exception("Longbridge initial quote snapshot failed (%s)", context)
 
     def _notify_state_changed_locked(self) -> None:
         self._state_version += 1
@@ -243,7 +276,11 @@ class ScanController:
 
                     card.update({
                         "current_price": round(price, 4),
-                        "price_source": "Longbridge WebSocket",
+                        "price_source": (
+                            "Longbridge Quote API"
+                            if quote.get("source") == "longbridge_quote_api"
+                            else "Longbridge WebSocket"
+                        ),
                         "pivot_price": plan["pivot_price"],
                         "final_low": plan["final_low"],
                         "entry_zones": plan["entry_zones"],
@@ -300,7 +337,11 @@ class ScanController:
                     card = self._cards.get(sym)
                     if card is not None:
                         card["current_price"] = round(price, 4)
-                        card["price_source"] = "Longbridge WebSocket"
+                        card["price_source"] = (
+                            "Longbridge Quote API"
+                            if quote.get("source") == "longbridge_quote_api"
+                            else "Longbridge WebSocket"
+                        )
                         card["updated_at"] = datetime.now(timezone.utc).isoformat()
                         within_range, range_note = evaluate_entry_range(price, card.get("pivot_price"))
                         card["within_entry_range"] = within_range
@@ -510,13 +551,10 @@ class ScanController:
                         continue
                     try: self.notifier.send_stock_appearance_alert(card)
                     except Exception: log.exception("Telegram alert failed for %s", card.get("symbol"))
-                if self.lb_client.has_credentials():
-                    try:
-                        self.lb_client.subscribe([card["symbol"] for card in qualified])
-                        with self._state_cv:
-                            self._ws_connected = True
-                            self._notify_state_changed_locked()
-                    except Exception: log.exception("Longbridge subscribe failed after batch")
+                self._subscribe_and_seed_quotes(
+                    [card["symbol"] for card in qualified],
+                    context="new eligible batch",
+                )
             result_df, failures, market_status = screener.run_screen(
                 update=update, progress_callback=self._update_scan_progress,
                 batch_callback=publish_batch, stop_callback=self._stop_event.is_set, batch_size=5,
