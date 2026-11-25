@@ -349,7 +349,8 @@
         el.querySelector('.symbol').textContent = c.symbol;
         const priceSource = c.price_source || 'مصدر السعر غير محدد';
         const priceUpdated = c.updated_at ? new Date(c.updated_at).toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '';
-        el.querySelector('.price-text').textContent = ` السعر: ${c.current_price} — ${priceSource}${priceUpdated ? ' (' + priceUpdated + ')' : ''}`;
+        const priceSession = c.price_session ? ' — الجلسة: ' + c.price_session : '';
+        el.querySelector('.price-text').textContent = ` السعر: ${c.current_price} — ${priceSource}${priceSession}${priceUpdated ? ' (' + priceUpdated + ')' : ''}`;
         el.querySelector('.status-stage-text').textContent = `${c.status} — ${c.stage}`;
         const levelsStatus = c.levels_status || 'غير متاح';
         const renderLevelValues = (selector, values, fallback) => {
