@@ -70,6 +70,19 @@
       cursor: pointer;
     }
     .controls button { width: 100%; }
+    .scan-progress {
+      display: none;
+      margin: -6px 0 18px;
+      padding: 12px;
+      background: var(--card);
+      border: 1px solid var(--card-border);
+      border-radius: 10px;
+    }
+    .scan-progress.visible { display: block; }
+    .scan-progress-top { display: flex; justify-content: space-between; gap: 10px; margin-bottom: 9px; font-size: .88rem; }
+    .progress-track { height: 10px; overflow: hidden; border-radius: 99px; background: #263244; }
+    .progress-fill { width: 0%; height: 100%; border-radius: inherit; background: var(--entry); transition: width .25s ease; }
+    .scan-message { margin-top: 8px; color: var(--muted); font-size: .82rem; }
     .btn-scan { background: var(--btn-start); }
     .btn-stop { background: var(--btn-stop); }
     .btn-del {
@@ -175,6 +188,16 @@
       <button class="btn-scan" id="startBtn" onclick="startScan()">فحص</button>
       <button class="btn-stop" id="stopBtn" onclick="stopScan()">إيقاف الفحص</button>
     </div>
+    <section class="scan-progress" id="scanProgress" aria-live="polite">
+      <div class="scan-progress-top">
+        <strong id="scanMessage">الفحص قيد التجهيز</strong>
+        <strong id="scanPercent">0%</strong>
+      </div>
+      <div class="progress-track" role="progressbar" aria-label="تقدم الفحص" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="scanProgressTrack">
+        <div class="progress-fill" id="scanProgressFill"></div>
+      </div>
+      <div class="scan-message" id="scanDetails"></div>
+    </section>
     <div class="cards" id="cardsContainer"></div>
   </div>
 
@@ -182,15 +205,48 @@
     const openCards = new Set();
 
     async function startScan() {
-      await fetch('/api/scan/start', {
+      const message = document.getElementById('scanMessage');
+      message.textContent = 'بدأ الفحص...';
+      document.getElementById('scanProgress').classList.add('visible');
+      document.getElementById('scanProgressFill').style.width = '0%';
+      document.getElementById('scanPercent').textContent = '0%';
+      const response = await fetch('/api/scan/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({})
       });
+      const result = await response.json();
+      if (!result.started) message.textContent = 'يوجد فحص جارٍ بالفعل';
     }
 
     async function stopScan() {
       await fetch('/api/scan/stop', { method: 'POST' });
+      document.getElementById('scanMessage').textContent = 'جارٍ إيقاف الفحص...';
+    }
+
+    function renderScanProgress(data) {
+      const p = data.scan_progress || {};
+      const box = document.getElementById('scanProgress');
+      if (!data.running && (!p.phase || p.phase === 'idle')) return;
+      box.classList.add('visible');
+      const percent = Math.max(0, Math.min(100, Number(p.percent) || 0));
+      document.getElementById('scanProgressFill').style.width = percent + '%';
+      document.getElementById('scanPercent').textContent = percent + '%';
+      document.getElementById('scanProgressTrack').setAttribute('aria-valuenow', String(percent));
+      const labels = {
+        starting: 'بدأ الفحص...',
+        'تحميل البيانات': 'جارٍ تحميل بيانات الأسهم...',
+        'تحليل الأسهم': 'جارٍ تحليل الأسهم...',
+        completed: 'انتهى الفحص بنجاح',
+        stopped: 'تم إيقاف الفحص',
+        error: 'انتهى الفحص مع وجود خطأ'
+      };
+      document.getElementById('scanMessage').textContent = labels[p.phase] || (data.running ? 'الفحص جارٍ...' : 'انتهى الفحص');
+      const total = Number(p.total) || 0;
+      const completed = Number(p.completed) || 0;
+      let details = total ? 'تمت معالجة ' + completed + ' من ' + total : '';
+      if (p.current_symbol) details += (details ? ' — ' : '') + 'السهم: ' + p.current_symbol;
+      document.getElementById('scanDetails').textContent = details;
     }
 
     async function deleteCard(event, sym) {
@@ -308,6 +364,7 @@
       } else {
         sessionEl.textContent = `حالة السوق: ${data.market_session || 'قبل الافتتاح'}`;
       }
+      renderScanProgress(data);
       renderCards(data.cards || []);
     }
 
