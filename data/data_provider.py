@@ -173,7 +173,7 @@ class DataProvider:
             "todate": end.strftime("%Y-%m-%d"),
             "limit": "999999",
         })
-        url = f"https://api.nasdaq.com/api/quote/{self.symbol.replace('.', '/')}/historical?{params}"
+        url = f"https://api.nasdaq.com/api/quote/{self.symbol}/historical?{params}"
         request = Request(url, headers={
             "User-Agent": "Mozilla/5.0 (compatible; MinerviniDataBot/1.0)",
             "Accept": "application/json, text/plain, */*",
