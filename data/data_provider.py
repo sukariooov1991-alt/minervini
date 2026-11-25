@@ -44,7 +44,10 @@ class DataProvider:
             raise RuntimeError(
                 "Install dependencies with: pip install -r requirements.txt"
             ) from exc
-        self.ticker = yf.Ticker(self.symbol)
+        # Yahoo Finance uses hyphens for class-share tickers (e.g. BRK-B),
+        # while the screener/database keep the canonical S&P symbol (BRK.B).
+        yahoo_symbol = self.symbol.replace(".", "-")
+        self.ticker = yf.Ticker(yahoo_symbol)
         self.storage = storage or StorageManager()
 
     def fetch_and_store_daily_candles(self, period: str = "2y") -> int:
