@@ -85,10 +85,12 @@ class DataProvider:
 
     def fetch_and_store_daily_candles(self, period: str = "2y") -> int:
         # Pace requests globally across all DataProvider instances. Do not retry
-        # rate-limit responses: repeated retries amplify Yahoo's throttling.
+        # explicit rate-limit responses: repeated retries amplify Yahoo throttling.
+        # Empty responses are retried with a fresh Ticker instance because Yahoo
+        # occasionally returns an empty chart payload for otherwise valid symbols.
         df = None
         last_error: Exception | None = None
-        for attempt in range(2):
+        for attempt in range(3):
             try:
                 _wait_for_yahoo_request_slot()
                 df = self.ticker.history(
@@ -103,8 +105,14 @@ class DataProvider:
                         f"Yahoo Finance rate limit reached while fetching {self.symbol}; "
                         "remaining downloads should be deferred"
                     ) from exc
-            if attempt == 0:
-                time.sleep(3)
+                df = None
+            if attempt < 2:
+                time.sleep(3 * (attempt + 1))
+                try:
+                    import yfinance as yf
+                    self.ticker = yf.Ticker(self.symbol.replace(".", "-"))
+                except Exception:
+                    log.exception("Could not refresh Yahoo ticker for %s", self.symbol)
 
         if df is None or df.empty:
             detail = f": {last_error}" if last_error else ""
@@ -142,15 +150,10 @@ class DataProvider:
         except Exception:
             log.exception("Quarterly fundamentals request failed for %s", self.symbol)
             return pd.DataFrame()
-        # ROE is supplementary metadata; Yahoo may deny the quoteSummary/info
-        # endpoint even when quarterly financial statements are available.
-        # Do not discard usable EPS/revenue data because this optional request fails.
-        try:
-            _wait_for_yahoo_request_slot()
-            info = self.ticker.info or {}
-        except Exception:
-            log.exception("Optional quote-summary request failed for %s", self.symbol)
-            info = {}
+        # Do not call ticker.info here: Yahoo's quoteSummary endpoint frequently
+        # returns HTTP 401 (Invalid Crumb / Unauthorized). ROE is supplementary;
+        # EPS and revenue growth remain available from quarterly_financials.
+        info = {}
         if q is None or q.empty:
             return pd.DataFrame()
 
@@ -183,11 +186,7 @@ class DataProvider:
                 "revenue_year_ago": prior_r,
                 "eps_growth_pct": growth(e, prior_e),
                 "revenue_growth_pct": growth(r, prior_r),
-                "roe_pct": (
-                    float(info["returnOnEquity"]) * 100
-                    if info.get("returnOnEquity") is not None
-                    else float("nan")
-                ),
+                "roe_pct": float("nan"),
             })
 
         return pd.DataFrame(rows).sort_values("period", ascending=False).reset_index(drop=True)
