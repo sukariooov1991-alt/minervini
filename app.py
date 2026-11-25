@@ -495,12 +495,37 @@ class ScanController:
                         for item in failures
                         if item.get("symbol")
                     }
-                    eligible_symbols = (
-                        set(result_df.loc[result_df.get("watchlist_eligible", False) == True, "symbol"].astype(str))
-                        if result_df is not None and not result_df.empty and "watchlist_eligible" in result_df
-                        else set()
+                    # Only remove a persisted card when that exact symbol was
+                    # fully evaluated in this scan. The result DataFrame contains
+                    # Trend-Template passes only, so absence from it is NOT proof
+                    # that a previously eligible symbol failed the strategy.
+                    evaluated_symbols = {
+                        str(symbol).upper().strip()
+                        for symbol in (market_status.get("evaluated_symbols") or [])
+                        if str(symbol).strip()
+                    }
+                    eligible_symbols = {
+                        str(symbol).upper().strip()
+                        for symbol in (
+                            result_df.loc[
+                                result_df["watchlist_eligible"].fillna(False).astype(bool),
+                                "symbol",
+                            ].tolist()
+                            if result_df is not None
+                            and not result_df.empty
+                            and {"watchlist_eligible", "symbol"}.issubset(result_df.columns)
+                            else []
+                        )
+                    }
+                    # A missing/incomplete result or an interrupted scan must
+                    # never turn into a mass deletion of the saved watchlist.
+                    removable_symbols = evaluated_symbols - uncertain_symbols
+                    removed = (set(self._cards) & removable_symbols) - eligible_symbols
+                    log.info(
+                        "Watchlist reconciliation: evaluated=%s eligible=%s uncertain=%s removed=%s",
+                        len(evaluated_symbols), len(eligible_symbols),
+                        len(uncertain_symbols), len(removed),
                     )
-                    removed = set(self._cards) - eligible_symbols - uncertain_symbols
                     for stale_symbol in removed:
                         self._cards.pop(stale_symbol, None)
                         self._live_prices.pop(stale_symbol, None)
