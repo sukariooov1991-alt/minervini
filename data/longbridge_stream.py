@@ -41,6 +41,28 @@ def _timestamp_order(value: Any) -> float:
             return 0.0
 
 
+def _session_label(value: Any) -> str | None:
+    if value is None:
+        return None
+    try:
+        code = int(value)
+    except (TypeError, ValueError):
+        code = None
+    labels = {0: "regular", 1: "pre-market", 2: "post-market", 3: "overnight"}
+    if code in labels:
+        return labels[code]
+    text = str(getattr(value, "name", value)).lower()
+    if "pre" in text:
+        return "pre-market"
+    if "post" in text:
+        return "post-market"
+    if "night" in text or "overnight" in text:
+        return "overnight"
+    if "normal" in text or "trading" in text:
+        return "regular"
+    return text
+
+
 class LongbridgeRealtimeClient:
     def __init__(
         self,
@@ -108,7 +130,7 @@ class LongbridgeRealtimeClient:
                 "timestamp": _value(event, "timestamp"),
                 "volume": _value(event, "volume"),
                 "turnover": _value(event, "turnover"),
-                "trade_session": _value(event, "trade_session"),
+                "trade_session": _session_label(_value(event, "trade_session")),
                 "trade_status": _value(event, "trade_status"),
                 "source": "longbridge_websocket",
             }
