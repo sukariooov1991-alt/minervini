@@ -298,6 +298,11 @@ class DailyScreener:
                                 })
                             earnings = {"passed": False, "error": str(exc)}
                             fundamental_status = "UNKNOWN"
+                            failures.append({
+                                "symbol": sym,
+                                "error": f"Fundamental data error: {exc}",
+                                "phase": "analysis",
+                            })
 
                         provider_source = (
                             self._get_provider(sym).last_source if update
