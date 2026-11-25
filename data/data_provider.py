@@ -134,7 +134,15 @@ class DataProvider:
                     return frame
             except Exception as exc:
                 last_error = exc
+                error_text = str(exc).lower()
                 log.warning("Yahoo failed for %s (attempt %s/3): %s", self.symbol, attempt + 1, exc)
+                # Authentication, permission, and rate-limit failures will not
+                # be repaired by retrying the same request; fail over promptly.
+                if any(marker in error_text for marker in (
+                    "401", "403", "429", "unauthorized", "forbidden",
+                    "invalid crumb", "too many requests", "rate limit",
+                )):
+                    break
             if attempt < 2:
                 time.sleep(2 * (attempt + 1))
                 try:
