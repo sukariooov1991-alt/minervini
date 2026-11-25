@@ -207,7 +207,7 @@ class DataProvider:
         if not api_key:
             raise RuntimeError("ALPHAVANTAGE_API_KEY is not configured")
         params = urlencode({
-            "function": "TIME_SERIES_DAILY_ADJUSTED",
+            "function": "TIME_SERIES_DAILY",
             "symbol": self.symbol.replace(".", "-"),
             "outputsize": "full",
             "apikey": api_key,
