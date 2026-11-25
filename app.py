@@ -53,6 +53,8 @@ class ScanController:
             "reasons": [],
         }
         self._cards: dict[str, dict[str, Any]] = {}
+        # Candidate reconstruction during startup reads the live-price cache.
+        self._live_prices: dict[str, float] = {}
         try:
             # Restore cards before Flask can serve the first /api/state or SSE snapshot.
             self._cards = {
@@ -101,7 +103,6 @@ class ScanController:
             except Exception:
                 log.exception("Failed to recover watchlist cards from last screener output")
 
-        self._live_prices: dict[str, float] = {};
         self._realtime_locks: dict[str, threading.Lock] = {}
         self._ws_connected: bool = False
         self._last_error: str | None = None
