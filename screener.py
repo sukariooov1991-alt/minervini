@@ -160,6 +160,16 @@ class DailyScreener:
                     except Exception as exc:
                         log.exception("Data download failed for %s", sym)
                         failures.append({"symbol":sym,"error":str(exc)})
+                        if progress_callback:
+                            progress_callback({
+                                "phase": "خطأ أثناء تحميل البيانات",
+                                "completed": processed,
+                                "total": progress_total,
+                                "batch": batch_no,
+                                "batch_total": len(batches),
+                                "current_symbol": sym,
+                                "error": str(exc),
+                            })
                     processed += 1
                     if progress_callback: progress_callback({"phase":"تحميل البيانات","completed":processed,"total":progress_total,"batch":batch_no,"current_symbol":sym})
             if not update:
@@ -209,9 +219,20 @@ class DailyScreener:
                             batch_callback([row], market_status)
                         except Exception:
                             log.exception("Result publish failed for %s in batch %s", sym, batch_no)
-                except Exception:
+                except Exception as exc:
                     log.exception("Unexpected analysis error for symbol %s", sym)
-            if progress_callback: progress_callback({"phase":"اكتملت الدفعة","completed":total + analysis_processed,"total":progress_total,"batch":batch_no,"current_symbol":""})
+                    failures.append({"symbol": sym, "error": str(exc), "phase": "analysis"})
+                    if progress_callback:
+                        progress_callback({
+                            "phase": "خطأ أثناء تحليل السهم",
+                            "completed": total + analysis_processed,
+                            "total": progress_total,
+                            "batch": batch_no,
+                            "batch_total": len(batches),
+                            "current_symbol": sym,
+                            "error": str(exc),
+                        })
+            if progress_callback: progress_callback({"phase":"اكتملت الدفعة","completed":total + analysis_processed,"total":progress_total,"batch":batch_no,"batch_total":len(batches),"current_symbol":""})
         result = pd.DataFrame(rows)
         if not result.empty:
             result = result.sort_values(["passed_all_filters","breakout","vcp_passed","rs_rating"],ascending=[False,False,False,False])
