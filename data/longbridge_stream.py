@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import math
+from datetime import datetime
 from typing import Any, Callable
 
 
@@ -18,6 +19,23 @@ def _valid_price(value: Any) -> float | None:
     except (TypeError, ValueError):
         return None
     return price if math.isfinite(price) and price > 0 else None
+
+
+def _timestamp_order(value: Any) -> float:
+    if value is None:
+        return 0.0
+    if isinstance(value, datetime):
+        try:
+            return value.timestamp()
+        except (OverflowError, OSError, ValueError):
+            return 0.0
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        try:
+            return datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp()
+        except (TypeError, ValueError, OverflowError, OSError):
+            return 0.0
 
 
 class LongbridgeRealtimeClient:
@@ -138,10 +156,7 @@ class LongbridgeRealtimeClient:
         candidates: list[tuple[int, float, Any, str]] = []
         regular_price = _valid_price(_value(quote, "last_done"))
         regular_ts = _value(quote, "timestamp")
-        try:
-            regular_order = int(regular_ts or 0)
-        except (TypeError, ValueError):
-            regular_order = 0
+        regular_order = _timestamp_order(regular_ts)
         if regular_price is not None:
             candidates.append((regular_order, regular_price, regular_ts, "regular"))
 
@@ -158,10 +173,7 @@ class LongbridgeRealtimeClient:
             if price is None:
                 continue
             timestamp = _value(session_quote, "timestamp")
-            try:
-                order = int(timestamp or 0)
-            except (TypeError, ValueError):
-                order = 0
+            order = _timestamp_order(timestamp)
             candidates.append((order, price, timestamp, label))
 
         if not candidates:
