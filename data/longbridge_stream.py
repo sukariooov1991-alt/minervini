@@ -4,8 +4,9 @@ Responsibility:
 - Longbridge realtime prices and market quotes
 - WebSocket connection and subscriptions
 
-Daily historical candles use the Yahoo Finance -> Stooq -> Nasdaq fallback chain
-(with optional Alpha Vantage last). Earnings data and news continue to use Yahoo Finance.
+Daily historical candles use the Yahoo Finance -> Stooq -> Nasdaq -> Longbridge
+fallback chain (with optional Alpha Vantage last). Earnings data and news continue
+to use Yahoo Finance.
 """
 from __future__ import annotations
 
