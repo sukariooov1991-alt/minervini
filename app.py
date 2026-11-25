@@ -409,6 +409,14 @@ def api_stream():
 def api_start_scan():
     body = request.get_json(silent=True) or {}
     symbols = body.get("symbols")
+    if isinstance(symbols, str):
+        symbols = [symbols]
+    if symbols is not None and not isinstance(symbols, list):
+        return jsonify({"error": "symbols must be an array of ticker symbols"}), 400
+    if isinstance(symbols, list):
+        symbols = [str(sym).upper().strip() for sym in symbols if str(sym).strip()]
+        if not symbols:
+            symbols = None
     update = bool(body.get("update", True))
     started = controller.start_scan(symbols=symbols, update=update)
     return jsonify({"started": started, "running": controller.snapshot()["running"]})
