@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from typing import Any
 import time
 import threading
+import logging
 import pandas as pd
 
 # Yahoo Finance is a public endpoint with undocumented request limits.
@@ -36,6 +37,8 @@ def _is_yahoo_rate_limit_error(exc: Exception) -> bool:
     ))
 
 from data.storage_manager import StorageManager
+
+log = logging.getLogger(__name__)
 
 
 def _find_nearest_prior_value(
@@ -134,15 +137,19 @@ class DataProvider:
     def get_fundamentals_dataframe(self) -> pd.DataFrame:
         """Return quarterly fundamentals; absent fields remain NaN, never fabricated."""
         try:
+            _wait_for_yahoo_request_slot()
             q = self.ticker.quarterly_financials
         except Exception:
+            log.exception("Quarterly fundamentals request failed for %s", self.symbol)
             return pd.DataFrame()
         # ROE is supplementary metadata; Yahoo may deny the quoteSummary/info
         # endpoint even when quarterly financial statements are available.
         # Do not discard usable EPS/revenue data because this optional request fails.
         try:
+            _wait_for_yahoo_request_slot()
             info = self.ticker.info or {}
         except Exception:
+            log.exception("Optional quote-summary request failed for %s", self.symbol)
             info = {}
         if q is None or q.empty:
             return pd.DataFrame()
@@ -187,7 +194,12 @@ class DataProvider:
 
     def fetch_and_store_news(self) -> list[dict[str, Any]]:
         """Fetch news from Yahoo Finance and store in SQLite events table."""
-        raw_items = getattr(self.ticker, "news", None) or []
+        try:
+            _wait_for_yahoo_request_slot()
+            raw_items = getattr(self.ticker, "news", None) or []
+        except Exception:
+            log.exception("Yahoo news request failed for %s", self.symbol)
+            return []
         stored: list[dict[str, Any]] = []
         for item in raw_items:
             if not isinstance(item, dict):
