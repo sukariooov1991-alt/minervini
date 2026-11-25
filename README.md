@@ -20,4 +20,4 @@ Longbridge remains connected through its existing separate price/realtime integr
 
 A failed or empty provider no longer aborts the symbol download: the next provider is attempted, and the successful source is written to the application log. If all providers fail, the error lists each provider's failure. No symbols are removed from the S&P 500 universe and the Minervini screening rules are unchanged.
 
-Nasdaq's public endpoint does not require a key, but it is an undocumented public endpoint and may change or throttle automated requests; its prices may be delayed. Longbridge's historical-candlestick endpoint has account-based monthly unique-symbol quotas. Stooq is an additional public source with no availability guarantee. Alpha Vantage requires an API key and its free-tier limits may restrict large scans.
+Nasdaq's public endpoint does not require a key, but it is an undocumented public endpoint and may change or throttle automated requests; its prices may be delayed. Stooq is an additional public source with no availability guarantee. Alpha Vantage requires an API key and its free-tier limits may restrict large scans.
