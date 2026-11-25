@@ -70,6 +70,21 @@
       cursor: pointer;
     }
     .controls button { width: 100%; }
+    .scan-progress {
+      display: block;
+      margin: -6px 0 18px;
+      padding: 12px;
+      background: var(--card);
+      border: 1px solid var(--card-border);
+      border-radius: 10px;
+    }
+    .scan-progress.visible { display: block; }
+    .scan-errors { margin-top: 10px; color: #fca5a5; font-size: .78rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .scan-errors:empty { display: none; }
+    .scan-progress-top { display: flex; justify-content: space-between; gap: 10px; margin-bottom: 9px; font-size: .88rem; }
+    .progress-track { height: 10px; overflow: hidden; border-radius: 99px; background: #263244; }
+    .progress-fill { width: 0%; height: 100%; border-radius: inherit; background: var(--entry); transition: width .25s ease; }
+    .scan-message { margin-top: 8px; color: var(--muted); font-size: .82rem; }
     .btn-scan { background: var(--btn-start); }
     .btn-stop { background: var(--btn-stop); }
     .btn-del {
@@ -175,6 +190,17 @@
       <button class="btn-scan" id="startBtn" onclick="startScan()">فحص</button>
       <button class="btn-stop" id="stopBtn" onclick="stopScan()">إيقاف الفحص</button>
     </div>
+    <section class="scan-progress" id="scanProgress" aria-live="polite">
+      <div class="scan-progress-top">
+        <strong id="scanMessage">الفحص قيد التجهيز</strong>
+        <strong id="scanPercent">0%</strong>
+      </div>
+      <div class="progress-track" role="progressbar" aria-label="تقدم الفحص" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="scanProgressTrack">
+        <div class="progress-fill" id="scanProgressFill"></div>
+      </div>
+      <div class="scan-message" id="scanDetails">اضغط «فحص» لبدء فحص الأسهم على دفعات من خمسة.</div>
+      <div class="scan-errors" id="scanErrors" aria-live="polite"></div>
+    </section>
     <div class="cards" id="cardsContainer"></div>
   </div>
 
@@ -182,15 +208,70 @@
     const openCards = new Set();
 
     async function startScan() {
-      await fetch('/api/scan/start', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({})
-      });
+      const message = document.getElementById('scanMessage');
+      message.textContent = 'بدأ الفحص...';
+      document.getElementById('scanProgress').classList.add('visible');
+      document.getElementById('scanProgressFill').style.width = '0%';
+      document.getElementById('scanPercent').textContent = '0%';
+      try {
+        const response = await fetch('/api/scan/start', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({})
+        });
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+        const result = await response.json();
+        if (!result.started) message.textContent = 'يوجد فحص جارٍ بالفعل';
+      } catch (e) {
+        console.error('[MINERVINI] Start scan failed', e);
+        message.textContent = 'تعذر بدء الفحص: ' + e.message;
+      }
     }
 
     async function stopScan() {
-      await fetch('/api/scan/stop', { method: 'POST' });
+      try {
+        await fetch('/api/scan/stop', { method: 'POST' });
+        document.getElementById('scanMessage').textContent = 'جارٍ إيقاف الفحص...';
+      } catch (e) {
+        console.error('[MINERVINI] Stop scan failed', e);
+      }
+    }
+
+    function renderScanProgress(data) {
+      const p = data.scan_progress || {};
+      const box = document.getElementById('scanProgress');
+      box.classList.add('visible');
+      const percent = Math.max(0, Math.min(100, Number(p.percent) || 0));
+      document.getElementById('scanProgressFill').style.width = percent + '%';
+      document.getElementById('scanPercent').textContent = percent + '%';
+      document.getElementById('scanProgressTrack').setAttribute('aria-valuenow', String(percent));
+      const labels = {
+        starting: 'بدأ الفحص...',
+        'فحص حالة السوق': 'جارٍ فحص حالة السوق قبل الأسهم...',
+        'تحميل الدفعة': 'جارٍ تحميل دفعة جديدة...',
+        'تحميل البيانات': 'جارٍ تحميل بيانات الأسهم...',
+        'تحليل الدفعة': 'جارٍ تحليل الدفعة...',
+        'اكتملت الدفعة': 'اكتملت الدفعة، جارٍ الانتقال للتالية...',
+        'توقف مؤقت بسبب حد Yahoo': 'توقف التحميل مؤقتاً بسبب حد Yahoo',
+        completed: 'انتهى الفحص بنجاح',
+        stopped: 'تم إيقاف الفحص',
+        error: 'انتهى الفحص مع وجود خطأ'
+      };
+      document.getElementById('scanMessage').textContent = labels[p.phase] || (data.running ? 'الفحص جارٍ...' : 'انتهى الفحص');
+      const total = Number(p.total) || 0;
+      const completed = Number(p.completed) || 0;
+      const symbolTotal = Math.floor(total / 2);
+      const downloaded = Math.min(symbolTotal, completed);
+      const analyzed = Math.max(0, Math.min(symbolTotal, completed - symbolTotal));
+      let details = total
+        ? 'تحميل البيانات: ' + downloaded + '/' + symbolTotal + ' — تحليل الأسهم: ' + analyzed + '/' + symbolTotal + ' — الدفعة ' + (p.batch || 1)
+        : '';
+      if (p.batch_total) details += ' — إجمالي الدفعات: ' + p.batch_total;
+      if (p.current_symbol) details += (details ? ' — ' : '') + 'السهم: ' + p.current_symbol;
+      if (p.error) details += (details ? '\\n' : '') + 'خطأ: ' + p.error;
+      document.getElementById('scanDetails').textContent = details;
+      const errors = Array.isArray(data.scan_errors) ? data.scan_errors : [];
+      document.getElementById('scanErrors').textContent = errors.slice(-5).map(e => e.symbol + ' [' + e.phase + ']: ' + e.message).join('\\n');
     }
 
     async function deleteCard(event, sym) {
@@ -308,6 +389,7 @@
       } else {
         sessionEl.textContent = `حالة السوق: ${data.market_session || 'قبل الافتتاح'}`;
       }
+      renderScanProgress(data);
       renderCards(data.cards || []);
     }
 
@@ -317,9 +399,12 @@
         try {
           const data = JSON.parse(event.data);
           applySnapshot(data);
-        } catch (e) {}
+        } catch (e) {
+          console.error('[MINERVINI] SSE message parse failed', e);
+        }
       };
-      evtSource.onerror = () => {
+      evtSource.onerror = (e) => {
+        console.error('[MINERVINI] SSE connection error', e);
         evtSource.close();
         setTimeout(connectRealtimeStream, 2000);
       };
@@ -328,7 +413,7 @@
     fetch('/api/state', { cache: 'no-store' })
       .then(r => r.ok ? r.json() : null)
       .then(data => { if (data) applySnapshot(data); })
-      .catch(() => {});
+      .catch((e) => console.error('[MINERVINI] Initial state request failed', e));
 
     connectRealtimeStream();
   </script>
