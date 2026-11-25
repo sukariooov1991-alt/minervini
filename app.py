@@ -165,6 +165,7 @@ class ScanController:
         tt_passed = str(row.get("trend_template", "")).upper() == "PASS"
         vcp_passed = bool(row.get("vcp_passed", False))
         br = bool(row.get("breakout", False))
+        pullback_passed = bool(row.get("pullback_passed", False))
         ad_acc = bool(row.get("accumulation", False))
         earn_passed = bool(row.get("earnings_passed", False))
 
@@ -172,6 +173,7 @@ class ScanController:
             tt_passed
             and vcp_passed
             and br
+            and pullback_passed
             and ad_acc
             and earn_passed
             and market_favorable
