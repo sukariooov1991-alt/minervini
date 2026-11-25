@@ -148,18 +148,27 @@ class DataProvider:
         """Fetch public delayed daily OHLCV from Nasdaq's no-key historical endpoint."""
         start = _period_start(period)
         end = pd.Timestamp.now().date()
+        index_symbols = {
+            "^GSPC": "SPX",
+            "^IXIC": "COMP",
+            "^DJI": "DJI",
+        }
+        is_index = self.symbol.startswith("^")
+        nasdaq_symbol = index_symbols.get(self.symbol, self.symbol.lstrip("^"))
+        asset_class = "index" if is_index else "stocks"
+        market_path = "index" if is_index else "stocks"
         params = urlencode({
-            "assetclass": "stocks",
+            "assetclass": asset_class,
             "fromdate": start.strftime("%Y-%m-%d"),
             "todate": end.strftime("%Y-%m-%d"),
             "limit": "999999",
         })
-        url = f"https://api.nasdaq.com/api/quote/{self.symbol}/historical?{params}"
+        url = f"https://api.nasdaq.com/api/quote/{nasdaq_symbol}/historical?{params}"
         request = Request(url, headers={
             "User-Agent": "Mozilla/5.0 (compatible; MinerviniDataBot/1.0)",
             "Accept": "application/json, text/plain, */*",
             "Origin": "https://www.nasdaq.com",
-            "Referer": f"https://www.nasdaq.com/market-activity/stocks/{self.symbol.lower()}",
+            "Referer": f"https://www.nasdaq.com/market-activity/{market_path}/{nasdaq_symbol.lower()}",
             "Accept-Language": "en-US,en;q=0.9",
         })
         with urlopen(request, timeout=30) as response:
@@ -193,8 +202,15 @@ class DataProvider:
         return _normalise_ohlcv(pd.DataFrame(parsed))
 
     def _fetch_stooq(self, period: str) -> pd.DataFrame:
-        symbol = self.symbol.lower().replace(".", "-")
-        if not symbol.endswith(".us"):
+        stooq_index_symbols = {
+            "^GSPC": "spx",
+            "^IXIC": "ndq",
+            "^DJI": "dji",
+        }
+        symbol = stooq_index_symbols.get(
+            self.symbol, self.symbol.lower().replace(".", "-")
+        )
+        if not self.symbol.startswith("^") and not symbol.endswith(".us"):
             symbol += ".us"
         params = urlencode({
             "s": symbol, "i": "d",
@@ -207,6 +223,8 @@ class DataProvider:
         return _normalise_ohlcv(frame)
 
     def _fetch_alpha_vantage(self, period: str) -> pd.DataFrame:
+        if self.symbol.startswith("^"):
+            raise RuntimeError("Alpha Vantage daily stock endpoint does not support index symbols")
         api_key = os.getenv("ALPHAVANTAGE_API_KEY", "").strip()
         if not api_key:
             raise RuntimeError("ALPHAVANTAGE_API_KEY is not configured")
