@@ -75,11 +75,14 @@ class DailyScreener:
                 progress_callback({"phase": "تحميل البيانات", "completed": i, "total": total, "current_symbol": sym})
         return failures
 
-    def compute_rs_ratings(self) -> tuple[dict, dict]:
+    def compute_rs_ratings(self, exclude_symbols: set[str] | None = None) -> tuple[dict, dict]:
         prices: dict[str, pd.Series] = {}
         frames: dict[str, pd.DataFrame] = {}
+        excluded = {str(sym).upper().strip() for sym in (exclude_symbols or set())}
 
         for sym in self.symbols:
+            if sym.upper().strip() in excluded:
+                continue
             df = self.storage.get_candles_df(sym)
             if len(df) >= 252:
                 frames[sym] = df
@@ -120,6 +123,7 @@ class DailyScreener:
         total = len(self.symbols)
         processed = 0
         analysis_processed = 0
+        download_failed_symbols: set[str] = set()
         progress_total = total * 2
         if progress_callback:
             progress_callback({
@@ -146,14 +150,18 @@ class DailyScreener:
                     "batch_size": len(batch),
                     "current_symbol": batch[0] if batch else "",
                 })
+            stop_requested = False
             if update:
                 for sym in batch:
-                    if stop_callback and stop_callback(): break
+                    if stop_callback and stop_callback():
+                        stop_requested = True
+                        break
                     try:
                         n = self._get_provider(sym).fetch_and_store_daily_candles(period)
                         log.info("[%s/%s] %s stored %s bars; batch %s/%s", processed+1,total,sym,n,batch_no,len(batches))
                     except YahooRateLimitError as exc:
                         log.exception("Yahoo rate limit while downloading %s", sym)
+                        download_failed_symbols.add(sym)
                         failures.append({"symbol":sym,"error":str(exc)})
                         failures.extend({"symbol":x,"error":"Deferred after Yahoo rate limit"} for x in self.symbols[processed+1:])
                         if progress_callback:
@@ -169,6 +177,7 @@ class DailyScreener:
                         raise
                     except Exception as exc:
                         log.exception("Data download failed for %s", sym)
+                        download_failed_symbols.add(sym)
                         failures.append({"symbol":sym,"error":str(exc)})
                         if progress_callback:
                             progress_callback({
@@ -182,12 +191,25 @@ class DailyScreener:
                             })
                     processed += 1
                     if progress_callback: progress_callback({"phase":"تحميل البيانات","completed":processed,"total":progress_total,"batch":batch_no,"current_symbol":sym})
+            # Do not analyze stale database rows for symbols whose current download
+            # failed, and do not publish the rest of a batch after a stop request.
+            if stop_requested or (stop_callback and stop_callback()):
+                break
             if not update:
                 processed = total
-            rs, frames = self.compute_rs_ratings()
+            rs, frames = self.compute_rs_ratings(
+                exclude_symbols=download_failed_symbols if update else None
+            )
             batch_rows = []
             for sym in batch:
-                if stop_callback and stop_callback(): break
+                if stop_callback and stop_callback():
+                    stop_requested = True
+                    break
+                if update and sym in download_failed_symbols:
+                    analysis_processed += 1
+                    if progress_callback:
+                        progress_callback({"phase":"تحليل الدفعة","completed":total + analysis_processed,"total":progress_total,"batch":batch_no,"current_symbol":sym})
+                    continue
                 analysis_processed += 1
                 if progress_callback: progress_callback({"phase":"تحليل الدفعة","completed":total + analysis_processed,"total":progress_total,"batch":batch_no,"current_symbol":sym})
                 df = frames.get(sym)
@@ -226,7 +248,8 @@ class DailyScreener:
                             })
                         earnings = {"passed":False,"error":str(exc)}
                         fundamental_status = "UNKNOWN"
-                    row = {"symbol":sym,"rs_rating":rating,"trend_template":"PASS","trend_conditions":tt.get("conditions",{}),
+                    provider_source = self._get_provider(sym).last_source if update else "Stored daily data"
+                    row = {"symbol":sym,"data_source":provider_source,"rs_rating":rating,"trend_template":"PASS","trend_conditions":tt.get("conditions",{}),
                            "vcp_passed":bool(vcp.get("passed")),"breakout":bool(br),"pullback_passed":bool(pb.get("passed",False)),
                            "pivot_price":pivot_val,"final_low":vcp.get("final_low"),"contraction_depths":vcp.get("contraction_depths",[]),
                            "volume_dry_up":vcp.get("volume_dry_up",False),"accumulation":ad.get("accumulation",False),
@@ -257,6 +280,8 @@ class DailyScreener:
                             "current_symbol": sym,
                             "error": str(exc),
                         })
+            if stop_requested:
+                break
             if progress_callback: progress_callback({"phase":"اكتملت الدفعة","completed":total + analysis_processed,"total":progress_total,"batch":batch_no,"batch_total":len(batches),"current_symbol":""})
         result = pd.DataFrame(rows)
         if not result.empty:
