@@ -369,7 +369,7 @@
           const name = document.createElement('span');
           name.textContent = f && f.name != null ? String(f.name) : '';
           const status = document.createElement('span');
-          status.textContent = f && f.passed ? 'ناجح' : 'غير ناجح';
+          status.textContent = f && f.pending ? 'بانتظار النموذج' : (f && f.passed ? 'ناجح' : 'غير ناجح');
           row.append(name, status);
           filtersNode.appendChild(row);
         }
