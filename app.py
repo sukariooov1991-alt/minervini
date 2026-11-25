@@ -316,12 +316,20 @@ class ScanController:
             with self._state_cv:
                 self._market_status = market_status
                 if not self._stop_event.is_set():
+                    # A symbol absent from results is removable only when its
+                    # download and analysis completed successfully. A transient
+                    # provider/analysis failure is not evidence of lost eligibility.
+                    uncertain_symbols = {
+                        str(item.get("symbol", "")).upper().strip()
+                        for item in failures
+                        if item.get("symbol")
+                    }
                     eligible_symbols = (
                         set(result_df.loc[result_df.get("watchlist_eligible", False) == True, "symbol"].astype(str))
                         if result_df is not None and not result_df.empty and "watchlist_eligible" in result_df
                         else set()
                     )
-                    removed = set(self._cards) - eligible_symbols
+                    removed = set(self._cards) - eligible_symbols - uncertain_symbols
                     for stale_symbol in removed:
                         self._cards.pop(stale_symbol, None)
                         self._live_prices.pop(stale_symbol, None)
