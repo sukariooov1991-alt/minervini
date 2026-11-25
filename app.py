@@ -614,6 +614,7 @@ class ScanController:
                 update=update, progress_callback=self._update_scan_progress,
                 batch_callback=publish_batch, stop_callback=self._stop_event.is_set, batch_size=5,
             )
+            removed: set[str] = set()
             with self._state_cv:
                 self._market_status = market_status
                 if not self._stop_event.is_set():
@@ -669,6 +670,11 @@ class ScanController:
                         except Exception:
                             log.exception("Failed to delete stale persisted card for %s", stale_symbol)
                 self._notify_state_changed_locked()
+            if removed and self.lb_client.has_credentials():
+                try:
+                    self.lb_client.unsubscribe(sorted(removed))
+                except Exception:
+                    log.exception("Failed to unsubscribe reconciled stale watchlist symbols")
             download_errors = sum(1 for failure in failures if failure.get("phase") == "download")
             analysis_errors = sum(1 for failure in failures if failure.get("phase") == "analysis")
             log.info(
