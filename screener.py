@@ -16,7 +16,7 @@ from analysis.pullback import check_pullback
 from analysis.accumulation_distribution import accumulation_distribution_summary
 from analysis.earnings import check_earnings
 from analysis.market_filter import check_market_regime
-from data.data_provider import DataProvider
+from data.data_provider import DataProvider, YahooRateLimitError
 from data.storage_manager import StorageManager
 from data.sp500_symbols import SP500_SYMBOLS
 
@@ -40,15 +40,39 @@ class DailyScreener:
             self._providers[symbol] = DataProvider(symbol, self.storage)
         return self._providers[symbol]
 
-    def update_universe_data(self, period: str = "2y") -> list[dict]:
+    def update_universe_data(self, period: str = "2y", progress_callback=None) -> list[dict]:
         failures: list[dict] = []
+        total = len(self.symbols)
         for i, sym in enumerate(self.symbols, 1):
             try:
                 n = self._get_provider(sym).fetch_and_store_daily_candles(period)
                 log.info("[%s/%s] %s: stored %s bars", i, len(self.symbols), sym, n)
+            except YahooRateLimitError as exc:
+                failures.append({"symbol": sym, "error": str(exc)})
+                log.error("%s", exc)
+                deferred = self.symbols[i:]
+                failures.extend({
+                    "symbol": pending,
+                    "error": "Deferred: Yahoo Finance rate limit reached; retry in a later scan",
+                } for pending in deferred)
+                log.warning(
+                    "Stopping Yahoo downloads after rate limit; deferred %s remaining symbols "
+                    "to avoid sending more requests.",
+                    len(deferred),
+                )
+                if progress_callback:
+                    progress_callback({
+                        "phase": "تحميل البيانات متوقف مؤقتاً بسبب حد Yahoo",
+                        "completed": i,
+                        "total": total,
+                        "current_symbol": sym,
+                    })
+                break
             except Exception as exc:
                 failures.append({"symbol": sym, "error": str(exc)})
                 log.warning("%s: %s", sym, exc)
+            if progress_callback:
+                progress_callback({"phase": "تحميل البيانات", "completed": i, "total": total, "current_symbol": sym})
         return failures
 
     def compute_rs_ratings(self) -> tuple[dict, dict]:
@@ -87,104 +111,161 @@ class DailyScreener:
         return status
 
     def run_screen(
-        self,
-        update: bool = True,
-        period: str = "2y",
-        market_symbol: str = "^GSPC",
-        skip_market_check: bool = False,
+        self, update: bool = True, period: str = "2y", market_symbol: str = "^GSPC",
+        skip_market_check: bool = False, progress_callback=None, batch_callback=None,
+        stop_callback=None, batch_size: int = 5,
     ) -> tuple[pd.DataFrame, list[dict], dict]:
-        failures = self.update_universe_data(period) if update else []
-
-        market_status = (
-            {"market_favorable": True, "regime": "SKIPPED", "reasons": ["market check disabled"]}
-            if skip_market_check
-            else self.check_market(market_symbol, period)
-        )
-        market_favorable = bool(market_status.get("market_favorable", False))
-
-        rs, frames = self.compute_rs_ratings()
-
-        rows = []
-        for sym, df in frames.items():
-            rating = rs.get(sym, float("nan"))
-            tt = check_trend_template(df, rating)
-            if not tt["passed"]:
-                continue
-
-            # Build the contraction/pivot from completed bars before today's bar.
-            # The latest bar is tested separately as the possible breakout candle.
-            base_df = df.iloc[:-1].copy()
-            vcp = check_vcp(base_df)
-            pivot_val = vcp.get("pivot_price")
-            br = check_breakout(df, pivot=pivot_val) if vcp.get("passed") else False
-            pb = check_pullback(df)
-            ad = accumulation_distribution_summary(df)
-
-            try:
-                provider = self._get_provider(sym)
-                fdf = provider.get_fundamentals_dataframe()
-                latest = fdf.iloc[0].to_dict() if not fdf.empty else {}
-                earnings = check_earnings(
-                    latest.get("eps_current"),
-                    latest.get("eps_year_ago"),
-                    latest.get("revenue_current"),
-                    latest.get("revenue_year_ago"),
-                )
-                fundamental_status = "UNKNOWN" if fdf.empty else ("PASS" if earnings["passed"] else "FAIL")
-            except Exception as exc:
-                earnings = {"passed": False, "error": str(exc)}
-                fundamental_status = "UNKNOWN"
-
-            passed_all = bool(
-                tt["passed"]
-                and vcp.get("passed", False)
-                and br
-                and ad.get("accumulation", False)
-                and earnings.get("passed", False)
-                and market_favorable
-            )
-
-            rows.append({
-                "symbol": sym,
-                "rs_rating": rating,
-                "trend_template": "PASS",
-                "trend_conditions": tt.get("conditions", {}),
-                "vcp_passed": bool(vcp.get("passed")),
-                "breakout": bool(br),
-                "pullback_passed": bool(pb.get("passed", False)),
-                "pivot_price": pivot_val,
-                "final_low": vcp.get("final_low"),
-                "contraction_depths": vcp.get("contraction_depths", []),
-                "volume_dry_up": vcp.get("volume_dry_up", False),
-                "accumulation": ad.get("accumulation", False),
-                "distribution": ad.get("distribution", False),
-                "earnings_status": fundamental_status,
-                "earnings_passed": bool(earnings.get("passed", False)),
-                "market_favorable": market_favorable,
-                "market_regime": market_status.get("regime", "UNKNOWN"),
-                "passed_all_filters": passed_all,
-                "screen_date": datetime.now(timezone.utc).date().isoformat(),
+        failures: list[dict] = []
+        rows: list[dict] = []
+        total = len(self.symbols)
+        processed = 0
+        analysis_processed = 0
+        progress_total = total * 2
+        if progress_callback:
+            progress_callback({
+                "phase": "فحص حالة السوق",
+                "completed": 0,
+                "total": progress_total,
+                "batch": 0,
+                "batch_total": (total + batch_size - 1) // batch_size,
+                "current_symbol": market_symbol,
             })
-
+        market_status = ({"market_favorable": True, "regime": "SKIPPED", "reasons": ["market check disabled"]}
+                         if skip_market_check else self.check_market(market_symbol, period))
+        market_favorable = bool(market_status.get("market_favorable", False))
+        batches = [self.symbols[i:i + batch_size] for i in range(0, total, batch_size)]
+        for batch_no, batch in enumerate(batches, 1):
+            if stop_callback and stop_callback(): break
+            if progress_callback:
+                progress_callback({
+                    "phase": "تحميل الدفعة",
+                    "completed": processed,
+                    "total": progress_total,
+                    "batch": batch_no,
+                    "batch_total": len(batches),
+                    "batch_size": len(batch),
+                    "current_symbol": batch[0] if batch else "",
+                })
+            if update:
+                for sym in batch:
+                    if stop_callback and stop_callback(): break
+                    try:
+                        n = self._get_provider(sym).fetch_and_store_daily_candles(period)
+                        log.info("[%s/%s] %s stored %s bars; batch %s/%s", processed+1,total,sym,n,batch_no,len(batches))
+                    except YahooRateLimitError as exc:
+                        log.exception("Yahoo rate limit while downloading %s", sym)
+                        failures.append({"symbol":sym,"error":str(exc)})
+                        failures.extend({"symbol":x,"error":"Deferred after Yahoo rate limit"} for x in self.symbols[processed+1:])
+                        if progress_callback:
+                            progress_callback({
+                                "phase": "توقف بسبب حد Yahoo",
+                                "completed": processed,
+                                "total": progress_total,
+                                "batch": batch_no,
+                                "batch_total": len(batches),
+                                "current_symbol": sym,
+                                "error": str(exc),
+                            })
+                        raise
+                    except Exception as exc:
+                        log.exception("Data download failed for %s", sym)
+                        failures.append({"symbol":sym,"error":str(exc)})
+                        if progress_callback:
+                            progress_callback({
+                                "phase": "خطأ أثناء تحميل البيانات",
+                                "completed": processed,
+                                "total": progress_total,
+                                "batch": batch_no,
+                                "batch_total": len(batches),
+                                "current_symbol": sym,
+                                "error": str(exc),
+                            })
+                    processed += 1
+                    if progress_callback: progress_callback({"phase":"تحميل البيانات","completed":processed,"total":progress_total,"batch":batch_no,"current_symbol":sym})
+            if not update:
+                processed = total
+            rs, frames = self.compute_rs_ratings()
+            batch_rows = []
+            for sym in batch:
+                if stop_callback and stop_callback(): break
+                analysis_processed += 1
+                if progress_callback: progress_callback({"phase":"تحليل الدفعة","completed":total + analysis_processed,"total":progress_total,"batch":batch_no,"current_symbol":sym})
+                df = frames.get(sym)
+                if df is None or len(df) < 252:
+                    log.warning(
+                        "Skipping %s during analysis: insufficient daily candles (%s; need 252)",
+                        sym, 0 if df is None else len(df),
+                    )
+                    continue
+                try:
+                    rating = rs.get(sym, float("nan"))
+                    tt = check_trend_template(df, rating)
+                    if not tt["passed"]: continue
+                    base_df = df.iloc[:-1].copy()
+                    vcp = check_vcp(base_df)
+                    pivot_val = vcp.get("pivot_price")
+                    br = check_breakout(df, pivot=pivot_val) if vcp.get("passed") else False
+                    pb = check_pullback(df)
+                    ad = accumulation_distribution_summary(df)
+                    try:
+                        fdf = self._get_provider(sym).get_fundamentals_dataframe()
+                        latest = fdf.iloc[0].to_dict() if not fdf.empty else {}
+                        earnings = check_earnings(latest.get("eps_current"),latest.get("eps_year_ago"),latest.get("revenue_current"),latest.get("revenue_year_ago"))
+                        fundamental_status = "UNKNOWN" if fdf.empty else ("PASS" if earnings["passed"] else "FAIL")
+                    except Exception as exc:
+                        log.exception("Fundamental data error for %s", sym)
+                        if progress_callback:
+                            progress_callback({
+                                "phase": "خطأ في البيانات الأساسية",
+                                "completed": total + analysis_processed,
+                                "total": progress_total,
+                                "batch": batch_no,
+                                "batch_total": len(batches),
+                                "current_symbol": sym,
+                                "error": str(exc),
+                            })
+                        earnings = {"passed":False,"error":str(exc)}
+                        fundamental_status = "UNKNOWN"
+                    row = {"symbol":sym,"rs_rating":rating,"trend_template":"PASS","trend_conditions":tt.get("conditions",{}),
+                           "vcp_passed":bool(vcp.get("passed")),"breakout":bool(br),"pullback_passed":bool(pb.get("passed",False)),
+                           "pivot_price":pivot_val,"final_low":vcp.get("final_low"),"contraction_depths":vcp.get("contraction_depths",[]),
+                           "volume_dry_up":vcp.get("volume_dry_up",False),"accumulation":ad.get("accumulation",False),
+                           "distribution":ad.get("distribution",False),"earnings_status":fundamental_status,
+                           "earnings_passed":bool(earnings.get("passed",False)),"market_favorable":market_favorable,
+                           "market_regime":market_status.get("regime","UNKNOWN"),
+                           "passed_all_filters":bool(vcp.get("passed",False) and br and pb.get("passed",False) and ad.get("accumulation",False) and earnings.get("passed",False) and market_favorable),
+                           "screen_date":datetime.now(timezone.utc).date().isoformat()}
+                    rows.append(row)
+                    batch_rows.append(row)
+                    # Publish this symbol as soon as its analysis finishes; do not
+                    # wait for the other four symbols in the batch.
+                    if batch_callback:
+                        try:
+                            batch_callback([row], market_status)
+                        except Exception:
+                            log.exception("Result publish failed for %s in batch %s", sym, batch_no)
+                except Exception as exc:
+                    log.exception("Unexpected analysis error for symbol %s", sym)
+                    failures.append({"symbol": sym, "error": str(exc), "phase": "analysis"})
+                    if progress_callback:
+                        progress_callback({
+                            "phase": "خطأ أثناء تحليل السهم",
+                            "completed": total + analysis_processed,
+                            "total": progress_total,
+                            "batch": batch_no,
+                            "batch_total": len(batches),
+                            "current_symbol": sym,
+                            "error": str(exc),
+                        })
+            if progress_callback: progress_callback({"phase":"اكتملت الدفعة","completed":total + analysis_processed,"total":progress_total,"batch":batch_no,"batch_total":len(batches),"current_symbol":""})
         result = pd.DataFrame(rows)
         if not result.empty:
-            result = result.sort_values(
-                ["passed_all_filters", "breakout", "vcp_passed", "rs_rating"],
-                ascending=[False, False, False, False],
-            )
-
-        self.output_path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {
-            "generated_at": datetime.now(timezone.utc).isoformat(),
-            "strategy": "Minervini SEPA — TT gate, VCP, breakout, pullback, AD, earnings, market regime",
-            "market_status": market_status,
-            "failures": failures,
-            "results": result.to_dict(orient="records"),
-        }
-        self.output_path.write_text(
-            json.dumps(payload, indent=2, default=str), encoding="utf-8"
-        )
-
+            result = result.sort_values(["passed_all_filters","breakout","vcp_passed","rs_rating"],ascending=[False,False,False,False])
+        self.output_path.parent.mkdir(parents=True,exist_ok=True)
+        payload = {"generated_at":datetime.now(timezone.utc).isoformat(),
+                   "strategy":"Minervini SEPA — TT gate, VCP, breakout, pullback, AD, earnings, market regime",
+                   "market_status":market_status,"failures":failures,"results":result.to_dict(orient="records")}
+        self.output_path.write_text(json.dumps(payload,indent=2,default=str),encoding="utf-8")
         return result, failures, market_status
 
 
