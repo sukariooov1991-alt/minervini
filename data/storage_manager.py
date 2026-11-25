@@ -67,7 +67,54 @@ class StorageManager:
                 completed_json TEXT NOT NULL,
                 updated_at TEXT DEFAULT CURRENT_TIMESTAMP
             );
+            CREATE TABLE IF NOT EXISTS watchlist_cards (
+                symbol TEXT PRIMARY KEY,
+                card_json TEXT NOT NULL,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            );
             """)
+
+    def save_watchlist_card(self, card: Dict[str, Any]) -> None:
+        """Persist one complete watchlist card so it survives process restarts."""
+        if not isinstance(card, dict):
+            raise TypeError("card must be a dictionary")
+        symbol = str(card.get("symbol") or "").upper().strip()
+        if not symbol:
+            raise ValueError("watchlist card requires a symbol")
+        payload = json.dumps(card, ensure_ascii=False, default=str, allow_nan=False)
+        with self._get_conn() as conn:
+            conn.execute(
+                """INSERT INTO watchlist_cards(symbol, card_json, updated_at)
+                   VALUES (?, ?, CURRENT_TIMESTAMP)
+                   ON CONFLICT(symbol) DO UPDATE SET
+                     card_json=excluded.card_json,
+                     updated_at=CURRENT_TIMESTAMP""",
+                (symbol, payload),
+            )
+
+    def load_watchlist_cards(self) -> list[dict[str, Any]]:
+        """Load valid persisted cards in stable symbol order."""
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                "SELECT symbol, card_json FROM watchlist_cards ORDER BY symbol"
+            ).fetchall()
+        cards: list[dict[str, Any]] = []
+        for row in rows:
+            try:
+                card = json.loads(row["card_json"])
+            except (TypeError, ValueError):
+                continue
+            if isinstance(card, dict):
+                card["symbol"] = str(card.get("symbol") or row["symbol"]).upper()
+                cards.append(card)
+        return cards
+
+    def delete_watchlist_card(self, symbol: str) -> None:
+        clean = str(symbol or "").upper().strip()
+        if not clean:
+            return
+        with self._get_conn() as conn:
+            conn.execute("DELETE FROM watchlist_cards WHERE symbol=?", (clean,))
 
     def get_scan_checkpoint(self, scan_name: str, symbols: list[str]) -> set[str]:
         """Return completed symbols for a matching resumable scan; reset on universe changes."""
