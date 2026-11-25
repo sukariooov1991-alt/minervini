@@ -206,6 +206,10 @@
 
   <script>
     const openCards = new Set();
+    // /api/state and SSE can arrive out of order; never let an older snapshot
+    // overwrite a newer watchlist snapshot and make visible cards disappear.
+    let lastAppliedSnapshotVersion = -1;
+    let lastRenderedCardCount = 0;
 
     async function startScan() {
       const message = document.getElementById('scanMessage');
@@ -383,6 +387,19 @@
     }
 
     function applySnapshot(data) {
+      if (!data || typeof data !== 'object' || !Number.isFinite(Number(data.version))) {
+        console.warn('[MINERVINI] Ignored invalid state snapshot', data);
+        return;
+      }
+      const snapshotVersion = Number(data.version);
+      if (snapshotVersion <= lastAppliedSnapshotVersion) {
+        console.debug('[MINERVINI] Ignored stale state snapshot', {
+          received: snapshotVersion, latest: lastAppliedSnapshotVersion
+        });
+        return;
+      }
+      lastAppliedSnapshotVersion = snapshotVersion;
+
       const sessionEl = document.getElementById('marketSession');
       if (data.last_error) {
         sessionEl.textContent = `خطأ: ${data.last_error}`;
@@ -390,7 +407,21 @@
         sessionEl.textContent = `حالة السوق: ${data.market_session || 'قبل الافتتاح'}`;
       }
       renderScanProgress(data);
-      renderCards(data.cards || []);
+
+      // A missing cards field is an incomplete payload, not an instruction to
+      // erase the watchlist. An explicit empty array remains authoritative.
+      if (!Array.isArray(data.cards)) {
+        console.warn('[MINERVINI] Snapshot omitted cards; preserving rendered watchlist', snapshotVersion);
+        return;
+      }
+      if (lastRenderedCardCount > 0 && data.cards.length === 0) {
+        console.warn('[MINERVINI] Server sent an empty watchlist snapshot', {
+          version: snapshotVersion, running: data.running,
+          scanProgress: data.scan_progress
+        });
+      }
+      renderCards(data.cards);
+      lastRenderedCardCount = data.cards.length;
     }
 
     function connectRealtimeStream() {
