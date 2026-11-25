@@ -110,6 +110,7 @@ class ScanController:
             log.exception("Failed to recover watchlist cards from last screener output")
 
         self._realtime_locks: dict[str, threading.Lock] = {}
+        self._ws_seen_symbols: set[str] = set()
         self._ws_connected: bool = False
         self._last_error: str | None = None
         self._scan_errors: list[dict[str, str]] = []
@@ -232,6 +233,16 @@ class ScanController:
             return
         if not (price > 0 and math.isfinite(price)):
             return
+
+        if quote.get("source") != "longbridge_quote_api":
+            with self._lock:
+                first_ws_push = sym not in self._ws_seen_symbols
+                self._ws_seen_symbols.add(sym)
+            if first_ws_push:
+                log.info(
+                    "Longbridge WebSocket first quote push: symbol=%s price=%s session=%s timestamp=%s",
+                    sym, price, quote.get("trade_session"), quote.get("timestamp"),
+                )
 
         with self._lock:
             symbol_lock = self._realtime_locks.setdefault(sym, threading.Lock())
