@@ -175,7 +175,7 @@ class LongbridgeRealtimeClient:
         # Longbridge returns separate US pre-market, post-market and overnight
         # quotes. last_done alone is the regular-session last trade and can be
         # stale while an extended session is actively trading.
-        candidates: list[tuple[int, float, Any, str]] = []
+        candidates: list[tuple[float, float, Any, str]] = []
         regular_price = _valid_price(_value(quote, "last_done"))
         regular_ts = _value(quote, "timestamp")
         regular_order = _timestamp_order(regular_ts)
