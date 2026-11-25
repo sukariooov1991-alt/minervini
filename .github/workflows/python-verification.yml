@@ -28,7 +28,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
       - name: Compile all Python modules
-        run: python -m compileall -q analysis data app.py screener.py
+        run: python -m compileall -q analysis data app.py screener.py gunicorn.conf.py
       - name: Import application modules
         run: |
           python - <<'PY'
@@ -39,6 +39,9 @@ jobs:
           from data.storage_manager import StorageManager
           assert hasattr(DataProvider, "_fetch_longbridge")
           assert hasattr(StorageManager, "replace_candles_bulk")
+          assert hasattr(StorageManager, "get_scan_checkpoint")
+          assert hasattr(StorageManager, "mark_scan_symbol_completed")
+          assert hasattr(StorageManager, "has_scan_checkpoint")
           print("Application imports and provider/storage contracts passed.")
           PY
       - name: Verify storage and provider failover
@@ -84,6 +87,15 @@ jobs:
           assert provider.last_source == "Longbridge", provider.last_source
           stored = storage.get_candles_df("AAPL")
           assert len(stored) == 252, len(stored)
+          checkpoint_symbols = ["AAPL", "MSFT", "NVDA"]
+          assert storage.get_scan_checkpoint("resume-test", checkpoint_symbols) == set()
+          storage.mark_scan_symbol_completed("resume-test", "AAPL")
+          resumed = storage.get_scan_checkpoint("resume-test", checkpoint_symbols)
+          assert resumed == {"AAPL"}, resumed
+          assert storage.has_scan_checkpoint("resume-test", checkpoint_symbols)
+          assert not storage.has_scan_checkpoint("resume-test", ["AAPL", "MSFT"])
+          storage.clear_scan_checkpoint("resume-test")
+          assert not storage.has_scan_checkpoint("resume-test", checkpoint_symbols)
           assert np.isfinite(relative_strength_score(stored.set_index("date")["close"]))
 
           rating = 99
