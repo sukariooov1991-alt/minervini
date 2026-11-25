@@ -83,9 +83,14 @@ def accumulation_distribution_summary(
         and last_volume > avg
         and (pd.isna(down) or (pd.notna(up) and up >= down))
     )
-    acc_structural = bool(
-        np.isfinite(up_down_ratio)
+    # A positive infinite ratio means there was buying volume but no
+    # down-day volume; treat that as strong accumulation, not invalid data.
+    ratio_is_strong = (
+        (np.isfinite(up_down_ratio) or np.isposinf(up_down_ratio))
         and up_down_ratio >= 1.25
+    )
+    acc_structural = bool(
+        ratio_is_strong
         and power_up_days >= power_down_days
     )
 
