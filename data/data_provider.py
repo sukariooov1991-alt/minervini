@@ -276,13 +276,12 @@ class DataProvider:
         return _normalise_ohlcv(frame)
 
     def fetch_and_store_daily_candles(self, period: str = "2y") -> int:
-        # Yahoo is primary; Nasdaq is a no-key public fallback. Keep the existing
-        # Longbridge integration intact, followed by optional backup sources.
+        # Daily-history fallback order: Yahoo -> Stooq -> Nasdaq -> Alpha Vantage.
+        # Longbridge remains available through its existing separate integration.
         providers = (
             ("Yahoo Finance", lambda: self._fetch_yahoo(period)),
-            ("Nasdaq public data", lambda: self._fetch_nasdaq(period)),
-            ("Longbridge", lambda: self._fetch_longbridge(period)),
             ("Stooq", lambda: self._fetch_stooq(period)),
+            ("Nasdaq public data", lambda: self._fetch_nasdaq(period)),
             ("Alpha Vantage", lambda: self._fetch_alpha_vantage(period)),
         )
         errors = []
@@ -312,7 +311,7 @@ class DataProvider:
                 errors.append(f"{source}: {exc}")
                 log.warning("%s unavailable for %s; trying next provider: %s", source, self.symbol, exc)
         raise ValueError(
-            f"No daily data for {self.symbol}; all 5 providers failed. " + " | ".join(errors)
+            f"No daily data for {self.symbol}; all 4 providers failed. " + " | ".join(errors)
         )
 
     def get_ohlcv_dataframe(self) -> pd.DataFrame:
