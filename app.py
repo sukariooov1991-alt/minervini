@@ -20,6 +20,9 @@ from data.trade_levels import build_trade_levels, evaluate_entry_range
 from data.sp500_symbols import SP500_SYMBOLS
 from data.telegram_notifier import TelegramNotifier
 from screener import DailyScreener
+from analysis.vcp import check_vcp, check_breakout
+from analysis.pullback import check_pullback
+import pandas as pd
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("minervini_v2_app")
@@ -51,6 +54,7 @@ class ScanController:
         }
         self._cards: dict[str, dict[str, Any]] = {}
         self._live_prices: dict[str, float] = {}
+        self._realtime_locks: dict[str, threading.Lock] = {}
         self._ws_connected: bool = False
         self._last_error: str | None = None
         self._scan_errors: list[dict[str, str]] = []
@@ -81,36 +85,172 @@ class ScanController:
 
     def _on_realtime_quote(self, quote: dict[str, Any]) -> None:
         sym = str(quote.get("symbol", "")).upper().strip()
-        price = quote.get("last_done")
-        if not sym or price is None:
+        raw_price = quote.get("last_done")
+        if not sym or raw_price is None:
             return
         try:
-            price = float(price)
+            price = float(raw_price)
         except (TypeError, ValueError):
             return
         if not (price > 0 and math.isfinite(price)):
             return
-        with self._state_cv:
-            self._ws_connected = True
-            self._live_prices[sym] = price
-            if sym in self._cards:
-                card = self._cards[sym]
-                cur_p = round(float(price), 4)
-                card["current_price"] = cur_p
-                card["price_source"] = "Longbridge WebSocket"
-                card["updated_at"] = datetime.now(timezone.utc).isoformat()
 
-                within_range, range_note = evaluate_entry_range(cur_p, card.get("pivot_price"))
-                card["within_entry_range"] = within_range
-                base_notes = [
-                    n for n in (card.get("notes") or [])
-                    if "خارج نطاق الـ 5%" not in n
-                ]
-                if range_note:
-                    base_notes.insert(0, range_note)
-                card["notes"] = base_notes
-                card["smart_reading"] = self._build_smart_reading_from_card(card)
-                self._notify_state_changed_locked()
+        with self._lock:
+            symbol_lock = self._realtime_locks.setdefault(sym, threading.Lock())
+
+        # Serialize callbacks per symbol to prevent stale calculations winning.
+        with symbol_lock:
+            alert_card = None
+            try:
+                candles = self.storage.get_candles_df(sym)
+                live_df = candles.copy()
+                if not live_df.empty:
+                    live_df["date"] = pd.to_datetime(live_df["date"], errors="coerce")
+                    today = datetime.now(ZoneInfo("America/New_York")).date()
+                    today_mask = live_df["date"].dt.date == today
+                    raw_volume = quote.get("volume")
+                    try:
+                        quote_volume = float(raw_volume) if raw_volume is not None else None
+                        if quote_volume is not None and (not math.isfinite(quote_volume) or quote_volume < 0):
+                            quote_volume = None
+                    except (TypeError, ValueError):
+                        quote_volume = None
+
+                    if bool(today_mask.any()):
+                        idx = live_df.index[today_mask][-1]
+                        live_df.at[idx, "high"] = max(float(live_df.at[idx, "high"]), price)
+                        live_df.at[idx, "low"] = min(float(live_df.at[idx, "low"]), price)
+                        live_df.at[idx, "close"] = price
+                        if quote_volume is not None:
+                            live_df.at[idx, "volume"] = max(float(live_df.at[idx, "volume"]), quote_volume)
+                    else:
+                        live_df = pd.concat([live_df, pd.DataFrame([{
+                            "date": pd.Timestamp(today),
+                            "open": price,
+                            "high": price,
+                            "low": price,
+                            "close": price,
+                            "volume": quote_volume if quote_volume is not None else 0.0,
+                        }])], ignore_index=True)
+                    live_df = live_df.sort_values("date").reset_index(drop=True)
+
+                    # VCP structure uses completed daily bars; the evolving
+                    # session candle is used for pullback/breakout confirmation.
+                    completed_df = live_df.iloc[:-1].copy()
+                    vcp_info = check_vcp(completed_df)
+                    pullback_info = check_pullback(live_df)
+                    vcp_passed = bool(vcp_info.get("passed", False))
+                    pivot = vcp_info.get("pivot_price") if vcp_passed else None
+                    breakout_passed = bool(
+                        pivot is not None and check_breakout(live_df, pivot=pivot)
+                    )
+                    pullback_passed = bool(pullback_info.get("passed", False))
+                else:
+                    vcp_passed = False
+                    pullback_passed = False
+                    breakout_passed = False
+                    pivot = None
+                    vcp_info = {}
+
+                setup_passed = bool(vcp_passed or pullback_passed)
+                with self._state_cv:
+                    self._ws_connected = True
+                    self._live_prices[sym] = price
+                    card = self._cards.get(sym)
+                    if card is None:
+                        self._notify_state_changed_locked()
+                        return
+
+                    was_entry_ready = bool(card.get("entry_ready", False))
+                    market_favorable = bool(card.get("market_favorable", False))
+                    # Do not reuse a stale VCP pivot when the active path is
+                    # Pullback. Until that path supplies its own anchor, levels
+                    # remain explicitly unavailable rather than fabricated.
+                    active_pivot = pivot if vcp_passed else None
+                    active_low = vcp_info.get("final_low") if vcp_passed else None
+                    plan = build_trade_levels(
+                        symbol=sym,
+                        current_price=price,
+                        pivot_price=active_pivot,
+                        candles_df=live_df if not live_df.empty else None,
+                        final_low=active_low,
+                    ).to_dict() if setup_passed else {
+                        "pivot_price": None,
+                        "final_low": None,
+                        "entry_zones": [],
+                        "targets": [],
+                        "shared_stop_loss": None,
+                        "status": "بانتظار نموذج الدخول",
+                        "within_entry_range": None,
+                        "notes": ["السهم مؤهل؛ المراقبة مستمرة حتى تحقق VCP أو Pullback."],
+                    }
+
+                    card.update({
+                        "current_price": round(price, 4),
+                        "price_source": "Longbridge WebSocket",
+                        "pivot_price": plan["pivot_price"],
+                        "final_low": plan["final_low"],
+                        "entry_zones": plan["entry_zones"],
+                        "targets": plan["targets"],
+                        "shared_stop_loss": plan["shared_stop_loss"],
+                        "levels_status": plan["status"],
+                        "within_entry_range": plan["within_entry_range"],
+                        "notes": plan["notes"],
+                        "setup_passed": setup_passed,
+                        "entry_ready": bool(setup_passed and market_favorable),
+                        "passed_all_filters": bool(setup_passed and market_favorable),
+                        "market_favorable": market_favorable,
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                    })
+                    if setup_passed and not market_favorable:
+                        card["status"] = "النموذج تحقق — السوق غير مناسب"
+                        card["stage"] = "المرحلة 3: تقييم حالة السوق"
+                    elif setup_passed:
+                        card["status"] = "إشارة مكتملة — النموذج والسوق مؤهلان"
+                        card["stage"] = "المرحلة 4: إشارة جاهزة للتقييم"
+                    else:
+                        card["status"] = "انتظار — مراقبة VCP أو Pullback"
+                        card["stage"] = "المرحلة 1: سهم مؤهل للمراقبة"
+
+                    for item in card.get("filters", []):
+                        name = item.get("name")
+                        if name == "VCP Pattern":
+                            item["passed"] = vcp_passed
+                        elif name == "Breakout Confirmation":
+                            item["passed"] = breakout_passed
+                        elif name == "Pullback Check":
+                            item["passed"] = pullback_passed
+                        elif name == "Market Regime Favorable":
+                            item["passed"] = market_favorable
+                            item["pending"] = not setup_passed
+                    card["smart_reading"] = self._build_smart_reading_from_card(card)
+                    if not was_entry_ready and card["entry_ready"]:
+                        alert_card = dict(card)
+                    self._notify_state_changed_locked()
+
+                if alert_card is not None:
+                    try:
+                        self.notifier.send_stock_appearance_alert(alert_card)
+                    except Exception:
+                        log.exception("Telegram realtime entry alert failed for %s", sym)
+            except Exception:
+                # Preserve quote visibility and the last valid setup state if
+                # a provider candle or calculation is malformed.
+                log.exception("Realtime setup recalculation failed for %s", sym)
+                with self._state_cv:
+                    self._ws_connected = True
+                    self._live_prices[sym] = price
+                    card = self._cards.get(sym)
+                    if card is not None:
+                        card["current_price"] = round(price, 4)
+                        card["price_source"] = "Longbridge WebSocket"
+                        card["updated_at"] = datetime.now(timezone.utc).isoformat()
+                        within_range, range_note = evaluate_entry_range(price, card.get("pivot_price"))
+                        card["within_entry_range"] = within_range
+                        if range_note and range_note not in card.get("notes", []):
+                            card["notes"] = [range_note] + list(card.get("notes") or [])
+                        card["smart_reading"] = self._build_smart_reading_from_card(card)
+                    self._notify_state_changed_locked()
 
     def _build_smart_reading_from_card(self, card: dict[str, Any]) -> str:
         sym = card.get("symbol", "")
@@ -248,6 +388,7 @@ class ScanController:
             "filters": self._build_filters_detail(row),
             "watchlist_eligible": True,
             "setup_passed": setup_passed,
+            "market_favorable": bool(market_favorable),
             "entry_ready": entry_ready,
             "passed_all_filters": entry_ready,
             "shown_on_main_page": True,
