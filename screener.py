@@ -32,7 +32,17 @@ class DailyScreener:
     ):
         self.storage = StorageManager(db_path)
         self.output_path = Path(output_path)
-        self.symbols = list(symbols or SP500_SYMBOLS)
+        if symbols is None:
+            selected_symbols = SP500_SYMBOLS
+        elif isinstance(symbols, str):
+            selected_symbols = [symbols]
+        else:
+            selected_symbols = symbols
+        self.symbols = [
+            str(sym).upper().strip()
+            for sym in selected_symbols
+            if str(sym).strip()
+        ]
         self._providers: dict[str, DataProvider] = {}
 
     def _get_provider(self, symbol: str) -> DataProvider:
