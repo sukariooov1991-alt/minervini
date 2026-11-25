@@ -52,6 +52,7 @@ class ScanController:
         self._live_prices: dict[str, float] = {}
         self._ws_connected: bool = False
         self._last_error: str | None = None
+        self._scan_progress: dict[str, Any] = {"phase": "idle", "completed": 0, "total": 0, "percent": 0, "current_symbol": ""}
 
     def _notify_state_changed_locked(self) -> None:
         self._state_version += 1
@@ -225,6 +226,16 @@ class ScanController:
         card["smart_reading"] = self._build_smart_reading_from_card(card)
         return card
 
+    def _update_scan_progress(self, progress: dict[str, Any]) -> None:
+        total = int(progress.get("total") or 0)
+        completed = int(progress.get("completed") or 0)
+        with self._state_cv:
+            self._scan_progress = {
+                **progress,
+                "percent": min(100, int(completed * 100 / total)) if total else 0,
+            }
+            self._notify_state_changed_locked()
+
     def run_once(self, symbols: list[str] | None = None, update: bool = True) -> None:
         with self._state_cv:
             self._running = True
@@ -238,7 +249,7 @@ class ScanController:
                 output_path=self.output_path,
                 symbols=symbols,
             )
-            result_df, _, market_status = screener.run_screen(update=update)
+            result_df, _, market_status = screener.run_screen(update=update, progress_callback=self._update_scan_progress)
             market_favorable = bool(market_status.get("market_favorable", False))
 
             with self._state_cv:
@@ -287,7 +298,14 @@ class ScanController:
                 self._notify_state_changed_locked()
         finally:
             with self._state_cv:
+                was_stopped = self._stop_event.is_set()
                 self._running = False
+                if was_stopped:
+                    self._scan_progress = {**self._scan_progress, "phase": "stopped"}
+                elif self._last_error:
+                    self._scan_progress = {**self._scan_progress, "phase": "error"}
+                else:
+                    self._scan_progress = {"phase": "completed", "completed": 1, "total": 1, "percent": 100, "current_symbol": ""}
                 self._notify_state_changed_locked()
 
     def start_scan(self, symbols: list[str] | None = None, update: bool = True) -> bool:
@@ -299,6 +317,7 @@ class ScanController:
             self._stop_event.clear()
             self._running = True
             self._last_error = None
+            self._scan_progress = {"phase": "starting", "completed": 0, "total": len(symbols or SP500_SYMBOLS), "percent": 0, "current_symbol": ""}
             self._notify_state_changed_locked()
             t = threading.Thread(
                 target=self.run_once,
@@ -338,6 +357,7 @@ class ScanController:
                 "market_session": self._market_session_label,
                 "market_status": self._market_status,
                 "last_error": self._last_error,
+                "scan_progress": self._scan_progress,
                 "cards": list(self._cards.values()),
             }
 
