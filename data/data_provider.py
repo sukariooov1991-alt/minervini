@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime, timezone, date
 from typing import Any
 from urllib.parse import urlencode
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 import json
 import logging
 import os
@@ -163,6 +163,54 @@ class DataProvider:
                     pass
         raise RuntimeError(f"Yahoo returned no usable daily candles: {last_error or 'empty response'}")
 
+    def _fetch_nasdaq(self, period: str) -> pd.DataFrame:
+        """Fetch public delayed daily OHLCV from Nasdaq's no-key historical endpoint."""
+        start = _period_start(period)
+        end = pd.Timestamp.now().date()
+        params = urlencode({
+            "assetclass": "stocks",
+            "fromdate": start.strftime("%Y-%m-%d"),
+            "todate": end.strftime("%Y-%m-%d"),
+            "limit": "999999",
+        })
+        url = f"https://api.nasdaq.com/api/quote/{self.symbol.replace('.', '/')}/historical?{params}"
+        request = Request(url, headers={
+            "User-Agent": "Mozilla/5.0 (compatible; MinerviniDataBot/1.0)",
+            "Accept": "application/json, text/plain, */*",
+            "Origin": "https://www.nasdaq.com",
+            "Referer": f"https://www.nasdaq.com/market-activity/stocks/{self.symbol.lower()}",
+            "Accept-Language": "en-US,en;q=0.9",
+        })
+        with urlopen(request, timeout=30) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        rows = (((payload.get("data") or {}).get("tradesTable") or {}).get("rows")) or []
+        if not rows:
+            message = (payload.get("message") or payload.get("status") or "no historical rows returned")
+            raise RuntimeError(f"Nasdaq returned no historical data: {message}")
+
+        def number(value):
+            if value is None:
+                return None
+            cleaned = str(value).strip().replace("$", "").replace(",", "")
+            if cleaned in {"", "-", "N/A", "NA"}:
+                return None
+            return float(cleaned)
+
+        parsed = []
+        for row in rows:
+            try:
+                parsed.append({
+                    "date": pd.to_datetime(row.get("date"), format="%m/%d/%Y", errors="raise"),
+                    "open": number(row.get("open")),
+                    "high": number(row.get("high")),
+                    "low": number(row.get("low")),
+                    "close": number(row.get("close")),
+                    "volume": number(row.get("volume")),
+                })
+            except (TypeError, ValueError):
+                continue
+        return _normalise_ohlcv(pd.DataFrame(parsed))
+
     def _fetch_longbridge(self, period: str) -> pd.DataFrame:
         from longbridge.openapi import Period, AdjustType
         ctx = _get_longbridge_context()
@@ -228,9 +276,11 @@ class DataProvider:
         return _normalise_ohlcv(frame)
 
     def fetch_and_store_daily_candles(self, period: str = "2y") -> int:
-        # Provider order is intentional: Yahoo -> Longbridge -> Stooq -> Alpha Vantage.
+        # Yahoo is primary; Nasdaq is a no-key public fallback. Keep the existing
+        # Longbridge integration intact, followed by optional backup sources.
         providers = (
             ("Yahoo Finance", lambda: self._fetch_yahoo(period)),
+            ("Nasdaq public data", lambda: self._fetch_nasdaq(period)),
             ("Longbridge", lambda: self._fetch_longbridge(period)),
             ("Stooq", lambda: self._fetch_stooq(period)),
             ("Alpha Vantage", lambda: self._fetch_alpha_vantage(period)),
@@ -262,7 +312,7 @@ class DataProvider:
                 errors.append(f"{source}: {exc}")
                 log.warning("%s unavailable for %s; trying next provider: %s", source, self.symbol, exc)
         raise ValueError(
-            f"No daily data for {self.symbol}; all 4 providers failed. " + " | ".join(errors)
+            f"No daily data for {self.symbol}; all 5 providers failed. " + " | ".join(errors)
         )
 
     def get_ohlcv_dataframe(self) -> pd.DataFrame:
