@@ -1,44 +1,104 @@
-"""Yahoo Finance market-data adapter (daily candles, earnings, news)."""
+"""Multi-source daily market-data adapter with automatic failover."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date
 from typing import Any
+from urllib.parse import urlencode
+from urllib.request import urlopen
+import json
+import logging
+import os
 import time
 import threading
-import logging
+
 import pandas as pd
 
-# Yahoo Finance is a public endpoint with undocumented request limits.
-# Serialize requests and leave a minimum gap between ticker requests.
+from data.storage_manager import StorageManager
+
+log = logging.getLogger(__name__)
+
+# Serialize public Yahoo requests to reduce throttling.
 _YAHOO_REQUEST_LOCK = threading.Lock()
 _YAHOO_NEXT_REQUEST_AT = 0.0
 _YAHOO_MIN_REQUEST_INTERVAL = 1.25
+_LONGBRIDGE_LOCK = threading.Lock()
+_LONGBRIDGE_CONTEXT = None
 
 
 class YahooRateLimitError(RuntimeError):
-    """Yahoo Finance rejected requests because its rate limit was reached."""
+    """Legacy compatibility exception; market-data failover now handles Yahoo failures."""
 
 
 def _wait_for_yahoo_request_slot() -> None:
     global _YAHOO_NEXT_REQUEST_AT
     with _YAHOO_REQUEST_LOCK:
-        now = time.monotonic()
-        wait = max(0.0, _YAHOO_NEXT_REQUEST_AT - now)
+        wait = max(0.0, _YAHOO_NEXT_REQUEST_AT - time.monotonic())
         if wait:
             time.sleep(wait)
         _YAHOO_NEXT_REQUEST_AT = time.monotonic() + _YAHOO_MIN_REQUEST_INTERVAL
 
 
-def _is_yahoo_rate_limit_error(exc: Exception) -> bool:
-    message = str(exc).lower()
-    return any(token in message for token in (
-        "too many requests", "rate limited", "rate limit", "429",
-        "yfratelimiterror",
-    ))
+def _period_start(period: str) -> date:
+    now = pd.Timestamp.now().normalize()
+    value = str(period or "2y").lower().strip()
+    try:
+        if value.endswith("y"):
+            return (now - pd.DateOffset(years=int(value[:-1]))).date()
+        if value.endswith("mo"):
+            return (now - pd.DateOffset(months=int(value[:-2]))).date()
+        if value.endswith("d"):
+            return (now - pd.Timedelta(days=int(value[:-1]))).date()
+    except (TypeError, ValueError):
+        pass
+    return (now - pd.DateOffset(years=2)).date()
 
-from data.storage_manager import StorageManager
 
-log = logging.getLogger(__name__)
+def _normalise_ohlcv(df: pd.DataFrame | None) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame()
+    frame = df.copy()
+    frame.columns = [str(c).strip().lower().replace(" ", "_") for c in frame.columns]
+    if "date" in frame.columns:
+        frame = frame.set_index("date")
+    if "datetime" in frame.columns:
+        frame = frame.set_index("datetime")
+    if "timestamp" in frame.columns:
+        frame = frame.set_index("timestamp")
+    rename = {"adj_close": "close", "vol": "volume"}
+    frame = frame.rename(columns=rename)
+    required = ["open", "high", "low", "close", "volume"]
+    if not set(required).issubset(frame.columns):
+        return pd.DataFrame()
+    frame = frame[required].copy()
+    frame.index = pd.to_datetime(frame.index, errors="coerce", utc=True)
+    frame = frame[~frame.index.isna()]
+    # Store exchange dates, not UTC-shifted calendar dates.
+    frame.index = frame.index.tz_convert(None).normalize()
+    for col in required:
+        frame[col] = pd.to_numeric(frame[col], errors="coerce")
+    frame = frame.replace([float("inf"), float("-inf")], pd.NA).dropna(subset=required)
+    frame = frame[(frame[["open", "high", "low", "close"]] > 0).all(axis=1)]
+    frame = frame[frame["volume"] >= 0]
+    frame = frame[(frame["high"] >= frame[["open", "low", "close"]].max(axis=1)) &
+                  (frame["low"] <= frame[["open", "high", "close"]].min(axis=1))]
+    return frame[~frame.index.duplicated(keep="last")].sort_index()
+
+
+def _get_longbridge_context():
+    global _LONGBRIDGE_CONTEXT
+    with _LONGBRIDGE_LOCK:
+        if _LONGBRIDGE_CONTEXT is not None:
+            return _LONGBRIDGE_CONTEXT
+        app_key = os.getenv("LONGBRIDGE_APP_KEY", "").strip()
+        app_secret = os.getenv("LONGBRIDGE_APP_SECRET", "").strip()
+        access_token = os.getenv("LONGBRIDGE_ACCESS_TOKEN", "").strip()
+        if not (app_key and app_secret and access_token):
+            raise RuntimeError("Longbridge credentials are not configured")
+        from longbridge.openapi import Config, QuoteContext
+        _LONGBRIDGE_CONTEXT = QuoteContext(Config(
+            app_key=app_key, app_secret=app_secret, access_token=access_token
+        ))
+        return _LONGBRIDGE_CONTEXT
 
 
 def _find_nearest_prior_value(
@@ -71,73 +131,133 @@ def _find_nearest_prior_value(
 class DataProvider:
     def __init__(self, symbol: str, storage: StorageManager | None = None):
         self.symbol = symbol.upper().strip()
+        self.storage = storage or StorageManager()
+        self.last_source: str | None = None
         try:
             import yfinance as yf
-        except ImportError as exc:
-            raise RuntimeError(
-                "Install dependencies with: pip install -r requirements.txt"
-            ) from exc
-        # Yahoo Finance uses hyphens for class-share tickers (e.g. BRK-B),
-        # while the screener/database keep the canonical S&P symbol (BRK.B).
-        yahoo_symbol = self.symbol.replace(".", "-")
-        self.ticker = yf.Ticker(yahoo_symbol)
-        self.storage = storage or StorageManager()
+            self.ticker = yf.Ticker(self.symbol.replace(".", "-"))
+        except ImportError:
+            self.ticker = None
 
-    def fetch_and_store_daily_candles(self, period: str = "2y") -> int:
-        # Pace requests globally across all DataProvider instances. Do not retry
-        # explicit rate-limit responses: repeated retries amplify Yahoo throttling.
-        # Empty responses are retried with a fresh Ticker instance because Yahoo
-        # occasionally returns an empty chart payload for otherwise valid symbols.
-        df = None
-        last_error: Exception | None = None
+    def _fetch_yahoo(self, period: str) -> pd.DataFrame:
+        if self.ticker is None:
+            raise RuntimeError("yfinance is not installed")
+        last_error = None
         for attempt in range(3):
             try:
                 _wait_for_yahoo_request_slot()
-                df = self.ticker.history(
+                frame = _normalise_ohlcv(self.ticker.history(
                     period=period, interval="1d", auto_adjust=True
-                )
-                if df is not None and not df.empty:
-                    break
+                ))
+                if not frame.empty:
+                    return frame
             except Exception as exc:
                 last_error = exc
-                if _is_yahoo_rate_limit_error(exc):
-                    raise YahooRateLimitError(
-                        f"Yahoo Finance rate limit reached while fetching {self.symbol}; "
-                        "remaining downloads should be deferred"
-                    ) from exc
-                df = None
+                log.warning("Yahoo failed for %s (attempt %s/3): %s", self.symbol, attempt + 1, exc)
             if attempt < 2:
-                time.sleep(3 * (attempt + 1))
+                time.sleep(2 * (attempt + 1))
                 try:
                     import yfinance as yf
                     self.ticker = yf.Ticker(self.symbol.replace(".", "-"))
                 except Exception:
-                    log.exception("Could not refresh Yahoo ticker for %s", self.symbol)
+                    pass
+        raise RuntimeError(f"Yahoo returned no usable daily candles: {last_error or 'empty response'}")
 
-        if df is None or df.empty:
-            detail = f": {last_error}" if last_error else ""
-            raise ValueError(f"No daily data for {self.symbol} after 3 attempts{detail}")
-
-        rename = {"Open": "open", "High": "high", "Low": "low", "Close": "close", "Volume": "volume"}
-        df = df.rename(columns=rename)
-        required = ["open", "high", "low", "close", "volume"]
-        if not set(required).issubset(df.columns):
-            raise ValueError(f"OHLCV columns missing for {self.symbol}")
-
-        bulk_rows: list[tuple[str, float, float, float, float, float]] = []
-        for row in df[required].itertuples(index=True, name=None):
-            dt = row[0]
-            vals = [pd.to_numeric(v, errors="coerce") for v in row[1:]]
-            if any(pd.isna(v) for v in vals):
+    def _fetch_longbridge(self, period: str) -> pd.DataFrame:
+        from longbridge.openapi import Period, AdjustType
+        ctx = _get_longbridge_context()
+        lb_symbol = self.symbol if self.symbol.endswith(".US") else f"{self.symbol}.US"
+        candles = ctx.history_candlesticks_by_date(
+            lb_symbol, Period.Day, AdjustType.ForwardAdjust,
+            _period_start(period), pd.Timestamp.now().date()
+        )
+        rows = []
+        for candle in candles or []:
+            stamp = getattr(candle, "timestamp", None)
+            if stamp is None:
                 continue
-            dt_str = pd.Timestamp(dt).strftime("%Y-%m-%d")
-            fvals = tuple(float(v) for v in vals)
-            bulk_rows.append((dt_str, fvals[0], fvals[1], fvals[2], fvals[3], fvals[4]))
+            if isinstance(stamp, (int, float)):
+                stamp = pd.to_datetime(stamp, unit="s", utc=True)
+            rows.append({
+                "timestamp": stamp,
+                "open": getattr(candle, "open", None),
+                "high": getattr(candle, "high", None),
+                "low": getattr(candle, "low", None),
+                "close": getattr(candle, "close", None),
+                "volume": getattr(candle, "volume", None),
+            })
+        return _normalise_ohlcv(pd.DataFrame(rows))
 
-        count = self.storage.upsert_candles_bulk(self.symbol, bulk_rows)
-        if count == 0:
-            raise ValueError(f"No valid OHLCV rows for {self.symbol}")
-        return count
+    def _fetch_stooq(self, period: str) -> pd.DataFrame:
+        symbol = self.symbol.lower().replace(".", "-")
+        if not symbol.endswith(".us"):
+            symbol += ".us"
+        params = urlencode({
+            "s": symbol, "i": "d",
+            "d1": _period_start(period).strftime("%Y%m%d"),
+            "d2": pd.Timestamp.now().strftime("%Y%m%d"),
+        })
+        url = f"https://stooq.com/q/d/l/?{params}"
+        with urlopen(url, timeout=25) as response:
+            frame = pd.read_csv(response)
+        return _normalise_ohlcv(frame)
+
+    def _fetch_alpha_vantage(self, period: str) -> pd.DataFrame:
+        api_key = os.getenv("ALPHAVANTAGE_API_KEY", "").strip()
+        if not api_key:
+            raise RuntimeError("ALPHAVANTAGE_API_KEY is not configured")
+        params = urlencode({
+            "function": "TIME_SERIES_DAILY_ADJUSTED",
+            "symbol": self.symbol.replace(".", "-"),
+            "outputsize": "full",
+            "apikey": api_key,
+        })
+        url = f"https://www.alphavantage.co/query?{params}"
+        with urlopen(url, timeout=30) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        series_key = "Time Series (Daily)"
+        if series_key not in payload:
+            message = payload.get("Note") or payload.get("Information") or payload.get("Error Message") or "no daily series returned"
+            raise RuntimeError(f"Alpha Vantage: {message}")
+        frame = pd.DataFrame.from_dict(payload[series_key], orient="index").rename(columns={
+            "1. open": "open", "2. high": "high", "3. low": "low",
+            "4. close": "close", "6. volume": "volume",
+        })
+        frame.index = pd.to_datetime(frame.index, errors="coerce")
+        frame = frame[frame.index >= pd.Timestamp(_period_start(period))]
+        return _normalise_ohlcv(frame)
+
+    def fetch_and_store_daily_candles(self, period: str = "2y") -> int:
+        # Provider order is intentional: Yahoo -> Longbridge -> Stooq -> Alpha Vantage.
+        providers = (
+            ("Yahoo Finance", lambda: self._fetch_yahoo(period)),
+            ("Longbridge", lambda: self._fetch_longbridge(period)),
+            ("Stooq", lambda: self._fetch_stooq(period)),
+            ("Alpha Vantage", lambda: self._fetch_alpha_vantage(period)),
+        )
+        errors = []
+        for source, fetch in providers:
+            try:
+                frame = _normalise_ohlcv(fetch())
+                if frame.empty:
+                    raise RuntimeError("source returned no valid OHLCV candles")
+                rows = [
+                    (idx.strftime("%Y-%m-%d"), float(row.open), float(row.high),
+                     float(row.low), float(row.close), float(row.volume))
+                    for idx, row in frame.iterrows()
+                ]
+                count = self.storage.upsert_candles_bulk(self.symbol, rows)
+                if count <= 0:
+                    raise RuntimeError("no valid candles remained after storage validation")
+                self.last_source = source
+                log.info("%s: fetched %s daily candles from %s", self.symbol, count, source)
+                return count
+            except Exception as exc:
+                errors.append(f"{source}: {exc}")
+                log.warning("%s unavailable for %s; trying next provider: %s", source, self.symbol, exc)
+        raise ValueError(
+            f"No daily data for {self.symbol}; all 4 providers failed. " + " | ".join(errors)
+        )
 
     def get_ohlcv_dataframe(self) -> pd.DataFrame:
         return self.storage.get_candles_df(self.symbol)
