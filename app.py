@@ -120,11 +120,11 @@ class ScanController:
             log.warning("Longbridge realtime disabled: credentials are incomplete (%s)", context)
             return
         try:
-            self.lb_client.subscribe(clean)
-            with self._state_cv:
-                self._ws_connected = True
-                self._notify_state_changed_locked()
-            log.info("Longbridge WebSocket subscribed to %s symbols (%s)", len(clean), context)
+            newly_subscribed = self.lb_client.subscribe(clean)
+            log.info(
+                "Longbridge WebSocket subscription sync: requested=%s newly_subscribed=%s (%s)",
+                len(clean), len(newly_subscribed), context,
+            )
         except Exception:
             with self._state_cv:
                 self._ws_connected = False
@@ -243,7 +243,9 @@ class ScanController:
 
                 setup_passed = bool(vcp_passed or pullback_passed)
                 with self._state_cv:
-                    self._ws_connected = True
+                    if quote.get("source") != "longbridge_quote_api":
+                        if quote.get("source") != "longbridge_quote_api":
+                        self._ws_connected = True
                     self._live_prices[sym] = price
                     card = self._cards.get(sym)
                     if card is None:
