@@ -327,6 +327,14 @@ class ScanController:
                 raise
         return True
 
+    def resume_pending_scan(self) -> bool:
+        """Resume an interrupted full-universe update after a Gunicorn worker restart."""
+        symbols = SP500_SYMBOLS
+        if not self.storage.has_scan_checkpoint("daily_universe_update", symbols):
+            return False
+        log.warning("Resuming interrupted daily data update from its SQLite checkpoint")
+        return self.start_scan(symbols=symbols, update=True)
+
     def stop_scan(self) -> None:
         self._stop_event.set()
 
