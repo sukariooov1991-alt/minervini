@@ -61,7 +61,58 @@ class StorageManager:
             );
             CREATE INDEX IF NOT EXISTS idx_candles_sym_date ON candles(symbol, date DESC);
             CREATE INDEX IF NOT EXISTS idx_events_sym_type_ts ON events(symbol, type, timestamp DESC);
+            CREATE TABLE IF NOT EXISTS scan_checkpoints (
+                scan_name TEXT PRIMARY KEY,
+                symbols_json TEXT NOT NULL,
+                completed_json TEXT NOT NULL,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            );
             """)
+
+    def get_scan_checkpoint(self, scan_name: str, symbols: list[str]) -> set[str]:
+        """Return completed symbols for a matching resumable scan; reset on universe changes."""
+        clean_symbols = [str(s).upper().strip() for s in symbols]
+        symbols_json = json.dumps(clean_symbols, separators=(",", ":"))
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT symbols_json, completed_json FROM scan_checkpoints WHERE scan_name=?",
+                (scan_name,),
+            ).fetchone()
+            if row is None or row["symbols_json"] != symbols_json:
+                conn.execute(
+                    "INSERT OR REPLACE INTO scan_checkpoints "
+                    "(scan_name, symbols_json, completed_json, updated_at) VALUES (?,?,?,CURRENT_TIMESTAMP)",
+                    (scan_name, symbols_json, "[]"),
+                )
+                return set()
+            try:
+                completed = json.loads(row["completed_json"])
+            except (TypeError, ValueError):
+                completed = []
+            return {str(s).upper().strip() for s in completed}
+
+    def mark_scan_symbol_completed(self, scan_name: str, symbol: str) -> None:
+        """Persist one successful symbol immediately so process restarts do not lose progress."""
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT completed_json FROM scan_checkpoints WHERE scan_name=?",
+                (scan_name,),
+            ).fetchone()
+            if row is None:
+                return
+            try:
+                completed = set(json.loads(row["completed_json"]))
+            except (TypeError, ValueError):
+                completed = set()
+            completed.add(str(symbol).upper().strip())
+            conn.execute(
+                "UPDATE scan_checkpoints SET completed_json=?, updated_at=CURRENT_TIMESTAMP WHERE scan_name=?",
+                (json.dumps(sorted(completed), separators=(",", ":")), scan_name),
+            )
+
+    def clear_scan_checkpoint(self, scan_name: str) -> None:
+        with self._get_conn() as conn:
+            conn.execute("DELETE FROM scan_checkpoints WHERE scan_name=?", (scan_name,))
 
     @staticmethod
     def _clean_candle_row(
