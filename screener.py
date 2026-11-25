@@ -428,7 +428,9 @@ class DailyScreener:
         }
         # Write to a sibling temporary file and atomically replace the last
         # complete snapshot. Startup recovery must never read a half-written JSON.
-        temp_output = self.output_path.with_name(self.output_path.name + ".tmp")
+        temp_output = self.output_path.with_name(
+            f"{self.output_path.name}.{os.getpid()}.tmp"
+        )
         temp_output.write_text(
             json.dumps(payload, indent=2, default=str),
             encoding="utf-8",
