@@ -281,6 +281,8 @@ class ScanController:
                             if quote.get("source") == "longbridge_quote_api"
                             else "Longbridge WebSocket"
                         ),
+                        "price_session": quote.get("trade_session") or "regular",
+                        "price_timestamp": quote.get("timestamp"),
                         "pivot_price": plan["pivot_price"],
                         "final_low": plan["final_low"],
                         "entry_zones": plan["entry_zones"],
@@ -342,6 +344,8 @@ class ScanController:
                             if quote.get("source") == "longbridge_quote_api"
                             else "Longbridge WebSocket"
                         )
+                        card["price_session"] = quote.get("trade_session") or "regular"
+                        card["price_timestamp"] = quote.get("timestamp")
                         card["updated_at"] = datetime.now(timezone.utc).isoformat()
                         within_range, range_note = evaluate_entry_range(price, card.get("pivot_price"))
                         card["within_entry_range"] = within_range
