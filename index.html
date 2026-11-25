@@ -348,7 +348,21 @@
 
         el.querySelector('.symbol').textContent = c.symbol;
         const priceSource = c.price_source || 'مصدر السعر غير محدد';
-        const priceUpdated = c.updated_at ? new Date(c.updated_at).toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '';
+        const rawQuoteTime = c.price_timestamp;
+        let quoteDate = null;
+        if (rawQuoteTime !== null && rawQuoteTime !== undefined && rawQuoteTime !== '') {
+          const rawTimeText = String(rawQuoteTime);
+          const timeValue = (typeof rawQuoteTime === 'number' || /^\\d+(\\.\\d+)?$/.test(rawTimeText))
+            ? Number(rawQuoteTime) * 1000
+            : rawQuoteTime;
+          const parsedQuoteDate = new Date(timeValue);
+          if (!Number.isNaN(parsedQuoteDate.getTime())) quoteDate = parsedQuoteDate;
+        }
+        if (!quoteDate && c.updated_at) {
+          const receivedDate = new Date(c.updated_at);
+          if (!Number.isNaN(receivedDate.getTime())) quoteDate = receivedDate;
+        }
+        const priceUpdated = quoteDate ? quoteDate.toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '';
         const priceSession = c.price_session ? ' — الجلسة: ' + c.price_session : '';
         el.querySelector('.price-text').textContent = ` السعر: ${c.current_price} — ${priceSource}${priceSession}${priceUpdated ? ' (' + priceUpdated + ')' : ''}`;
         el.querySelector('.status-stage-text').textContent = `${c.status} — ${c.stage}`;
