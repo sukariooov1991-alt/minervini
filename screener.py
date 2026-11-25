@@ -140,13 +140,35 @@ class DailyScreener:
         # Otherwise early batches would be ranked against stale rows from symbols
         # that have not yet been refreshed in this scan.
         download_failed_symbols: set[str] = set()
+        scan_checkpoint_name = "daily_universe_update"
+        completed_downloads: set[str] = set()
         if update:
+            # Successful downloads are checkpointed in SQLite after each symbol.
+            # If Render/Gunicorn restarts the worker, the next scan resumes at the
+            # first unfinished symbol instead of starting the 495-symbol universe over.
+            completed_downloads = self.storage.get_scan_checkpoint(
+                scan_checkpoint_name, self.symbols
+            )
             for i, sym in enumerate(self.symbols, 1):
                 if stop_callback and stop_callback():
                     stopped = True
                     break
+                if sym in completed_downloads:
+                    processed = i
+                    if progress_callback:
+                        progress_callback({
+                            "phase": "استئناف تحميل البيانات",
+                            "completed": processed,
+                            "total": progress_total,
+                            "batch": (i - 1) // batch_size + 1,
+                            "batch_total": (total + batch_size - 1) // batch_size,
+                            "current_symbol": sym,
+                        })
+                    continue
                 try:
                     n = self._get_provider(sym).fetch_and_store_daily_candles(period)
+                    self.storage.mark_scan_symbol_completed(scan_checkpoint_name, sym)
+                    completed_downloads.add(sym)
                     log.info("[%s/%s] %s: stored %s bars", i, total, sym, n)
                 except Exception as exc:
                     download_failed_symbols.add(sym)
@@ -368,6 +390,10 @@ class DailyScreener:
             json.dumps(payload, indent=2, default=str),
             encoding="utf-8",
         )
+        # Keep the checkpoint if the user stopped the scan or if any symbol
+        # failed to download; otherwise the next run is a genuinely fresh scan.
+        if update and not stopped and not download_failed_symbols:
+            self.storage.clear_scan_checkpoint(scan_checkpoint_name)
         return result, failures, market_status
 
 
