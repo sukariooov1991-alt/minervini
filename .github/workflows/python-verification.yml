@@ -28,7 +28,8 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
       - name: Compile all Python modules
-        run: python -m compileall -q analysis data tests app.py screener.py gunicorn.conf.py
+        run: |
+          python -m compileall -q analysis data tests app.py screener.py gunicorn.conf.py
           python -m unittest discover -s tests -v
       - name: Import application modules
         run: |
