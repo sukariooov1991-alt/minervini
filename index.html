@@ -1,0 +1,336 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>minervini</title>
+  <style>
+    :root {
+      --bg: #07090d;
+      --card: #11161f;
+      --card-border: #202938;
+      --text: #eef2f7;
+      --muted: #93a1b5;
+      --entry: #3b82f6;
+      --target: #22c55e;
+      --stop: #ef4444;
+      --btn-start: #1d4ed8;
+      --btn-stop: #991b1b;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, sans-serif;
+      min-height: 100vh;
+    }
+    .topbar {
+      padding: 16px;
+      border-bottom: 1px solid var(--card-border);
+      text-align: center;
+      font-weight: 700;
+      font-size: 1.25rem;
+      letter-spacing: 0.06em;
+    }
+    .container {
+      max-width: 760px;
+      margin: 0 auto;
+      padding: 14px;
+    }
+    .market-bar {
+      display: flex;
+      justify-content: flex-end;
+      margin-bottom: 10px;
+    }
+    .market-badge {
+      background: var(--card);
+      border: 1px solid var(--card-border);
+      padding: 6px 12px;
+      border-radius: 8px;
+      font-size: 0.9rem;
+    }
+    .controls {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      width: 100%;
+      margin-bottom: 18px;
+    }
+    button {
+      border: none;
+      border-radius: 9px;
+      min-width: 0;
+      min-height: 44px;
+      padding: 10px 12px;
+      color: #fff;
+      font-size: 0.92rem;
+      font-weight: 600;
+      line-height: 1.25;
+      cursor: pointer;
+    }
+    .controls button { width: 100%; }
+    .btn-scan { background: var(--btn-start); }
+    .btn-stop { background: var(--btn-stop); }
+    .btn-del {
+      background: transparent;
+      color: var(--stop);
+      border: 1px solid var(--stop);
+      padding: 4px 10px;
+      font-size: 0.8rem;
+    }
+    .cards {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 14px;
+    }
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      cursor: pointer;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .symbol { font-size: 1.1rem; font-weight: 700; }
+    .meta { color: var(--muted); font-size: 0.85rem; }
+    .levels-grid {
+      margin-top: 12px;
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      align-items: stretch;
+    }
+    .level-box {
+      min-width: 0;
+      padding: 10px 8px;
+      border: 1px solid var(--card-border);
+      border-radius: 10px;
+      background: rgba(255,255,255,0.025);
+    }
+    .level-title {
+      display: block;
+      min-height: 2.4em;
+      margin-bottom: 8px;
+      font-size: 0.78rem;
+      font-weight: 700;
+      line-height: 1.35;
+      overflow-wrap: anywhere;
+    }
+    .level-values {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      font-size: 0.82rem;
+      line-height: 1.35;
+      font-variant-numeric: tabular-nums;
+      overflow-wrap: anywhere;
+    }
+    .lvl-entry { color: var(--entry); }
+    .lvl-target { color: var(--target); }
+    .lvl-stop { color: var(--stop); font-weight: 700; }
+    @media (max-width: 380px) {
+      .container { padding: 10px; }
+      .controls { gap: 8px; }
+      .controls button { padding: 9px 6px; font-size: 0.84rem; }
+      .levels-grid { gap: 5px; }
+      .level-box { padding: 8px 5px; }
+      .level-title { font-size: 0.72rem; }
+      .level-values { font-size: 0.75rem; }
+    }
+    .expanded {
+      margin-top: 14px;
+      padding-top: 12px;
+      border-top: 1px solid var(--card-border);
+      display: none;
+    }
+    .card.is-open .expanded { display: block; }
+    .section-title {
+      font-weight: 700;
+      margin: 10px 0 6px;
+      font-size: 0.95rem;
+    }
+    .filter-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.84rem;
+      padding: 3px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+    }
+  </style>
+</head>
+<body>
+  <div class="topbar">minervini</div>
+  <div class="container">
+    <div class="market-bar">
+      <div class="market-badge" id="marketSession">حالة السوق: قبل الافتتاح</div>
+    </div>
+    <div class="controls">
+      <button class="btn-scan" id="startBtn" onclick="startScan()">فحص</button>
+      <button class="btn-stop" id="stopBtn" onclick="stopScan()">إيقاف الفحص</button>
+    </div>
+    <div class="cards" id="cardsContainer"></div>
+  </div>
+
+  <script>
+    const openCards = new Set();
+
+    async function startScan() {
+      await fetch('/api/scan/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({})
+      });
+    }
+
+    async function stopScan() {
+      await fetch('/api/scan/stop', { method: 'POST' });
+    }
+
+    async function deleteCard(event, sym) {
+      event.stopPropagation();
+      openCards.delete(sym);
+      await fetch(`/api/cards/${encodeURIComponent(sym)}`, { method: 'DELETE' });
+    }
+
+    function toggleCard(sym) {
+      if (openCards.has(sym)) {
+        openCards.delete(sym);
+      } else {
+        openCards.add(sym);
+      }
+      const el = document.querySelector(`[data-symbol="${CSS.escape(sym)}"]`);
+      if (el) el.classList.toggle('is-open', openCards.has(sym));
+    }
+
+    function ensureCardElement(container, sym) {
+      let el = container.querySelector(`[data-symbol="${CSS.escape(sym)}"]`);
+      if (!el) {
+        el = document.createElement('div');
+        el.className = 'card';
+        el.dataset.symbol = sym;
+        el.innerHTML = `
+          <div class="card-header">
+            <div>
+              <span class="symbol"></span>
+              <span class="meta price-text"></span>
+            </div>
+            <div class="meta status-stage-text"></div>
+            <button class="btn-del" type="button">حذف</button>
+          </div>
+          <div class="levels-grid" aria-label="مستويات الصفقة">
+            <section class="level-box">
+              <span class="level-title lvl-entry">مناطق الدخول الخمس</span>
+              <div class="level-values entry-values"></div>
+            </section>
+            <section class="level-box">
+              <span class="level-title lvl-target">الأهداف الخمسة</span>
+              <div class="level-values target-values"></div>
+            </section>
+            <section class="level-box">
+              <span class="level-title lvl-stop">وقف الخسارة</span>
+              <div class="level-values stop-values"></div>
+            </section>
+          </div>
+          <div class="expanded">
+            <div class="section-title">أولاً: القراءة الذكية</div>
+            <div class="meta smart-text"></div>
+            <div class="section-title">ثانياً: الفلاتر</div>
+            <div class="filters-list"></div>
+          </div>
+        `;
+        el.addEventListener('click', () => toggleCard(sym));
+        el.querySelector('.btn-del').addEventListener('click', (e) => deleteCard(e, sym));
+        container.appendChild(el);
+      }
+      return el;
+    }
+
+    function renderCards(cards) {
+      const container = document.getElementById('cardsContainer');
+      const seen = new Set();
+
+      for (const c of cards) {
+        seen.add(c.symbol);
+        const el = ensureCardElement(container, c.symbol);
+        el.classList.toggle('is-open', openCards.has(c.symbol));
+
+        el.querySelector('.symbol').textContent = c.symbol;
+        el.querySelector('.price-text').textContent = ` السعر: ${c.current_price}`;
+        el.querySelector('.status-stage-text').textContent = `${c.status} — ${c.stage}`;
+        const levelsStatus = c.levels_status || 'غير متاح';
+        const renderLevelValues = (selector, values, fallback) => {
+          const node = el.querySelector(selector);
+          node.replaceChildren();
+          const items = Array.isArray(values) && values.length ? values : [fallback];
+          for (const value of items) {
+            const line = document.createElement('span');
+            line.textContent = value === null || value === undefined || value === '' ? '—' : String(value);
+            node.appendChild(line);
+          }
+        };
+        renderLevelValues('.entry-values', c.entry_zones, levelsStatus);
+        renderLevelValues('.target-values', c.targets, levelsStatus);
+        renderLevelValues('.stop-values', [c.shared_stop_loss], levelsStatus);
+        el.querySelector('.smart-text').textContent = c.smart_reading || '';
+
+        const filtersNode = el.querySelector('.filters-list');
+        filtersNode.replaceChildren();
+        for (const f of (Array.isArray(c.filters) ? c.filters : [])) {
+          const row = document.createElement('div');
+          row.className = 'filter-row';
+          const name = document.createElement('span');
+          name.textContent = f && f.name != null ? String(f.name) : '';
+          const status = document.createElement('span');
+          status.textContent = f && f.passed ? 'ناجح' : 'غير ناجح';
+          row.append(name, status);
+          filtersNode.appendChild(row);
+        }
+      }
+
+      for (const existing of Array.from(container.children)) {
+        if (!seen.has(existing.dataset.symbol)) {
+          existing.remove();
+        }
+      }
+    }
+
+    function applySnapshot(data) {
+      const sessionEl = document.getElementById('marketSession');
+      if (data.last_error) {
+        sessionEl.textContent = `خطأ: ${data.last_error}`;
+      } else {
+        sessionEl.textContent = `حالة السوق: ${data.market_session || 'قبل الافتتاح'}`;
+      }
+      renderCards(data.cards || []);
+    }
+
+    function connectRealtimeStream() {
+      const evtSource = new EventSource('/api/stream');
+      evtSource.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          applySnapshot(data);
+        } catch (e) {}
+      };
+      evtSource.onerror = () => {
+        evtSource.close();
+        setTimeout(connectRealtimeStream, 2000);
+      };
+    }
+
+    fetch('/api/state', { cache: 'no-store' })
+      .then(r => r.ok ? r.json() : null)
+      .then(data => { if (data) applySnapshot(data); })
+      .catch(() => {});
+
+    connectRealtimeStream();
+  </script>
+</body>
+</html>

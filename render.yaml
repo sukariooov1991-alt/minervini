@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: minervini-platform
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 8
+    disk:
+      name: minervini-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: DB_PATH
+        value: /var/data/stock_data.db
+      - key: OUTPUT_PATH
+        value: /var/data/watchlist.json
+      - key: LONGBRIDGE_APP_KEY
+        sync: false
+      - key: LONGBRIDGE_APP_SECRET
+        sync: false
+      - key: LONGBRIDGE_ACCESS_TOKEN
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
