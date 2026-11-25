@@ -16,7 +16,7 @@ from analysis.pullback import check_pullback
 from analysis.accumulation_distribution import accumulation_distribution_summary
 from analysis.earnings import check_earnings
 from analysis.market_filter import check_market_regime
-from data.data_provider import DataProvider
+from data.data_provider import DataProvider, YahooRateLimitError
 from data.storage_manager import StorageManager
 from data.sp500_symbols import SP500_SYMBOLS
 
@@ -47,6 +47,27 @@ class DailyScreener:
             try:
                 n = self._get_provider(sym).fetch_and_store_daily_candles(period)
                 log.info("[%s/%s] %s: stored %s bars", i, len(self.symbols), sym, n)
+            except YahooRateLimitError as exc:
+                failures.append({"symbol": sym, "error": str(exc)})
+                log.error("%s", exc)
+                deferred = self.symbols[i:]
+                failures.extend({
+                    "symbol": pending,
+                    "error": "Deferred: Yahoo Finance rate limit reached; retry in a later scan",
+                } for pending in deferred)
+                log.warning(
+                    "Stopping Yahoo downloads after rate limit; deferred %s remaining symbols "
+                    "to avoid sending more requests.",
+                    len(deferred),
+                )
+                if progress_callback:
+                    progress_callback({
+                        "phase": "تحميل البيانات متوقف مؤقتاً بسبب حد Yahoo",
+                        "completed": i,
+                        "total": total,
+                        "current_symbol": sym,
+                    })
+                break
             except Exception as exc:
                 failures.append({"symbol": sym, "error": str(exc)})
                 log.warning("%s: %s", sym, exc)
