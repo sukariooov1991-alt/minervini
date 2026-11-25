@@ -210,18 +210,28 @@
       document.getElementById('scanProgress').classList.add('visible');
       document.getElementById('scanProgressFill').style.width = '0%';
       document.getElementById('scanPercent').textContent = '0%';
-      const response = await fetch('/api/scan/start', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({})
-      });
-      const result = await response.json();
-      if (!result.started) message.textContent = 'يوجد فحص جارٍ بالفعل';
+      try {
+        const response = await fetch('/api/scan/start', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({})
+        });
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+        const result = await response.json();
+        if (!result.started) message.textContent = 'يوجد فحص جارٍ بالفعل';
+      } catch (e) {
+        console.error('[MINERVINI] Start scan failed', e);
+        message.textContent = 'تعذر بدء الفحص: ' + e.message;
+      }
     }
 
     async function stopScan() {
-      await fetch('/api/scan/stop', { method: 'POST' });
-      document.getElementById('scanMessage').textContent = 'جارٍ إيقاف الفحص...';
+      try {
+        await fetch('/api/scan/stop', { method: 'POST' });
+        document.getElementById('scanMessage').textContent = 'جارٍ إيقاف الفحص...';
+      } catch (e) {
+        console.error('[MINERVINI] Stop scan failed', e);
+      }
     }
 
     function renderScanProgress(data) {
@@ -235,8 +245,11 @@
       document.getElementById('scanProgressTrack').setAttribute('aria-valuenow', String(percent));
       const labels = {
         starting: 'بدأ الفحص...',
+        'تحميل الدفعة': 'جارٍ تحميل دفعة جديدة...',
         'تحميل البيانات': 'جارٍ تحميل بيانات الأسهم...',
-        'تحليل الأسهم': 'جارٍ تحليل الأسهم...',
+        'تحليل الدفعة': 'جارٍ تحليل الدفعة...',
+        'اكتملت الدفعة': 'اكتملت الدفعة، جارٍ الانتقال للتالية...',
+        'توقف مؤقت بسبب حد Yahoo': 'توقف التحميل مؤقتاً بسبب حد Yahoo',
         completed: 'انتهى الفحص بنجاح',
         stopped: 'تم إيقاف الفحص',
         error: 'انتهى الفحص مع وجود خطأ'
@@ -244,7 +257,7 @@
       document.getElementById('scanMessage').textContent = labels[p.phase] || (data.running ? 'الفحص جارٍ...' : 'انتهى الفحص');
       const total = Number(p.total) || 0;
       const completed = Number(p.completed) || 0;
-      let details = total ? 'تمت معالجة ' + completed + ' من ' + total : '';
+      let details = total ? 'تم تحميل ' + completed + ' من ' + total + ' — الدفعة ' + (p.batch || 1) : '';
       if (p.current_symbol) details += (details ? ' — ' : '') + 'السهم: ' + p.current_symbol;
       document.getElementById('scanDetails').textContent = details;
     }
@@ -374,9 +387,12 @@
         try {
           const data = JSON.parse(event.data);
           applySnapshot(data);
-        } catch (e) {}
+        } catch (e) {
+          console.error('[MINERVINI] SSE message parse failed', e);
+        }
       };
-      evtSource.onerror = () => {
+      evtSource.onerror = (e) => {
+        console.error('[MINERVINI] SSE connection error', e);
         evtSource.close();
         setTimeout(connectRealtimeStream, 2000);
       };
@@ -385,7 +401,7 @@
     fetch('/api/state', { cache: 'no-store' })
       .then(r => r.ok ? r.json() : null)
       .then(data => { if (data) applySnapshot(data); })
-      .catch(() => {});
+      .catch((e) => console.error('[MINERVINI] Initial state request failed', e));
 
     connectRealtimeStream();
   </script>
