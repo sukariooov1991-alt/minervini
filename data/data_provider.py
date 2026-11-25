@@ -3,9 +3,42 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any
+import time
+import threading
+import logging
 import pandas as pd
 
+# Yahoo Finance is a public endpoint with undocumented request limits.
+# Serialize requests and leave a minimum gap between ticker requests.
+_YAHOO_REQUEST_LOCK = threading.Lock()
+_YAHOO_NEXT_REQUEST_AT = 0.0
+_YAHOO_MIN_REQUEST_INTERVAL = 1.25
+
+
+class YahooRateLimitError(RuntimeError):
+    """Yahoo Finance rejected requests because its rate limit was reached."""
+
+
+def _wait_for_yahoo_request_slot() -> None:
+    global _YAHOO_NEXT_REQUEST_AT
+    with _YAHOO_REQUEST_LOCK:
+        now = time.monotonic()
+        wait = max(0.0, _YAHOO_NEXT_REQUEST_AT - now)
+        if wait:
+            time.sleep(wait)
+        _YAHOO_NEXT_REQUEST_AT = time.monotonic() + _YAHOO_MIN_REQUEST_INTERVAL
+
+
+def _is_yahoo_rate_limit_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return any(token in message for token in (
+        "too many requests", "rate limited", "rate limit", "429",
+        "yfratelimiterror",
+    ))
+
 from data.storage_manager import StorageManager
+
+log = logging.getLogger(__name__)
 
 
 def _find_nearest_prior_value(
@@ -44,13 +77,38 @@ class DataProvider:
             raise RuntimeError(
                 "Install dependencies with: pip install -r requirements.txt"
             ) from exc
-        self.ticker = yf.Ticker(self.symbol)
+        # Yahoo Finance uses hyphens for class-share tickers (e.g. BRK-B),
+        # while the screener/database keep the canonical S&P symbol (BRK.B).
+        yahoo_symbol = self.symbol.replace(".", "-")
+        self.ticker = yf.Ticker(yahoo_symbol)
         self.storage = storage or StorageManager()
 
     def fetch_and_store_daily_candles(self, period: str = "2y") -> int:
-        df = self.ticker.history(period=period, interval="1d", auto_adjust=True)
+        # Pace requests globally across all DataProvider instances. Do not retry
+        # rate-limit responses: repeated retries amplify Yahoo's throttling.
+        df = None
+        last_error: Exception | None = None
+        for attempt in range(2):
+            try:
+                _wait_for_yahoo_request_slot()
+                df = self.ticker.history(
+                    period=period, interval="1d", auto_adjust=True
+                )
+                if df is not None and not df.empty:
+                    break
+            except Exception as exc:
+                last_error = exc
+                if _is_yahoo_rate_limit_error(exc):
+                    raise YahooRateLimitError(
+                        f"Yahoo Finance rate limit reached while fetching {self.symbol}; "
+                        "remaining downloads should be deferred"
+                    ) from exc
+            if attempt == 0:
+                time.sleep(3)
+
         if df is None or df.empty:
-            raise ValueError(f"No daily data for {self.symbol}")
+            detail = f": {last_error}" if last_error else ""
+            raise ValueError(f"No daily data for {self.symbol} after 2 attempts{detail}")
 
         rename = {"Open": "open", "High": "high", "Low": "low", "Close": "close", "Volume": "volume"}
         df = df.rename(columns=rename)
@@ -78,8 +136,21 @@ class DataProvider:
 
     def get_fundamentals_dataframe(self) -> pd.DataFrame:
         """Return quarterly fundamentals; absent fields remain NaN, never fabricated."""
-        q = self.ticker.quarterly_financials
-        info = self.ticker.info or {}
+        try:
+            _wait_for_yahoo_request_slot()
+            q = self.ticker.quarterly_financials
+        except Exception:
+            log.exception("Quarterly fundamentals request failed for %s", self.symbol)
+            return pd.DataFrame()
+        # ROE is supplementary metadata; Yahoo may deny the quoteSummary/info
+        # endpoint even when quarterly financial statements are available.
+        # Do not discard usable EPS/revenue data because this optional request fails.
+        try:
+            _wait_for_yahoo_request_slot()
+            info = self.ticker.info or {}
+        except Exception:
+            log.exception("Optional quote-summary request failed for %s", self.symbol)
+            info = {}
         if q is None or q.empty:
             return pd.DataFrame()
 
@@ -123,7 +194,12 @@ class DataProvider:
 
     def fetch_and_store_news(self) -> list[dict[str, Any]]:
         """Fetch news from Yahoo Finance and store in SQLite events table."""
-        raw_items = getattr(self.ticker, "news", None) or []
+        try:
+            _wait_for_yahoo_request_slot()
+            raw_items = getattr(self.ticker, "news", None) or []
+        except Exception:
+            log.exception("Yahoo news request failed for %s", self.symbol)
+            return []
         stored: list[dict[str, Any]] = []
         for item in raw_items:
             if not isinstance(item, dict):
