@@ -391,7 +391,7 @@ class DailyScreener:
         self.output_path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
             "generated_at": datetime.now(timezone.utc).isoformat(),
-            "strategy": "Minervini SEPA — TT gate, VCP, breakout, pullback, AD, earnings, market regime",
+            "strategy": "Minervini SEPA — watchlist: Trend Template + Accumulation + Earnings; setup: VCP OR Pullback; market regime evaluated after setup",
             "market_status": market_status,
             "failures": failures,
             "results": result.to_dict(orient="records"),
