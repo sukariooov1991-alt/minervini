@@ -81,7 +81,18 @@ class StorageManager:
         symbol = str(card.get("symbol") or "").upper().strip()
         if not symbol:
             raise ValueError("watchlist card requires a symbol")
-        payload = json.dumps(card, ensure_ascii=False, default=str, allow_nan=False)
+        def make_json_safe(value: Any) -> Any:
+            if isinstance(value, float) and not math.isfinite(value):
+                return None
+            if isinstance(value, dict):
+                return {str(key): make_json_safe(item) for key, item in value.items()}
+            if isinstance(value, (list, tuple)):
+                return [make_json_safe(item) for item in value]
+            return value
+
+        payload = json.dumps(
+            make_json_safe(card), ensure_ascii=False, default=str, allow_nan=False
+        )
         with self._get_conn() as conn:
             conn.execute(
                 """INSERT INTO watchlist_cards(symbol, card_json, updated_at)
