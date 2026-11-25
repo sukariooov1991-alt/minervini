@@ -116,7 +116,7 @@ class DataProvider:
 
         if df is None or df.empty:
             detail = f": {last_error}" if last_error else ""
-            raise ValueError(f"No daily data for {self.symbol} after 2 attempts{detail}")
+            raise ValueError(f"No daily data for {self.symbol} after 3 attempts{detail}")
 
         rename = {"Open": "open", "High": "high", "Low": "low", "Close": "close", "Volume": "volume"}
         df = df.rename(columns=rename)
