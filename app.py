@@ -115,7 +115,7 @@ class ScanController:
     def _build_smart_reading_from_card(self, card: dict[str, Any]) -> str:
         sym = card.get("symbol", "")
         cur = card.get("current_price")
-        src = card.get("price_source", "Yahoo Finance")
+        src = card.get("price_source", "Stored daily data")
         rs = card.get("rs_rating")
         regime = card.get("market_regime")
         lvl_status = card.get("levels_status")
