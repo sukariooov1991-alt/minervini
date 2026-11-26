@@ -99,7 +99,7 @@
       flex-direction: column;
       gap: 12px;
     }
-    .card { padding: 0; overflow: hidden; }
+    .card { background:var(--card); border:1px solid var(--card-border); border-radius:12px; padding:0; overflow:hidden; }
     .card-header {
       display: grid;
       grid-template-columns: minmax(88px,1.05fr) minmax(78px,.8fr) minmax(92px,.9fr) minmax(120px,1.35fr) 34px;
@@ -340,7 +340,7 @@
         let quoteDate = null;
         if (rawQuoteTime !== null && rawQuoteTime !== undefined && rawQuoteTime !== '') {
           const rawTimeText = String(rawQuoteTime);
-          const timeValue = (typeof rawQuoteTime === 'number' || /^\\d+(\\.\\d+)?$/.test(rawTimeText))
+          const timeValue = (typeof rawQuoteTime === 'number' || /^\d+(\.\d+)?$/.test(rawTimeText))
             ? Number(rawQuoteTime) * 1000 : rawQuoteTime;
           const parsedQuoteDate = new Date(timeValue);
           if (!Number.isNaN(parsedQuoteDate.getTime())) quoteDate = parsedQuoteDate;
@@ -355,7 +355,7 @@
         const status = el.querySelector('.status-badge');
         status.textContent = c.entry_ready ? 'جاهز' : (c.setup_passed && !c.entry_confirmation_passed ? 'انتظار التأكيد' : (c.setup_passed && !c.market_favorable ? 'السوق غير مناسب' : 'مراقبة'));
         status.classList.toggle('ready', Boolean(c.entry_ready));
-        el.querySelector('.stage-badge').textContent = String(c.stage || 'تجميع بانتظار النموذج').replace(/^المرحلة\\s*\\d+\\s*:\\s*/, '');
+        el.querySelector('.stage-badge').textContent = String(c.stage || 'تجميع بانتظار النموذج').replace(/^المرحلة\s*\d+\s*:\s*/, '');
         const entries = Array.isArray(c.entry_zones) ? c.entry_zones : [];
         const targets = Array.isArray(c.targets) ? c.targets : [];
         const rows = el.querySelector('.levels-rows');
