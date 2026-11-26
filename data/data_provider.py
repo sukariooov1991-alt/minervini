@@ -303,59 +303,91 @@ class DataProvider:
         )
 
     def ensure_daily_history(self, initial_period: str = "2y") -> int:
-        """Use the permanent 300-bar cache; refresh only after the completed US session."""
+        """Use the durable rolling 300-bar cache and refresh only completed daily bars."""
         cached = self.storage.get_candles_df(self.symbol)
         refresh_key = f"daily_refresh:{self.symbol}"
+        refresh_state = self.storage.get_cache(refresh_key)
         age = self.storage.cache_age_seconds(refresh_key)
-        now_et = datetime.now(ZoneInfo("America/New_York"))
-        # A successful refresh is reused for 20 hours. If the app was offline
-        # after yesterday's close, the next scan can still fill that missing bar.
-        if len(cached) >= 300 and age is not None and age < 20 * 3600:
+
+        # A failed refresh must never be recorded as a successful refresh. Keep
+        # the last good candles, but throttle repeated provider calls for 15 min.
+        if (
+            isinstance(refresh_state, dict)
+            and refresh_state.get("last_failed_attempt")
+            and age is not None
+            and age < 15 * 60
+        ):
+            raise RuntimeError(
+                f"Recent daily-history refresh failed for {self.symbol}; "
+                "retaining the last good SQLite candles and retrying after the cooldown."
+            )
+
+        # Only a successful provider refresh starts the 20-hour freshness window.
+        if (
+            isinstance(refresh_state, dict)
+            and refresh_state.get("last_refresh")
+            and age is not None
+            and age < 20 * 3600
+            and len(cached) >= 252
+        ):
             self.last_source = "SQLite daily cache"
             return 0
-        if len(cached) >= 252 and age is not None and age < 6 * 3600:
-            self.last_source = "SQLite daily cache"
-            return 0
-        period = "10d" if len(cached) >= 252 else initial_period
+
+        # A partial history (252-299 bars) must be topped up from the full
+        # initial window; requesting only 10 days would leave it permanently short.
+        period = "10d" if len(cached) >= self.storage.MAX_CANDLES else initial_period
         try:
             count = self.fetch_and_store_daily_candles(period, append=True)
-            self.storage.set_cache(refresh_key, {"last_refresh": datetime.now(timezone.utc).isoformat()})
+            self.storage.set_cache(
+                refresh_key,
+                {"last_refresh": datetime.now(timezone.utc).isoformat()},
+            )
             return count
         except Exception:
-            # Keep the last good history and throttle retries rather than hammering
-            # providers on every scan when a source is temporarily unavailable.
-            self.storage.set_cache(refresh_key, {"last_failed_attempt": datetime.now(timezone.utc).isoformat()})
+            # Store failure state separately in the payload. Do not advance the
+            # successful-refresh timestamp or disguise stale history as fresh.
+            self.storage.set_cache(
+                refresh_key,
+                {"last_failed_attempt": datetime.now(timezone.utc).isoformat()},
+            )
             raise
 
     def get_ohlcv_dataframe(self) -> pd.DataFrame:
         return self.storage.get_candles_df(self.symbol)
 
     def get_fundamentals_dataframe(self) -> pd.DataFrame:
-        """Return the durable quarterly cache, refreshing at most weekly."""
-        cached = self.storage.get_cache(f"fundamentals:{self.symbol}", max_age_seconds=7 * 24 * 3600)
+        """Return cached quarterly fundamentals; cache empty responses briefly to avoid request storms."""
+        cache_key = f"fundamentals:{self.symbol}"
+        cached = self.storage.get_cache(cache_key)
+        cache_age = self.storage.cache_age_seconds(cache_key)
         if isinstance(cached, list):
-            frame = pd.DataFrame(cached)
-            if "period" in frame.columns:
-                frame["period"] = pd.to_datetime(frame["period"], errors="coerce")
-            return frame.sort_values("period", ascending=False).reset_index(drop=True) if not frame.empty else frame
+            # Valid reported data is reused for seven days. Empty/error responses
+            # are retried after six hours rather than hammering Yahoo on every scan.
+            max_age = 7 * 24 * 3600 if cached else 6 * 3600
+            if cache_age is not None and cache_age < max_age:
+                frame = pd.DataFrame(cached)
+                if "period" in frame.columns:
+                    frame["period"] = pd.to_datetime(frame["period"], errors="coerce")
+                return frame.sort_values("period", ascending=False).reset_index(drop=True) if not frame.empty else frame
+
         frame = self._fetch_fundamentals_dataframe()
-        if not frame.empty:
-            records = frame.copy()
-            if "period" in records.columns:
-                records["period"] = records["period"].astype(str)
-            payload = records.astype(object).where(pd.notna(records), None).to_dict(orient="records")
-            self.storage.set_cache(f"fundamentals:{self.symbol}", payload)
-            for item in payload:
-                period = str(item.get("period") or "")
-                if period:
-                    self.storage.add_event(self.symbol, "earnings", period[:10], {
-                        "period": period,
-                        "eps_current": item.get("eps_current"),
-                        "eps_year_ago": item.get("eps_year_ago"),
-                        "revenue_current": item.get("revenue_current"),
-                        "revenue_year_ago": item.get("revenue_year_ago"),
-                        "source": "yahoo_finance_quarterly",
-                    })
+        records = frame.copy()
+        if "period" in records.columns:
+            records["period"] = records["period"].astype(str)
+        payload = records.astype(object).where(pd.notna(records), None).to_dict(orient="records")
+        # Persist empty results too, with a shorter retry window above.
+        self.storage.set_cache(cache_key, payload)
+        for item in payload:
+            period = str(item.get("period") or "")
+            if period:
+                self.storage.add_event(self.symbol, "earnings", period[:10], {
+                    "period": period,
+                    "eps_current": item.get("eps_current"),
+                    "eps_year_ago": item.get("eps_year_ago"),
+                    "revenue_current": item.get("revenue_current"),
+                    "revenue_year_ago": item.get("revenue_year_ago"),
+                    "source": "yahoo_finance_quarterly",
+                })
         return frame
 
     def _fetch_fundamentals_dataframe(self) -> pd.DataFrame:
@@ -414,14 +446,21 @@ class DataProvider:
 
     def fetch_and_store_news(self) -> list[dict[str, Any]]:
         """Return durable news; refresh from Yahoo at most every six hours."""
-        cached = self.storage.get_cache(f"news:{self.symbol}", max_age_seconds=6 * 3600)
+        cache_key = f"news:{self.symbol}"
+        cached = self.storage.get_cache(cache_key)
+        cache_age = self.storage.cache_age_seconds(cache_key)
         if isinstance(cached, list):
-            return cached
+            # Non-empty news is refreshed every six hours; an empty/error
+            # response is retried hourly instead of on every screening pass.
+            max_age = 6 * 3600 if cached else 3600
+            if cache_age is not None and cache_age < max_age:
+                return cached
         try:
             _wait_for_yahoo_request_slot()
             raw_items = getattr(self.ticker, "news", None) or []
         except Exception:
             log.exception("Yahoo news request failed for %s", self.symbol)
+            self.storage.set_cache(cache_key, [])
             return []
         stored: list[dict[str, Any]] = []
         for item in raw_items:
@@ -453,5 +492,5 @@ class DataProvider:
             self.storage.add_event(self.symbol, "news", ts, payload)
             stored.append({"symbol": self.symbol, "timestamp": ts, **payload})
         # Cache successful empty responses too, avoiding repeated provider calls.
-        self.storage.set_cache(f"news:{self.symbol}", stored)
+        self.storage.set_cache(cache_key, stored)
         return stored
