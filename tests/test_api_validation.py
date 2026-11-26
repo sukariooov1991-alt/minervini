@@ -33,7 +33,7 @@ class ScanAPIValidationTests(unittest.TestCase):
             )
         self.assertEqual(response.status_code, 200)
         start_scan.assert_called_once_with(
-            symbols=["^GSPC", "AAPL", "BRK.B"], update=False
+            symbols=["AAPL", "BRK.B", "^GSPC"], update=False
         )
 
     def test_non_object_json_body_is_rejected(self):
