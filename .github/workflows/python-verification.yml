@@ -84,10 +84,10 @@ jobs:
 
           count = provider.fetch_and_store_daily_candles("2y")
           assert attempted == ["Yahoo Finance", "Stooq", "Nasdaq public data", "Alpha Vantage"], attempted
-          assert count == 252, count
+          assert count == 300, count
           assert provider.last_source == "Alpha Vantage", provider.last_source
           stored = storage.get_candles_df("AAPL")
-          assert len(stored) == 252, len(stored)
+          assert len(stored) == 300, len(stored)
           checkpoint_symbols = ["AAPL", "MSFT", "NVDA"]
           assert storage.get_scan_checkpoint("resume-test", checkpoint_symbols) == set()
           storage.mark_scan_symbol_completed("resume-test", "AAPL")
@@ -102,5 +102,5 @@ jobs:
           rating = 99
           trend = check_trend_template(stored.set_index("date"), rating)
           assert trend["passed"], trend
-          print("Provider order, Longbridge fallback, 252-bar storage, RS and trend-template smoke checks passed.")
+          print("Provider order, Longbridge fallback, 300-bar storage, RS and trend-template smoke checks passed.")
           PY
