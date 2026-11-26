@@ -470,21 +470,29 @@ class DataProvider:
         return self.storage.get_candles_df(self.symbol)
 
     def _persist_earnings_events(self, frame: pd.DataFrame) -> None:
-        """Idempotently backfill durable earnings events from cached statements."""
+        """Backfill durable earnings events without rewriting unchanged quarters."""
         if frame is None or frame.empty or "period" not in frame.columns:
             return
+        existing = {
+            str(event.get("timestamp")): event.get("payload")
+            for event in self.storage.get_events(self.symbol, "earnings", limit=1000)
+        }
         for item in frame.to_dict(orient="records"):
             period = str(item.get("period") or "")
             if not period or period.lower() == "nat":
                 continue
-            self.storage.add_event(self.symbol, "earnings", period[:10], {
+            payload = {
                 "period": period,
                 "eps_current": item.get("eps_current"),
                 "eps_year_ago": item.get("eps_year_ago"),
                 "revenue_current": item.get("revenue_current"),
                 "revenue_year_ago": item.get("revenue_year_ago"),
                 "source": "yahoo_finance_quarterly",
-            })
+            }
+            event_date = period[:10]
+            if existing.get(event_date) == payload:
+                continue
+            self.storage.add_event(self.symbol, "earnings", event_date, payload)
 
     def get_fundamentals_dataframe(self) -> pd.DataFrame:
         """Return cached quarterly fundamentals; cache empty responses briefly to avoid request storms."""
