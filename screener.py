@@ -431,7 +431,7 @@ class DailyScreener:
                             ),
                             "setup_passed": bool(
                                 vcp.get("passed", False)
-                                or pb.get("passed", False)
+                                or pb.get("candidate", False)
                             ),
                             "passed_all_filters": bool(
                                 entry_confirmation_passed
