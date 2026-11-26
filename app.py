@@ -677,22 +677,26 @@ class ScanController:
         else:
             sections.append("التحليل الفني: سجل الشموع اليومية غير متاح حاليًا؛ لا يمكن تأكيد الدعم والمقاومة أو المتوسطات.")
 
-        if card.get("setup_passed"):
-            if (
-                card.get("pullback_candidate")
-                and not card.get("pullback_passed")
-                and not card.get("vcp_passed")
-            ):
+        if card.get("setup_passed") and not card.get("entry_confirmation_passed"):
+            if card.get("vcp_passed"):
+                sections.append(
+                    "النموذج الفني: رُصدت بنية VCP، لكن اختراق نقطة الارتكاز لم يتأكد بعد؛ لا توجد إشارة دخول."
+                )
+            else:
                 sections.append(
                     "النموذج الفني: رُصد تراجع سعري مرشح لـPullback، لكن السعر لم يؤكد الانعطاف للأعلى بعد؛ لا توجد إشارة دخول."
                 )
-            else:
-                setup = "VCP" if card.get("vcp_passed") else "Pullback"
-                sections.append(
-                    f"النموذج الفني: تأكد {setup}. نقطة الارتكاز المعتمدة {fmt(pivot)}"
-                    if pivot else
-                    f"النموذج الفني: تأكد {setup} لكن لا توجد نقطة ارتكاز صالحة؛ لذلك لا تُعرض مناطق دخول أو أهداف أو وقف خسارة مصطنعة."
-                )
+        elif card.get("setup_passed"):
+            setup = (
+                "VCP"
+                if card.get("vcp_passed") and card.get("breakout_passed")
+                else "Pullback"
+            )
+            sections.append(
+                f"النموذج الفني: تأكد {setup}. نقطة الارتكاز المعتمدة {fmt(pivot)}"
+                if pivot else
+                f"النموذج الفني: تأكد {setup} لكن لا توجد نقطة ارتكاز صالحة؛ لذلك لا تُعرض مناطق دخول أو أهداف أو وقف خسارة مصطنعة."
+            )
             if final_low:
                 sections.append(f"قاع النموذج: {fmt(final_low)}؛ كسره قد يبطل بنية النموذج بحسب شكل القاعدة.")
         else:
