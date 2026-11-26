@@ -400,9 +400,16 @@ class ScanController:
                         stale_after_seconds, len(symbols),
                     )
                     self.lb_client.reconnect(symbols)
-                    with self._lock:
-                        self._last_ws_subscription_monotonic = time.monotonic()
                     with self._state_cv:
+                        # A new QuoteContext can restart its sequence counter;
+                        # discard the old ordering state or valid new ticks may
+                        # be rejected forever as older than the previous socket.
+                        self._latest_quote_sequence.clear()
+                        self._latest_quote_timestamp.clear()
+                        self._processed_quote_timestamp.clear()
+                        self._ws_seen_symbols.clear()
+                        self._ws_last_log_at.clear()
+                        self._last_ws_subscription_monotonic = time.monotonic()
                         self._ws_connected = False
                         self._notify_state_changed_locked()
                     continue
