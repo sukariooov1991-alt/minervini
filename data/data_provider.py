@@ -477,16 +477,25 @@ class DataProvider:
             str(event.get("timestamp")): event.get("payload")
             for event in self.storage.get_events(self.symbol, "earnings", limit=1000)
         }
+
+        def clean_value(value):
+            try:
+                if pd.isna(value):
+                    return None
+            except (TypeError, ValueError):
+                pass
+            return value
+
         for item in frame.to_dict(orient="records"):
             period = str(item.get("period") or "")
             if not period or period.lower() == "nat":
                 continue
             payload = {
                 "period": period,
-                "eps_current": item.get("eps_current"),
-                "eps_year_ago": item.get("eps_year_ago"),
-                "revenue_current": item.get("revenue_current"),
-                "revenue_year_ago": item.get("revenue_year_ago"),
+                "eps_current": clean_value(item.get("eps_current")),
+                "eps_year_ago": clean_value(item.get("eps_year_ago")),
+                "revenue_current": clean_value(item.get("revenue_current")),
+                "revenue_year_ago": clean_value(item.get("revenue_year_ago")),
                 "source": "yahoo_finance_quarterly",
             }
             event_date = period[:10]
