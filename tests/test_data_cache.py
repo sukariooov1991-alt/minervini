@@ -36,6 +36,15 @@ class PermanentDataCacheTests(unittest.TestCase):
         self.storage.add_event("AAPL", "earnings", "2026-10-30", event)
         self.assertEqual(len(self.storage.get_events("AAPL", "earnings", limit=10)), 1)
 
+    def test_news_and_earnings_event_history_is_not_trimmed(self):
+        for idx in range(501):
+            self.storage.add_event(
+                "AAPL", "news", f"2026-01-{(idx % 28) + 1:02d}T{idx:04d}",
+                {"title": f"News item {idx}"},
+            )
+        events = self.storage.get_events("AAPL", "news", limit=1000)
+        self.assertEqual(len(events), 501)
+
     def test_incremental_recent_window_is_accepted_and_merged(self):
         initial_dates = pd.bdate_range("2024-01-01", periods=300)
         initial_rows = [
