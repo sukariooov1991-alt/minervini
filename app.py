@@ -234,12 +234,19 @@ class ScanController:
         # slow VCP/SQLite pass cannot stall the WebSocket stream for other symbols.
         self._realtime_pending: list[dict[str, Any]] = []
         self._realtime_event = threading.Event()
-        self._realtime_worker = threading.Thread(
-            target=self._realtime_worker_loop,
-            name="longbridge-quote-processor",
-            daemon=True,
-        )
-        self._realtime_worker.start()
+        # One worker cannot keep up with concurrent pushes from a 493-symbol
+        # watchlist. Multiple consumers process different symbols in parallel;
+        # per-symbol locks preserve each symbol's calculation order.
+        self._realtime_workers = [
+            threading.Thread(
+                target=self._realtime_worker_loop,
+                name=f"longbridge-quote-processor-{index + 1}",
+                daemon=True,
+            )
+            for index in range(4)
+        ]
+        for worker in self._realtime_workers:
+            worker.start()
         self._ws_connected: bool = False
         self._last_error: str | None = None
         self._scan_errors: list[dict[str, str]] = []
@@ -693,17 +700,22 @@ class ScanController:
     def _realtime_worker_loop(self) -> None:
         while True:
             self._realtime_event.wait()
-            self._realtime_event.clear()
             with self._lock:
-                pending = self._realtime_pending
-                self._realtime_pending = []
-            for quote in pending:
-                try:
-                    self._process_realtime_quote(quote)
-                except Exception:
-                    log.exception(
-                        "Queued realtime processing failed for %s", quote.get("symbol")
-                    )
+                if not self._realtime_pending:
+                    self._realtime_event.clear()
+                    continue
+                # Take one item at a time so several workers can drain the
+                # shared queue concurrently instead of one worker stealing a
+                # whole batch while the others remain idle.
+                quote = self._realtime_pending.pop(0)
+                if not self._realtime_pending:
+                    self._realtime_event.clear()
+            try:
+                self._process_realtime_quote(quote)
+            except Exception:
+                log.exception(
+                    "Queued realtime processing failed for %s", quote.get("symbol")
+                )
 
     def _merge_live_candle(
         self,
