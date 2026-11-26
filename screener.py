@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import math
 import os
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,6 +23,23 @@ from data.storage_manager import StorageManager
 from data.sp500_symbols import SP500_SYMBOLS
 
 log = logging.getLogger("minervini_v2")
+
+
+FUNDAMENTAL_FIELDS = (
+    "eps_current", "eps_year_ago", "revenue_current", "revenue_year_ago",
+)
+
+
+def _missing_fundamental_fields(values: dict) -> list[str]:
+    """Return required quarterly fields that are absent, nonnumeric, or nonfinite."""
+    missing = []
+    for field in FUNDAMENTAL_FIELDS:
+        try:
+            if not math.isfinite(float(values.get(field))):
+                missing.append(field)
+        except (TypeError, ValueError):
+            missing.append(field)
+    return missing
 
 
 class DailyScreener:
@@ -98,11 +116,14 @@ class DailyScreener:
             log.warning("Market index %s: %s", market_symbol, exc)
             return pd.DataFrame()
 
-    def compute_market_breadth(self) -> float | None:
-        """Percent of scanned symbols whose latest close is above their 50-day SMA."""
+    def compute_market_breadth(self, exclude_symbols: set[str] | None = None) -> float | None:
+        """Percent above 50-day SMA, excluding symbols with failed current downloads."""
         participating = 0
         above = 0
+        excluded = {str(symbol).upper().strip() for symbol in (exclude_symbols or set())}
         for symbol in self.symbols:
+            if symbol.upper().strip() in excluded:
+                continue
             try:
                 frame = self.storage.get_candles_df(symbol)
                 if frame is None or len(frame) < 50 or "close" not in frame.columns:
@@ -229,7 +250,9 @@ class DailyScreener:
 
         # Breadth is computed after the universe refresh, so it reflects the
         # same stored dataset used by the cross-sectional stock analysis.
-        breadth_pct = self.compute_market_breadth()
+        breadth_pct = self.compute_market_breadth(
+            exclude_symbols=download_failed_symbols if update else None
+        )
         market_status = (
             {"market_favorable": True, "regime": "SKIPPED", "breadth_pct": breadth_pct,
              "reasons": ["market check disabled"]}
@@ -333,16 +356,26 @@ class DailyScreener:
                                     "error": "Fundamental data unavailable; eligibility cannot be confirmed",
                                     "phase": "analysis",
                                 })
-                            earnings = check_earnings(
-                                latest.get("eps_current"),
-                                latest.get("eps_year_ago"),
-                                latest.get("revenue_current"),
-                                latest.get("revenue_year_ago"),
-                            )
-                            fundamental_status = (
-                                "UNKNOWN" if fdf.empty
-                                else ("PASS" if earnings["passed"] else "FAIL")
-                            )
+                            missing_fields = _missing_fundamental_fields(latest)
+
+                            if fdf.empty or missing_fields:
+                                earnings = {"passed": False}
+                                fundamental_status = "UNKNOWN"
+                                if not fdf.empty and missing_fields:
+                                    failures.append({
+                                        "symbol": sym,
+                                        "error": "Incomplete quarterly fundamentals; missing or invalid: "
+                                                 + ", ".join(missing_fields),
+                                        "phase": "analysis",
+                                    })
+                            else:
+                                earnings = check_earnings(
+                                    latest.get("eps_current"),
+                                    latest.get("eps_year_ago"),
+                                    latest.get("revenue_current"),
+                                    latest.get("revenue_year_ago"),
+                                )
+                                fundamental_status = "PASS" if earnings["passed"] else "FAIL"
                         except Exception as exc:
                             log.exception("Fundamental data error for %s", sym)
                             if progress_callback:
@@ -376,6 +409,8 @@ class DailyScreener:
                             "vcp_passed": bool(vcp.get("passed")),
                             "breakout": bool(br),
                             "pullback_passed": bool(pb.get("passed", False)),
+                            "pullback_candidate": bool(pb.get("candidate", False)),
+                            "pullback_turning_up": bool(pb.get("turning_up", False)),
                             "pivot_price": pivot_val,
                             "final_low": vcp.get("final_low") if vcp.get("passed") else pb.get("support_low"),
                             "pullback_entry_price": pb.get("entry_trigger_price"),
@@ -396,7 +431,7 @@ class DailyScreener:
                             ),
                             "setup_passed": bool(
                                 vcp.get("passed", False)
-                                or pb.get("passed", False)
+                                or pb.get("candidate", False)
                             ),
                             "passed_all_filters": bool(
                                 entry_confirmation_passed

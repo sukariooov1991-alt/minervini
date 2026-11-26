@@ -48,6 +48,19 @@ class LongbridgeQuoteTests(unittest.TestCase):
             (199.5, 123, "regular"),
         )
 
+    def test_extended_session_wins_when_timestamps_are_missing(self):
+        quote = SimpleNamespace(
+            last_done="200",
+            timestamp=None,
+            pre_market_quote=SimpleNamespace(last_done="201", timestamp=None),
+            post_market_quote=SimpleNamespace(last_done="202", timestamp=None),
+            over_night_quote=SimpleNamespace(last_done="203", timestamp=None),
+        )
+        self.assertEqual(
+            LongbridgeRealtimeClient._latest_session_quote(quote),
+            (203.0, None, "overnight"),
+        )
+
     def test_websocket_push_preserves_sequence_and_session(self):
         captured = {}
 

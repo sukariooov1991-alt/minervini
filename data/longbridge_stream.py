@@ -209,18 +209,18 @@ class LongbridgeRealtimeClient:
         # Longbridge returns separate US pre-market, post-market and overnight
         # quotes. last_done alone is the regular-session last trade and can be
         # stale while an extended session is actively trading.
-        candidates: list[tuple[float, float, Any, str]] = []
+        candidates: list[tuple[float, int, float, Any, str]] = []
         regular_price = _valid_price(_value(quote, "last_done"))
         regular_ts = _value(quote, "timestamp")
         regular_order = _timestamp_order(regular_ts)
         if regular_price is not None:
-            candidates.append((regular_order, regular_price, regular_ts, "regular"))
+            candidates.append((regular_order, 0, regular_price, regular_ts, "regular"))
 
-        for field, label in (
-            ("pre_market_quote", "pre-market"),
-            ("post_market_quote", "post-market"),
-            ("over_night_quote", "overnight"),
-            ("overnight_quote", "overnight"),
+        for field, label, priority in (
+            ("pre_market_quote", "pre-market", 1),
+            ("post_market_quote", "post-market", 2),
+            ("over_night_quote", "overnight", 3),
+            ("overnight_quote", "overnight", 3),
         ):
             session_quote = _value(quote, field)
             if session_quote is None:
@@ -230,11 +230,11 @@ class LongbridgeRealtimeClient:
                 continue
             timestamp = _value(session_quote, "timestamp")
             order = _timestamp_order(timestamp)
-            candidates.append((order, price, timestamp, label))
+            candidates.append((order, priority, price, timestamp, label))
 
         if not candidates:
             return None, None, "unavailable"
-        _, price, timestamp, session = max(candidates, key=lambda item: item[0])
+        _, _, price, timestamp, session = max(candidates, key=lambda item: (item[0], item[1]))
         return price, timestamp, session
 
     def close(self) -> None:

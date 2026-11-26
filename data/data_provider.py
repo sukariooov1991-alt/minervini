@@ -23,10 +23,6 @@ _YAHOO_NEXT_REQUEST_AT = 0.0
 _YAHOO_MIN_REQUEST_INTERVAL = 1.25
 
 
-class YahooRateLimitError(RuntimeError):
-    """Legacy compatibility exception; market-data failover now handles Yahoo failures."""
-
-
 def _wait_for_yahoo_request_slot() -> None:
     global _YAHOO_NEXT_REQUEST_AT
     with _YAHOO_REQUEST_LOCK:
@@ -310,14 +306,18 @@ class DataProvider:
         # Do not call ticker.info here: Yahoo's quoteSummary endpoint frequently
         # returns HTTP 401 (Invalid Crumb / Unauthorized). ROE is supplementary;
         # EPS and revenue growth remain available from quarterly_financials.
-        info = {}
         if q is None or q.empty:
             return pd.DataFrame()
 
         eps = q.loc["Diluted EPS"].dropna() if "Diluted EPS" in q.index else pd.Series(dtype=float)
         rev = q.loc["Total Revenue"].dropna() if "Total Revenue" in q.index else pd.Series(dtype=float)
 
-        dates = sorted(set(eps.index) | set(rev.index), reverse=True)
+        # Compare EPS and revenue only for the same reported quarter. A union
+        # creates synthetic partial rows that the screener can misclassify as
+        # an earnings failure and use to remove a valid watchlist card.
+        dates = sorted(set(eps.index) & set(rev.index), reverse=True)
+        if not dates:
+            return pd.DataFrame()
         rows = []
         for d in dates:
             d_ts = pd.Timestamp(d)

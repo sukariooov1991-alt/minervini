@@ -55,6 +55,9 @@ class ScanController:
         self._cards: dict[str, dict[str, Any]] = {}
         # Candidate reconstruction during startup reads the live-price cache.
         self._live_prices: dict[str, float] = {}
+        # Preserve the evolving session OHLC between WebSocket pushes. Daily
+        # history in SQLite is not rewritten on every quote tick.
+        self._live_candles: dict[str, dict[str, Any]] = {}
         try:
             # Restore cards before Flask can serve the first /api/state or SSE snapshot.
             self._cards = {
@@ -114,6 +117,7 @@ class ScanController:
         for symbol, card in list(self._cards.items()):
             try:
                 history = self.storage.get_candles_df(symbol)
+                self._refresh_restored_pullback(symbol, card, history)
                 card["smart_reading"] = self._build_smart_reading_from_card(card, history)
                 self.storage.save_watchlist_card(card)
             except Exception:
@@ -146,6 +150,151 @@ class ScanController:
             daemon=True,
         )
         self._realtime_watchdog.start()
+
+    def _refresh_restored_pullback(
+        self, symbol: str, card: dict[str, Any], history: pd.DataFrame
+    ) -> None:
+        """Re-evaluate saved Pullback cards so obsolete entry flags cannot survive restart."""
+        if history is None or history.empty or "close" not in history.columns:
+            card.update({
+                "pullback_passed": False,
+                "pullback_candidate": False,
+                "pullback_turning_up": False,
+                "vcp_passed": False,
+                "breakout_passed": False,
+                "setup_passed": False,
+                "entry_confirmation_passed": False,
+                "entry_ready": False,
+                "passed_all_filters": False,
+                "pivot_price": None,
+                "final_low": None,
+                "entry_zones": [],
+                "targets": [],
+                "shared_stop_loss": None,
+                "levels_status": "غير مكتمل — سجل الشموع غير متوفر",
+                "within_entry_range": None,
+                "status": "بيانات السعر غير متاحة — لا توجد إشارة دخول",
+                "stage": "المرحلة 1: انتظار بيانات صالحة",
+            })
+            for item in card.get("filters", []):
+                if item.get("name") in {"VCP Pattern", "VCP Breakout Confirmation", "Pullback Setup", "Pullback Entry Confirmation"}:
+                    item["passed"] = False
+                elif item.get("name") == "Market Regime Favorable":
+                    item["pending"] = True
+            return
+
+        valid_closes = pd.to_numeric(history["close"], errors="coerce").dropna()
+        if valid_closes.empty:
+            card.update({
+                "pullback_passed": False,
+                "pullback_candidate": False,
+                "pullback_turning_up": False,
+                "setup_passed": False,
+                "entry_confirmation_passed": False,
+                "entry_ready": False,
+                "passed_all_filters": False,
+                "pivot_price": None,
+                "final_low": None,
+                "entry_zones": [],
+                "targets": [],
+                "shared_stop_loss": None,
+                "levels_status": "غير مكتمل — أسعار الإغلاق غير صالحة",
+                "within_entry_range": None,
+                "status": "بيانات السعر غير صالحة — لا توجد إشارة دخول",
+                "stage": "المرحلة 1: انتظار بيانات صالحة",
+            })
+            for item in card.get("filters", []):
+                if item.get("name") in {"Pullback Setup", "Pullback Entry Confirmation"}:
+                    item["passed"] = False
+                elif item.get("name") == "Market Regime Favorable":
+                    item["pending"] = True
+            return
+
+        pullback = check_pullback(history)
+        pullback_passed = bool(pullback.get("passed", False))
+        pullback_candidate = bool(pullback.get("candidate", False))
+        vcp_confirmed = bool(
+            card.get("vcp_passed", False) and card.get("breakout_passed", False)
+        )
+        setup_passed = bool(card.get("vcp_passed", False) or pullback_candidate)
+
+        card.update({
+            "pullback_passed": pullback_passed,
+            "pullback_candidate": pullback_candidate,
+            "pullback_turning_up": bool(pullback.get("turning_up", False)),
+        })
+
+        current_price = float(
+            self._live_prices.get(symbol)
+            or pd.to_numeric(history["close"], errors="coerce").dropna().iloc[-1]
+        )
+        entry_confirmation = bool(vcp_confirmed or pullback_passed)
+        active_pivot = (
+            card.get("pivot_price") if vcp_confirmed
+            else (pullback.get("entry_trigger_price") if pullback_passed else None)
+        )
+        active_low = (
+            card.get("final_low") if vcp_confirmed
+            else (pullback.get("support_low") if pullback_passed else None)
+        )
+        plan = build_trade_levels(
+            symbol=symbol,
+            current_price=current_price,
+            pivot_price=active_pivot,
+            candles_df=history,
+            final_low=active_low,
+        ).to_dict()
+        market_favorable = bool(card.get("market_favorable", False))
+        entry_ready = bool(
+            entry_confirmation
+            and market_favorable
+            and plan.get("status") == "جاهز"
+            and plan.get("within_entry_range") is True
+        )
+        card.update({
+            "current_price": round(current_price, 4),
+            "price_source": (
+                "Longbridge WebSocket"
+                if symbol in self._live_prices
+                else "Stored daily data (Daily Close)"
+            ),
+            "pivot_price": plan["pivot_price"],
+            "final_low": plan["final_low"],
+            "entry_zones": plan["entry_zones"],
+            "targets": plan["targets"],
+            "shared_stop_loss": plan["shared_stop_loss"],
+            "levels_status": plan["status"],
+            "within_entry_range": plan["within_entry_range"],
+            "notes": plan["notes"],
+            "setup_passed": setup_passed,
+            "entry_confirmation_passed": entry_confirmation,
+            "entry_ready": entry_ready,
+            "passed_all_filters": entry_ready,
+        })
+        if setup_passed and not entry_confirmation:
+            card["status"] = "النموذج قيد التأكيد — لا توجد إشارة دخول"
+            card["stage"] = "المرحلة 2: تأكيد نموذج الدخول"
+        elif setup_passed and not market_favorable:
+            card["status"] = "النموذج تحقق — السوق غير مناسب"
+            card["stage"] = "المرحلة 3: تقييم حالة السوق"
+        elif setup_passed and not entry_ready:
+            card["status"] = "تأكيد النموذج تحقق — مستويات الصفقة أو نطاق الدخول غير مكتمل"
+            card["stage"] = "المرحلة 3: التحقق من مستويات الدخول"
+        elif entry_ready:
+            card["status"] = "إشارة دخول مؤكدة — النموذج والسوق والمستويات مستوفاة"
+            card["stage"] = "المرحلة 4: إشارة دخول مؤكدة"
+        else:
+            card["status"] = "انتظار — مراقبة VCP أو Pullback"
+            card["stage"] = "المرحلة 1: سهم مؤهل للمراقبة"
+
+        for item in card.get("filters", []):
+            name = item.get("name")
+            if name == "Pullback Setup":
+                item["passed"] = pullback_candidate
+            elif name == "Pullback Entry Confirmation":
+                item["passed"] = pullback_passed
+            elif name == "Market Regime Favorable":
+                item["pending"] = not setup_passed
 
     def _realtime_watchdog_loop(self) -> None:
         """Retry only missing symbols; live prices are delivered by WebSocket pushes."""
@@ -284,6 +433,77 @@ class ScanController:
                         "Queued realtime processing failed for %s", quote.get("symbol")
                     )
 
+    def _merge_live_candle(
+        self,
+        symbol: str,
+        stored_bar: dict[str, Any] | None,
+        price: float,
+        quote_volume: float | None,
+        session_date,
+    ) -> dict[str, Any]:
+        """Merge a WebSocket tick into the in-memory OHLC for the current session."""
+        date_key = session_date.isoformat() if hasattr(session_date, "isoformat") else str(session_date)
+
+        def finite_or(value, fallback):
+            try:
+                number = float(value)
+                return number if math.isfinite(number) else fallback
+            except (TypeError, ValueError):
+                return fallback
+
+        with self._lock:
+            cached = self._live_candles.get(symbol)
+            if cached and cached.get("date") == date_key:
+                bar = dict(cached)
+                if stored_bar is not None:
+                    # If a refreshed daily candle arrives after the first
+                    # WebSocket tick, merge its official session OHLC too.
+                    stored_open = finite_or(stored_bar.get("open"), bar["open"])
+                    bar["open"] = stored_open
+                    bar["high"] = max(
+                        finite_or(bar.get("high"), price),
+                        finite_or(stored_bar.get("high"), price),
+                    )
+                    bar["low"] = min(
+                        finite_or(bar.get("low"), price),
+                        finite_or(stored_bar.get("low"), price),
+                    )
+                    bar["volume"] = max(
+                        finite_or(bar.get("volume"), 0.0),
+                        finite_or(stored_bar.get("volume"), 0.0),
+                    )
+            elif stored_bar is not None:
+                bar = {
+                    "date": date_key,
+                    "open": finite_or(stored_bar.get("open"), price),
+                    "high": finite_or(stored_bar.get("high"), price),
+                    "low": finite_or(stored_bar.get("low"), price),
+                    "close": finite_or(stored_bar.get("close"), price),
+                    "volume": max(0.0, finite_or(stored_bar.get("volume"), 0.0)),
+                }
+            else:
+                # PushQuote does not carry the session open. When no daily
+                # candle exists yet, the first observed tick seeds the bar.
+                bar = {
+                    "date": date_key,
+                    "open": price,
+                    "high": price,
+                    "low": price,
+                    "close": price,
+                    "volume": 0.0,
+                }
+
+            bar["high"] = max(finite_or(bar.get("high"), price), price)
+            bar["low"] = min(finite_or(bar.get("low"), price), price)
+            bar["close"] = price
+            if quote_volume is not None and math.isfinite(quote_volume) and quote_volume >= 0:
+                bar["volume"] = max(
+                    finite_or(bar.get("volume"), 0.0), float(quote_volume)
+                )
+            bar["date"] = date_key
+            self._live_candles[symbol] = dict(bar)
+            return dict(bar)
+
     def _process_realtime_quote(self, quote: dict[str, Any]) -> None:
         sym = str(quote.get("symbol", "")).upper().strip()
         raw_price = quote.get("last_done")
@@ -334,22 +554,25 @@ class ScanController:
                     except (TypeError, ValueError):
                         quote_volume = None
 
+                    stored_bar = (
+                        live_df.loc[today_mask].iloc[-1].to_dict()
+                        if bool(today_mask.any()) else None
+                    )
+                    live_bar = self._merge_live_candle(
+                        sym, stored_bar, price, quote_volume, today
+                    )
                     if bool(today_mask.any()):
                         idx = live_df.index[today_mask][-1]
-                        live_df.at[idx, "high"] = max(float(live_df.at[idx, "high"]), price)
-                        live_df.at[idx, "low"] = min(float(live_df.at[idx, "low"]), price)
-                        live_df.at[idx, "close"] = price
-                        if quote_volume is not None:
-                            live_df.at[idx, "volume"] = max(float(live_df.at[idx, "volume"]), quote_volume)
+                        for field in ("open", "high", "low", "close", "volume"):
+                            live_df.at[idx, field] = live_bar[field]
                     else:
-                        live_df = pd.concat([live_df, pd.DataFrame([{
-                            "date": pd.Timestamp(today),
-                            "open": price,
-                            "high": price,
-                            "low": price,
-                            "close": price,
-                            "volume": quote_volume if quote_volume is not None else 0.0,
-                        }])], ignore_index=True)
+                        live_df = pd.concat(
+                            [live_df, pd.DataFrame([{
+                                **live_bar,
+                                "date": pd.Timestamp(today),
+                            }])],
+                            ignore_index=True,
+                        )
                     live_df = live_df.sort_values("date").reset_index(drop=True)
 
                     # VCP structure uses completed daily bars; the evolving
@@ -375,7 +598,7 @@ class ScanController:
                     pullback_info = {}
                     vcp_info = {}
 
-                setup_passed = bool(vcp_passed or pullback_passed)
+                setup_passed = bool(vcp_passed or pullback_info.get("candidate", False))
                 with self._state_cv:
                     latest_sequence = self._latest_quote_sequence.get(sym)
                     if sequence is not None and latest_sequence is not None and sequence < latest_sequence:
@@ -444,6 +667,8 @@ class ScanController:
                         "setup_passed": setup_passed,
                         "vcp_passed": vcp_passed,
                         "pullback_passed": pullback_passed,
+                        "pullback_candidate": bool(pullback_info.get("candidate", False)),
+                        "pullback_turning_up": bool(pullback_info.get("turning_up", False)),
                         "entry_confirmation_passed": entry_confirmation_passed,
                         "breakout_passed": breakout_passed,
                         "entry_ready": entry_ready,
@@ -451,12 +676,12 @@ class ScanController:
                         "market_favorable": market_favorable,
                         "updated_at": datetime.now(timezone.utc).isoformat(),
                     })
-                    if setup_passed and not market_favorable:
-                        card["status"] = "النموذج تحقق — السوق غير مناسب"
-                        card["stage"] = "المرحلة 3: تقييم حالة السوق"
-                    elif setup_passed and not entry_confirmation_passed:
+                    if setup_passed and not entry_confirmation_passed:
                         card["status"] = "النموذج قيد التأكيد — لا توجد إشارة دخول"
                         card["stage"] = "المرحلة 2: تأكيد نموذج الدخول"
+                    elif setup_passed and not market_favorable:
+                        card["status"] = "النموذج تحقق — السوق غير مناسب"
+                        card["stage"] = "المرحلة 3: تقييم حالة السوق"
                     elif setup_passed and not entry_ready:
                         card["status"] = "تأكيد النموذج تحقق — مستويات الصفقة أو نطاق الدخول غير مكتمل"
                         card["stage"] = "المرحلة 3: التحقق من مستويات الدخول"
@@ -473,6 +698,8 @@ class ScanController:
                             item["passed"] = vcp_passed
                         elif name in ("Breakout Confirmation", "VCP Breakout Confirmation"):
                             item["passed"] = breakout_passed
+                        elif name == "Pullback Setup":
+                            item["passed"] = bool(pullback_info.get("candidate", False))
                         elif name == "Pullback Entry Confirmation":
                             item["passed"] = pullback_passed
                         elif name == "Pullback Check":
@@ -613,13 +840,30 @@ class ScanController:
         else:
             sections.append("التحليل الفني: سجل الشموع اليومية غير متاح حاليًا؛ لا يمكن تأكيد الدعم والمقاومة أو المتوسطات.")
 
-        if card.get("setup_passed"):
-            setup = "VCP" if card.get("vcp_passed") else ("Pullback" if card.get("pullback_passed") else "نموذج دخول متحقق")
-            sections.append(f"النموذج الفني: تحقق {setup}. نقطة الارتكاز المعتمدة {fmt(pivot)}" if pivot else f"النموذج الفني: تحقق {setup} لكن لا توجد نقطة ارتكاز صالحة؛ لذلك لا تُعرض مناطق دخول أو أهداف أو وقف خسارة مصطنعة.")
+        if card.get("setup_passed") and not card.get("entry_confirmation_passed"):
+            if card.get("vcp_passed"):
+                sections.append(
+                    "النموذج الفني: رُصدت بنية VCP، لكن اختراق نقطة الارتكاز لم يتأكد بعد؛ لا توجد إشارة دخول."
+                )
+            else:
+                sections.append(
+                    "النموذج الفني: رُصد تراجع سعري مرشح لـPullback، لكن السعر لم يؤكد الانعطاف للأعلى بعد؛ لا توجد إشارة دخول."
+                )
+        elif card.get("setup_passed"):
+            setup = (
+                "VCP"
+                if card.get("vcp_passed") and card.get("breakout_passed")
+                else "Pullback"
+            )
+            sections.append(
+                f"النموذج الفني: تأكد {setup}. نقطة الارتكاز المعتمدة {fmt(pivot)}"
+                if pivot else
+                f"النموذج الفني: تأكد {setup} لكن لا توجد نقطة ارتكاز صالحة؛ لذلك لا تُعرض مناطق دخول أو أهداف أو وقف خسارة مصطنعة."
+            )
             if final_low:
                 sections.append(f"قاع النموذج: {fmt(final_low)}؛ كسره قد يبطل بنية النموذج بحسب شكل القاعدة.")
         else:
-            sections.append("النموذج الفني: السهم اجتاز شروط التأهل الأولية، لكنه ما زال بانتظار تأكيد VCP أو Pullback. لا توجد إشارة دخول مكتملة حتى الآن.")
+            sections.append("النموذج الفني: السهم اجتاز شروط التأهل الأولية، لكنه ما زال بانتظار ظهور VCP أو Pullback. لا توجد إشارة دخول مكتملة حتى الآن.")
 
         if entries:
             sections.append("خطة الدخول: المناطق الخمس المحسوبة " + "، ".join(fmt(x) for x in entries) + ".")
@@ -641,14 +885,17 @@ class ScanController:
         market_text = {
             "CORRECTION_OR_DOWNTREND": "السوق العام في تصحيح أو اتجاه هابط، ما يرفع مخاطر نجاح الاختراقات.",
             "UPTREND": "السوق العام في اتجاه صاعد، وهو عامل داعم لكنه لا يغني عن تأكيد السهم.",
+            "CONFIRMED_UPTREND": "السوق العام في اتجاه صاعد مؤكد، وهو عامل داعم لكنه لا يغني عن تأكيد السهم.",
             "UPTREND_UNDER_PRESSURE": "الاتجاه العام صاعد لكنه تحت ضغط؛ يلزم تشدد أكبر في تأكيد الدخول.",
             "UNKNOWN": "حالة السوق العام غير محسومة من البيانات المتاحة.",
         }.get(regime.upper(), f"حالة السوق العام: {regime}.")
         sections.append(f"السوق والقوة النسبية: {market_text} تصنيف RS={fmt(rs)}.")
         if card.get("entry_ready"):
             sections.append("القرار الحالي: النموذج والسوق اجتازا شروط الجاهزية؛ انتظر تنفيذًا منضبطًا مع الالتزام بوقف الخسارة.")
-        elif card.get("setup_passed"):
-            sections.append("القرار الحالي: النموذج تحقق لكن ظروف السوق غير مواتية؛ الأفضل عدم تفعيل دخول جديد حتى تتحسن البيئة العامة.")
+        elif card.get("setup_passed") and not card.get("entry_confirmation_passed"):
+            sections.append("القرار الحالي: توجد بنية مرشحة، لكن محفز الدخول لم يتأكد بعد؛ انتظر انعطاف السعر للأعلى.")
+        elif card.get("setup_passed") and not card.get("market_favorable"):
+            sections.append("القرار الحالي: تأكد النموذج لكن ظروف السوق غير مواتية؛ الأفضل عدم تفعيل دخول جديد حتى تتحسن البيئة العامة.")
         else:
             sections.append("القرار الحالي: مراقبة فقط، وليس توصية دخول. انتظر اكتمال النموذج ثم أعد تقييم السوق والمستويات.")
         if notes:
@@ -665,14 +912,14 @@ class ScanController:
         filters.extend([
             {"name": "VCP Pattern", "passed": bool(row.get("vcp_passed", False))},
             {"name": "VCP Breakout Confirmation", "passed": bool(row.get("breakout", False))},
-            {"name": "Pullback Setup", "passed": bool(row.get("pullback_passed", False))},
+            {"name": "Pullback Setup", "passed": bool(row.get("pullback_candidate", row.get("pullback_passed", False)))},
             {"name": "Pullback Entry Confirmation", "passed": bool(row.get("pullback_passed", False))},
             {"name": "Accumulation", "passed": bool(row.get("accumulation", False))},
             {"name": "Earnings Growth", "passed": bool(row.get("earnings_passed", False))},
             {
                 "name": "Market Regime Favorable",
                 "passed": bool(row.get("market_favorable", False)),
-                "pending": not bool(row.get("vcp_passed", False) or row.get("pullback_passed", False)),
+                "pending": not bool(row.get("vcp_passed", False) or row.get("pullback_candidate", row.get("pullback_passed", False))),
             },
         ])
         return filters
@@ -687,7 +934,9 @@ class ScanController:
         tt_passed = str(row.get("trend_template", "")).upper() == "PASS"
         vcp_passed = bool(row.get("vcp_passed", False))
         br = bool(row.get("breakout", False))
-        pullback_passed = bool(row.get("pullback_passed", False))
+        pullback_info = check_pullback(df)
+        pullback_passed = bool(pullback_info.get("passed", False))
+        pullback_candidate = bool(pullback_info.get("candidate", False))
         ad_acc = bool(row.get("accumulation", False))
         earn_passed = bool(row.get("earnings_passed", False))
 
@@ -696,8 +945,8 @@ class ScanController:
             return None
 
         # Independent entry paths: VCP needs its Pivot breakout; Pullback
-        # needs its own reclaim trigger from check_pullback().
-        setup_passed = bool(vcp_passed or pullback_passed)
+        # needs an observed turn-up after a recent decline.
+        setup_passed = bool(vcp_passed or pullback_candidate)
         entry_confirmation_passed = bool(
             (vcp_passed and br) or pullback_passed
         )
@@ -716,10 +965,10 @@ class ScanController:
         use_vcp_entry = bool(vcp_passed and br)
         use_pullback_entry = bool(pullback_passed and not use_vcp_entry)
         pivot_price = row.get("pivot_price") if use_vcp_entry else (
-            row.get("pullback_entry_price") if use_pullback_entry else None
+            pullback_info.get("entry_trigger_price") if use_pullback_entry else None
         )
         final_low = row.get("final_low") if use_vcp_entry else (
-            row.get("pullback_final_low") if use_pullback_entry else None
+            pullback_info.get("support_low") if use_pullback_entry else None
         )
         plan = (
             build_trade_levels(
@@ -779,13 +1028,19 @@ class ScanController:
             "levels_status": plan["status"],
             "within_entry_range": plan["within_entry_range"],
             "notes": plan["notes"],
-            "filters": self._build_filters_detail(row),
+            "filters": self._build_filters_detail({
+                **row,
+                "pullback_passed": pullback_passed,
+                "pullback_candidate": pullback_candidate,
+            }),
             "watchlist_eligible": True,
             "setup_passed": setup_passed,
             "entry_confirmation_passed": entry_confirmation_passed,
             "breakout_passed": br,
             "vcp_passed": vcp_passed,
             "pullback_passed": pullback_passed,
+            "pullback_candidate": pullback_candidate,
+            "pullback_turning_up": bool(pullback_info.get("turning_up", False)),
             "market_favorable": bool(market_favorable),
             "entry_ready": entry_ready,
             "passed_all_filters": entry_ready,
@@ -905,6 +1160,10 @@ class ScanController:
                         )
                         self._cards.pop(stale_symbol, None)
                         self._live_prices.pop(stale_symbol, None)
+                        self._live_candles.pop(stale_symbol, None)
+                        self._latest_quote_sequence.pop(stale_symbol, None)
+                        self._ws_seen_symbols.discard(stale_symbol)
+                        self._ws_last_log_at.pop(stale_symbol, None)
                         try:
                             self.storage.delete_watchlist_card(stale_symbol)
                         except Exception:
@@ -987,6 +1246,11 @@ class ScanController:
         log.warning("Watchlist card manually deleted through API: %s", clean)
         with self._state_cv:
             self._cards.pop(clean, None)
+            self._live_prices.pop(clean, None)
+            self._live_candles.pop(clean, None)
+            self._latest_quote_sequence.pop(clean, None)
+            self._ws_seen_symbols.discard(clean)
+            self._ws_last_log_at.pop(clean, None)
             try:
                 self.storage.delete_watchlist_card(clean)
             except Exception:

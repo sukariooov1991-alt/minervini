@@ -3,8 +3,10 @@ import unittest
 import pandas as pd
 
 from analysis.market_filter import check_market_regime
+from analysis.trend_template import check_trend_template
 from analysis.pullback import check_pullback
 from data.trade_levels import build_trade_levels
+from screener import DailyScreener
 
 
 class EntryDecisionTests(unittest.TestCase):
@@ -22,17 +24,104 @@ class EntryDecisionTests(unittest.TestCase):
         threshold = check_market_regime(index, breadth_pct=25.0)
         self.assertTrue(threshold["breadth_ok"])
 
-    def test_pullback_requires_reclaim_of_previous_high(self):
-        n = 80
-        close = [100.0] * (n - 6) + [99.0, 98.5, 98.0, 98.4, 98.7, 99.0]
-        high = [v + 0.4 for v in close]
-        low = [v - 0.4 for v in close]
-        frame = pd.DataFrame({"close": close, "high": high, "low": low, "volume": [100000.0] * n})
-        result = check_pullback(frame, require_volatility_contraction=False, proximity_pct=5.0)
+    def test_incomplete_fundamentals_are_detected_as_unknown_inputs(self):
+        from screener import _missing_fundamental_fields
+
+        self.assertEqual(
+            _missing_fundamental_fields({
+                "eps_current": 2.0,
+                "eps_year_ago": 1.0,
+                "revenue_current": 100.0,
+            }),
+            ["revenue_year_ago"],
+        )
+        self.assertEqual(
+            _missing_fundamental_fields({
+                "eps_current": 2.0,
+                "eps_year_ago": 1.0,
+                "revenue_current": 100.0,
+                "revenue_year_ago": 80.0,
+            }),
+            [],
+        )
+
+    def test_market_breadth_defaults_to_unavailable_when_index_data_is_missing(self):
+        result = check_market_regime(pd.DataFrame())
+        self.assertFalse(result["market_favorable"])
+        self.assertFalse(result["breadth_ok"])
+
+    def test_trend_template_rejects_infinite_relative_strength(self):
+        close = [100.0 + i * 0.3 for i in range(252)]
+        frame = pd.DataFrame({
+            "close": close,
+            "high": [value + 1.0 for value in close],
+            "low": [value - 1.0 for value in close],
+        })
+        result = check_trend_template(frame, float("inf"))
+        self.assertFalse(result["conditions"]["relative_strength_rating_at_least_70"])
         self.assertFalse(result["passed"])
+
+    def test_market_breadth_excludes_symbols_with_failed_downloads(self):
+        class FakeStorage:
+            def get_candles_df(self, symbol):
+                if symbol == "A":
+                    values = [100.0] * 50
+                else:
+                    values = [100.0] * 49 + [110.0]
+                return pd.DataFrame({"close": values})
+
+        scanner = DailyScreener.__new__(DailyScreener)
+        scanner.symbols = ["A", "B"]
+        scanner.storage = FakeStorage()
+        self.assertEqual(scanner.compute_market_breadth(), 50.0)
+        self.assertEqual(scanner.compute_market_breadth(exclude_symbols={"A"}), 100.0)
+
+    def _pullback_frame(self, current_open, current_close):
+        close = [100.0] * 74 + [99.5, 99.0, 98.7, 98.2, 98.0]
+        low = [value - 0.5 for value in close]
+        high = [value + 0.5 for value in close]
+        close.append(current_close)
+        low.append(min(current_open, current_close) - 0.4)
+        high.append(max(current_open, current_close) + 0.4)
+        open_prices = [value for value in close[:-1]] + [current_open]
+        return pd.DataFrame({
+            "open": open_prices,
+            "high": high,
+            "low": low,
+            "close": close,
+            "volume": [100000.0] * len(close),
+        })
+
+    def test_pullback_is_independent_and_passes_after_turn_up(self):
+        frame = self._pullback_frame(98.1, 98.8)
+        result = check_pullback(frame)
+        self.assertTrue(result["candidate"])
+        self.assertTrue(result["pullback_detected"])
+        self.assertTrue(result["turning_up"])
+        self.assertTrue(result["passed"])
+        self.assertEqual(result["entry_trigger_price"], 98.8)
+        self.assertLess(result["support_low"], result["entry_trigger_price"])
+
+    def test_pullback_waits_while_current_candle_is_falling(self):
+        frame = self._pullback_frame(98.5, 98.1)
+        result = check_pullback(frame)
+        self.assertTrue(result["candidate"])
         self.assertFalse(result["turning_up"])
-        self.assertIsNotNone(result["entry_trigger_price"])
-        self.assertIsNotNone(result["support_low"])
+        self.assertFalse(result["passed"])
+        self.assertIsNone(result["entry_trigger_price"])
+
+    def test_trade_plan_without_atr_does_not_fabricate_targets_or_stop(self):
+        frame = pd.DataFrame({
+            "high": [101.0 + i * 0.1 for i in range(10)],
+            "low": [99.0 + i * 0.1 for i in range(10)],
+            "close": [100.0 + i * 0.1 for i in range(10)],
+            "volume": [100000.0] * 10,
+        })
+        plan = build_trade_levels("TEST", 105.0, 105.0, frame, final_low=None)
+        self.assertNotEqual(plan.status, "جاهز")
+        self.assertEqual(plan.targets, [])
+        self.assertIsNone(plan.shared_stop_loss)
+        self.assertTrue(any("ATR" in note for note in plan.notes))
 
     def test_trade_plan_without_anchor_is_never_complete(self):
         frame = pd.DataFrame({
