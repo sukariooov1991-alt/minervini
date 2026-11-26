@@ -96,6 +96,29 @@ class PermanentDataCacheTests(unittest.TestCase):
             result = provider.get_fundamentals_dataframe()
         self.assertEqual(pd.Timestamp(result.iloc[0]["period"]), pd.Timestamp("2026-09-30"))
 
+    def test_failed_fundamentals_refresh_preserves_stale_cache_as_unknown(self):
+        cached = [{
+            "period": "2026-06-30",
+            "eps_current": 2.0,
+            "eps_year_ago": 1.5,
+            "revenue_current": 100.0,
+            "revenue_year_ago": 90.0,
+        }]
+        self.storage.set_cache("fundamentals:STALE", cached)
+        provider = DataProvider.__new__(DataProvider)
+        provider.symbol = "STALE"
+        provider.storage = self.storage
+        provider._fetch_fundamentals_dataframe = lambda: (_ for _ in ()).throw(
+            RuntimeError("temporary Yahoo failure")
+        )
+
+        with patch.object(self.storage, "cache_age_seconds", return_value=25 * 3600):
+            result = provider.get_fundamentals_dataframe()
+
+        self.assertTrue(result.attrs.get("stale"))
+        self.assertEqual(len(result), 1)
+        self.assertEqual(self.storage.get_cache("fundamentals:STALE"), cached)
+
     def test_news_cache_expires_after_four_hours(self):
         provider = DataProvider.__new__(DataProvider)
         provider.symbol = "AAPL"
