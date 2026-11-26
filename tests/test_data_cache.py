@@ -119,6 +119,7 @@ class PermanentDataCacheTests(unittest.TestCase):
             for day in dates
         ]
         self.storage.upsert_candles_bulk("MSFT", rows)
+        self.storage.set_cache("daily_source:MSFT", "Yahoo Finance")
         self.storage.set_cache("daily_refresh:MSFT", {"last_refresh": pd.Timestamp.now(tz="UTC").isoformat()})
         provider = DataProvider.__new__(DataProvider)
         provider.symbol = "MSFT"
