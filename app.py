@@ -808,11 +808,11 @@ def api_stream():
     def event_stream():
         snap = controller.snapshot()
         last_ver = snap["version"]
-        yield f"data: {json.dumps(snap, ensure_ascii=False)}\n\n"
+        yield f"data: {json.dumps(snap, ensure_ascii=False, default=str)}\n\n"
         while True:
             updated = controller.wait_for_update(last_ver, timeout=15.0)
             last_ver = updated["version"]
-            yield f"data: {json.dumps(updated, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps(updated, ensure_ascii=False, default=str)}\n\n"
 
     return Response(
         stream_with_context(event_stream()),
