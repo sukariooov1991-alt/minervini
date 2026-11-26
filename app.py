@@ -297,7 +297,7 @@ class ScanController:
                     continue
 
                 refresh_at = datetime.combine(
-                    now_et.date(), market_close, tzinfo=timezone_et
+                    now_et.date(), market_close, tzinfo=now_et.tzinfo
                 ) + pd.Timedelta(hours=1).to_pytimedelta()
                 if now_et < refresh_at:
                     wait_seconds = min(300, max(30, (refresh_at - now_et).total_seconds()))
