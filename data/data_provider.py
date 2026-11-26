@@ -541,8 +541,29 @@ class DataProvider:
     def get_fundamentals_dataframe(self) -> pd.DataFrame:
         """Return cached quarterly fundamentals; cache empty responses briefly to avoid request storms."""
         cache_key = f"fundamentals:{self.symbol}"
+        failure_key = f"fundamentals_failure:{self.symbol}"
         cached = self.storage.get_cache(cache_key)
         cache_age = self.storage.cache_age_seconds(cache_key)
+        failure_state = self.storage.get_cache(failure_key)
+        failure_age = self.storage.cache_age_seconds(failure_key)
+        if (
+            isinstance(cached, list)
+            and cached
+            and isinstance(failure_state, dict)
+            and failure_state.get("last_failed_attempt")
+            and failure_age is not None
+            and failure_age < 6 * 3600
+        ):
+            # Do not hammer Yahoo every 15-minute scheduler pass after a
+            # failed refresh. Retain the last good data but mark it UNKNOWN.
+            frame = pd.DataFrame(cached)
+            if "period" in frame.columns:
+                frame["period"] = pd.to_datetime(frame["period"], errors="coerce")
+            frame = frame.sort_values("period", ascending=False).reset_index(drop=True) if not frame.empty else frame
+            frame.attrs["stale"] = True
+            self._persist_earnings_events(frame)
+            return frame
+
         if isinstance(cached, list):
             # Quarterly statements are checked daily so newly reported results
             # enter the screener promptly. Empty/error responses retry after six hours.
@@ -571,12 +592,19 @@ class DataProvider:
                     frame["period"] = pd.to_datetime(frame["period"], errors="coerce")
                 frame = frame.sort_values("period", ascending=False).reset_index(drop=True) if not frame.empty else frame
                 frame.attrs["stale"] = True
+                self.storage.set_cache(
+                    failure_key,
+                    {"last_failed_attempt": datetime.now(timezone.utc).isoformat()},
+                )
                 self._persist_earnings_events(frame)
                 log.warning(
                     "%s: quarterly fundamentals refresh failed; retaining stale cached statements: %s",
                     self.symbol, exc,
                 )
                 return frame
+            # Cache provider failures as an empty response so the normal
+            # six-hour retry policy applies instead of retrying every scan.
+            self.storage.set_cache(cache_key, [])
             raise
 
         records = frame.copy()
@@ -585,6 +613,7 @@ class DataProvider:
         payload = records.astype(object).where(pd.notna(records), None).to_dict(orient="records")
         # Persist empty results too, with a shorter retry window above.
         self.storage.set_cache(cache_key, payload)
+        self.storage.set_cache(failure_key, None)
         self._persist_earnings_events(frame)
         return frame
 
