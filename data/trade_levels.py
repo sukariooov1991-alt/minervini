@@ -147,6 +147,8 @@ def default_targets(
     daily_move: float | None = None,
     candles_df: pd.DataFrame | None = None,
     final_low: float | None = None,
+    *,
+    shared_stop_loss: float | None = None,
 ) -> list[float]:
     if not entry_zones:
         return []
@@ -155,9 +157,11 @@ def default_targets(
     # for 3:1. Build the five UI reference levels from the actual stop distance,
     # rather than unrelated ATR multiples. These intermediate steps are a
     # presentation ladder, not five separately prescribed Minervini targets.
-    stop_val = default_shared_stop_loss(
-        entry_zones, cur_p, piv_p, atr_val, daily_move, candles_df, final_low
-    )
+    stop_val = shared_stop_loss
+    if stop_val is None:
+        stop_val = default_shared_stop_loss(
+            entry_zones, cur_p, piv_p, atr_val, daily_move, candles_df, final_low
+        )
     if stop_val is None or not np.isfinite(stop_val) or stop_val <= 0:
         return []
 
@@ -269,13 +273,23 @@ def build_trade_levels(
     entry_zones: list[float] = [
         float(x) for x in active_entry_calc(cur_p, piv_p, atr_val, daily_move, candles_df, low_p)
     ]
-    targets: list[float] = [
-        float(x) for x in active_target_calc(entry_zones, cur_p, piv_p, atr_val, daily_move, candles_df, low_p)
-    ]
     stop_val = active_stop_calc(entry_zones, cur_p, piv_p, atr_val, daily_move, candles_df, low_p)
     shared_stop: float | None = (
         float(stop_val) if stop_val is not None and np.isfinite(stop_val) else None
     )
+    if target_calculator is None:
+        targets = [
+            float(x) for x in default_targets(
+                entry_zones, cur_p, piv_p, atr_val, daily_move, candles_df, low_p,
+                shared_stop_loss=shared_stop,
+            )
+        ]
+    else:
+        targets = [
+            float(x) for x in active_target_calc(
+                entry_zones, cur_p, piv_p, atr_val, daily_move, candles_df, low_p
+            )
+        ]
 
     entries_valid = (
         len(entry_zones) == NUM_ZONES
