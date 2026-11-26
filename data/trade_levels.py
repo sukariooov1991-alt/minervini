@@ -141,19 +141,15 @@ def default_targets(
     candles_df: pd.DataFrame | None = None,
     final_low: float | None = None,
 ) -> list[float]:
-    if not entry_zones:
+    if (
+        not entry_zones
+        or atr_val is None
+        or not np.isfinite(atr_val)
+        or float(atr_val) <= 0
+    ):
         return []
 
-    ref_price = (
-        float(cur_p)
-        if (cur_p is not None and np.isfinite(cur_p) and cur_p > 0)
-        else float(entry_zones[0])
-    )
-    atr_f = (
-        float(atr_val)
-        if (atr_val is not None and np.isfinite(atr_val) and atr_val > 0)
-        else max(ref_price * 0.015, 0.01)
-    )
+    atr_f = float(atr_val)
     move_abs = abs(float(daily_move)) if (daily_move is not None and np.isfinite(daily_move)) else 0.0
     move_factor = float(np.clip(1.0 + (move_abs / 10.0) - 0.15, 0.75, 1.50))
 
@@ -186,16 +182,17 @@ def default_shared_stop_loss(
     if anchor is None or not np.isfinite(anchor) or anchor <= 0:
         return None
 
-    # Use VCP final_low if valid and below anchor, otherwise anchor minus ATR or 5% buffer
+    # Prefer the setup's structural low. If it is unavailable, use one ATR
+    # below the anchor; never invent a percentage-based volatility estimate.
     if final_low is not None and np.isfinite(final_low) and 0 < float(final_low) < anchor:
         stop_val = float(final_low) * 0.995
     elif atr_val is not None and np.isfinite(atr_val) and atr_val > 0:
-        stop_val = anchor - (1.0 * float(atr_val))
+        stop_val = anchor - float(atr_val)
     else:
-        stop_val = anchor * (1.0 - MAX_ENTRY_RANGE_PCT / 100.0)
+        return None
 
-    if stop_val <= 0:
-        stop_val = anchor * 0.92
+    if not np.isfinite(stop_val) or stop_val <= 0:
+        return None
 
     return round(float(stop_val), 4)
 
