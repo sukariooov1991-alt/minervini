@@ -466,6 +466,10 @@
       evtSource.onerror = (e) => {
         console.error('[MINERVINI] SSE connection error', e);
         evtSource.close();
+        // The server's in-memory snapshot version restarts from zero after a
+        // Render/Gunicorn restart. Reset the client cursor before reconnecting,
+        // otherwise every fresh snapshot can be rejected as "older" forever.
+        lastAppliedSnapshotVersion = -1;
         setTimeout(connectRealtimeStream, 2000);
       };
     }
