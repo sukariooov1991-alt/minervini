@@ -18,7 +18,7 @@ from flask import Flask, Response, jsonify, render_template, request, stream_wit
 from data.longbridge_stream import LongbridgeRealtimeClient
 from data.storage_manager import StorageManager
 from data.us_market_calendar import get_us_equity_market_close
-from data.trade_levels import build_trade_levels, evaluate_entry_range
+from data.trade_levels import build_trade_levels, compute_atr, evaluate_entry_range
 from data.sp500_symbols import SP500_SYMBOLS
 from data.telegram_notifier import TelegramNotifier
 from screener import DailyScreener
@@ -1043,12 +1043,9 @@ class ScanController:
                     resistance_text = "، ".join(fmt(x) for x in resistances) if resistances else "لم تُرصد قمة محورية أعلى قريبة"
                     sections.append(f"الدعم والمقاومة: أقرب مناطق الدعم {support_text}؛ وأقرب مناطق المقاومة {resistance_text}. هذه مناطق قمم/قيعان يومية تاريخية وليست ضمانًا لارتداد السعر.")
 
-                    tr = pd.concat([
-                        df["high"] - df["low"],
-                        (df["high"] - df["close"].shift(1)).abs(),
-                        (df["low"] - df["close"].shift(1)).abs(),
-                    ], axis=1).max(axis=1)
-                    atr = float(tr.tail(14).mean()) if len(tr.dropna()) >= 14 else None
+                    # Reuse the trade-plan Wilder ATR so the explanation and
+                    # actual stop fallback report the same volatility measure.
+                    atr = compute_atr(df, period=14)
                     if atr is not None and np.isfinite(atr):
                         sections.append(f"التذبذب والمخاطر: متوسط المدى الحقيقي ATR(14) يقارب {fmt(atr)}؛ لذلك يجب تقييم مسافة وقف الخسارة وحجم المركز وفق هذا التذبذب.")
                 else:
