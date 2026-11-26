@@ -4,12 +4,7 @@ import numpy as np
 import pandas as pd
 
 
-def _prepare_df(df: pd.DataFrame) -> pd.DataFrame:
-    out = df.copy()
-    if isinstance(out.index, pd.DatetimeIndex) and not out.index.is_monotonic_increasing:
-        out = out.sort_index()
-    return out.reset_index(drop=True)
-
+from analysis.frame_utils import ordered_frame
 
 def accumulation_distribution_summary(
     df: pd.DataFrame,
@@ -32,7 +27,7 @@ def accumulation_distribution_summary(
     if df is None or not required.issubset(df.columns) or len(df) < min_bars:
         return out
 
-    clean_df = _prepare_df(df)
+    clean_df = ordered_frame(df, reset_index=True)
 
     x = clean_df.tail(lookback + 1).copy()
     close = pd.to_numeric(x["close"], errors="coerce")
