@@ -23,6 +23,15 @@ log = logging.getLogger(__name__)
 _YAHOO_REQUEST_LOCK = threading.Lock()
 _YAHOO_NEXT_REQUEST_AT = 0.0
 _YAHOO_MIN_REQUEST_INTERVAL = 1.25
+_DAILY_HISTORY_LOCKS_GUARD = threading.Lock()
+_DAILY_HISTORY_LOCKS: dict[str, threading.Lock] = {}
+
+
+def _daily_history_lock(symbol: str) -> threading.Lock:
+    clean = str(symbol).upper().strip()
+    with _DAILY_HISTORY_LOCKS_GUARD:
+        return _DAILY_HISTORY_LOCKS.setdefault(clean, threading.Lock())
+
 
 
 def _wait_for_yahoo_request_slot() -> None:
@@ -360,6 +369,11 @@ class DataProvider:
         )
 
     def ensure_daily_history(self, initial_period: str = "2y") -> int:
+        """Serialize per-symbol refreshes shared by scans and the background scheduler."""
+        with _daily_history_lock(self.symbol):
+            return self._ensure_daily_history_locked(initial_period)
+
+    def _ensure_daily_history_locked(self, initial_period: str = "2y") -> int:
         """Keep a permanent rolling 300-session cache; refresh only when a new session completes."""
         cached = self.storage.get_candles_df(self.symbol)
         known_source = self.storage.get_cache(f"daily_source:{self.symbol}")
