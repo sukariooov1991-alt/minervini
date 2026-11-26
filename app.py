@@ -262,8 +262,21 @@ class ScanController:
                         "Background daily history refresh failures: %s",
                         ", ".join(item.get("symbol", "?") for item in failures[:30]),
                     )
-                # Retry the same completed session in 15 minutes. Symbols already
-                # updated will read SQLite only; stale symbols get another attempt.
+
+                # Research data has its own per-symbol durable cache schedules:
+                # non-empty news every 4h, quarterly fundamentals every 24h,
+                # empty/error responses on shorter retry windows. Running this
+                # pass every 15m does not mean 493 provider requests every time:
+                # fresh entries are served directly from SQLite.
+                research_failures = screener.refresh_universe_research_data()
+                log.info(
+                    "Background news/earnings refresh checked: symbols=%s news_failures=%s fundamentals_failures=%s",
+                    len(SP500_SYMBOLS),
+                    len(research_failures.get("news", [])),
+                    len(research_failures.get("fundamentals", [])),
+                )
+                # Recheck each quarter-hour. Per-dataset cache age determines
+                # which individual symbols actually need a provider request.
                 self._daily_history_stop.wait(15 * 60)
             except Exception:
                 log.exception("Background daily history scheduler failed")
