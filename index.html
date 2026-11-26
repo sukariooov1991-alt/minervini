@@ -127,26 +127,47 @@
     .levels-table .row-index { width:34px; color:var(--muted); background:rgba(255,255,255,.025); }
     .levels-table .entry-head { background:#17365f; }
     .levels-table .target-head { background:#17603c; }
-    .levels-table .stop-head { background:#7f2525; }
     .levels-table .entry-cell { color:#bfdbfe; }
     .levels-table .target-cell { color:#bbf7d0; }
-    .levels-table .stop-cell { color:#fecaca; font-weight:800; background:rgba(127,37,37,.12); }
     .levels-table tbody tr:nth-child(even) { background:rgba(255,255,255,.035); }
+    .stop-loss-summary {
+      display:flex; align-items:center; justify-content:space-between; gap:10px;
+      margin-top:8px; padding:9px 12px; border:1px solid rgba(239,68,68,.28);
+      border-radius:9px; background:rgba(127,37,37,.12); color:#fecaca;
+      font-size:.82rem; line-height:1.4;
+    }
+    .stop-loss-label { color:#fca5a5; font-weight:700; white-space:nowrap; }
+    .stop-loss-value { min-width:0; text-align:left; overflow-wrap:anywhere; font-variant-numeric:tabular-nums; }
     @media(max-width:520px) {
       .container { padding:9px; }
-      .card-header { grid-template-columns:minmax(68px,.9fr) minmax(66px,.75fr) minmax(76px,.9fr) minmax(90px,1.2fr) 28px; gap:4px; padding:10px 7px; }
-      .symbol { font-size:1.12rem; } .price-text { font-size:.96rem; }
-      .price-label,.header-label { font-size:.68rem; } .price-sub { font-size:.58rem; }
-      .status-badge,.stage-badge { padding:6px 4px; font-size:.66rem; }
-      .btn-del { width:27px; font-size:.95rem; }
-      .trade-plan { padding:8px 7px 9px; }
-      .levels-table th,.levels-table td { padding:8px 3px; font-size:.78rem; }
-      .levels-table th { font-size:.7rem; } .levels-table .row-index { width:27px; }
+      .card-header {
+        position:relative; grid-template-columns:minmax(0,1fr) minmax(0,1fr) 28px;
+        grid-template-areas:"symbol price delete" "status stage stage";
+        gap:8px 9px; padding:10px 10px;
+      }
+      .symbol { grid-area:symbol; font-size:1.08rem; }
+      .price-block { grid-area:price; text-align:center; }
+      .status-wrap { grid-area:status; min-width:0; }
+      .stage-wrap { grid-area:stage; min-width:0; }
+      .btn-del { grid-area:delete; width:27px; min-height:30px; font-size:.9rem; align-self:start; }
+      .price-text { font-size:.94rem; }
+      .price-label,.header-label { font-size:.64rem; margin-bottom:2px; }
+      .price-sub { font-size:.58rem; white-space:normal; }
+      .status-badge,.stage-badge { display:block; width:100%; padding:5px 7px; font-size:.68rem; line-height:1.35; white-space:normal; overflow-wrap:anywhere; }
+      .trade-plan { padding:8px 8px 10px; }
+      .trade-plan-title { margin-bottom:7px; font-size:.82rem; }
+      .levels-table th,.levels-table td { padding:7px 5px; font-size:.76rem; line-height:1.25; }
+      .levels-table th { font-size:.72rem; }
+      .levels-table .row-index { width:26px; }
+      .stop-loss-summary { margin-top:7px; padding:7px 9px; font-size:.72rem; }
     }
     @media(max-width:360px) {
-      .card-header { grid-template-columns:minmax(60px,.8fr) minmax(60px,.7fr) minmax(68px,.8fr) minmax(82px,1.1fr) 25px; gap:3px; }
-      .symbol { font-size:1rem; } .status-badge,.stage-badge { font-size:.61rem; }
-      .levels-table th,.levels-table td { font-size:.7rem; padding:7px 2px; }
+      .card-header { gap:6px 7px; padding:9px 8px; }
+      .symbol { font-size:1rem; }
+      .price-text { font-size:.88rem; }
+      .status-badge,.stage-badge { font-size:.64rem; }
+      .levels-table th,.levels-table td { font-size:.7rem; padding:6px 3px; }
+      .stop-loss-summary { font-size:.68rem; }
     }
     .expanded {
       margin-top: 14px;
@@ -257,8 +278,7 @@
       const completed = Number(p.completed) || 0;
       const symbolTotal = Math.floor(total / 2);
       const downloaded = Math.min(symbolTotal, completed);
-      const analyzed = Math.max(0, Math.min(symbolTotal, completed - symbolTotal));
-      let details = total
+      const analyzed = Math.max(0, Math.min(symbolTotal, completed - symbolTotal));      let details = total
         ? 'تحميل البيانات: ' + downloaded + '/' + symbolTotal + ' — تحليل الأسهم: ' + analyzed + '/' + symbolTotal + ' — الدفعة ' + (p.batch || 1)
         : '';
       if (p.batch_total) details += ' — إجمالي الدفعات: ' + p.batch_total;
@@ -297,16 +317,17 @@
             <div class="price-block">
               <span class="price-label">السعر</span><span class="price-text"></span><span class="price-sub"></span>
             </div>
-            <div><span class="header-label">الحالة</span><span class="status-badge"></span></div>
-            <div><span class="header-label">المرحلة</span><span class="stage-badge"></span></div>
+            <div class="status-wrap"><span class="header-label">الحالة</span><span class="status-badge"></span></div>
+            <div class="stage-wrap"><span class="header-label">المرحلة</span><span class="stage-badge"></span></div>
             <button class="btn-del" type="button" aria-label="حذف البطاقة" title="حذف">♜</button>
           </div>
           <div class="trade-plan">
             <h3 class="trade-plan-title">خطة التداول</h3>
             <table class="levels-table" aria-label="خطة التداول">
-              <thead><tr><th class="row-index">#</th><th class="entry-head">الدخول</th><th class="target-head">الأهداف</th><th class="stop-head">وقف الخسارة</th></tr></thead>
+              <thead><tr><th class="row-index">#</th><th class="entry-head">الدخول</th><th class="target-head">الأهداف</th></tr></thead>
               <tbody class="levels-rows"></tbody>
             </table>
+            <div class="stop-loss-summary"><span class="stop-loss-label">وقف الخسارة</span><strong class="stop-loss-value">—</strong></div>
           </div>
           <div class="expanded">
             <div class="section-title">أولاً: القراءة الذكية</div>
@@ -366,13 +387,10 @@
           const entry = document.createElement('td'); entry.className = 'entry-cell'; entry.textContent = entries[i] == null ? '—' : String(entries[i]);
           const target = document.createElement('td'); target.className = 'target-cell'; target.textContent = targets[i] == null ? '—' : String(targets[i]);
           tr.append(index, entry, target);
-          if (i === 0) {
-            const stop = document.createElement('td'); stop.className = 'stop-cell'; stop.rowSpan = 5;
-            stop.textContent = c.shared_stop_loss == null ? (c.levels_status || '—') : String(c.shared_stop_loss);
-            tr.appendChild(stop);
-          }
           rows.appendChild(tr);
         }
+        const stopValue = el.querySelector('.stop-loss-value');
+        stopValue.textContent = c.shared_stop_loss == null ? (c.levels_status || 'غير متوفر') : String(c.shared_stop_loss);
         el.querySelector('.smart-text').textContent = c.smart_reading || '';
 
         const filtersNode = el.querySelector('.filters-list');
