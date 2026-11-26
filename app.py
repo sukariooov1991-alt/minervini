@@ -13,7 +13,6 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from zoneinfo import ZoneInfo
 
 from flask import Flask, Response, jsonify, render_template, request, stream_with_context
 
@@ -274,10 +273,24 @@ class ScanController:
 
     def _daily_history_scheduler_loop(self) -> None:
         """Refresh the rolling 300-bar universe cache after each completed US session."""
-        timezone_et = ZoneInfo("America/New_York")
+        last_research_refresh = 0.0
         while not self._daily_history_stop.is_set():
             try:
-                now_et = datetime.now(timezone_et)
+                now_et = MarketTime.now()
+                if time.monotonic() - last_research_refresh >= 4 * 3600:
+                    research_screener = DailyScreener(
+                        db_path=self.db_path,
+                        output_path=self.output_path,
+                        symbols=SP500_SYMBOLS,
+                    )
+                    research_failures = research_screener.refresh_universe_research_data()
+                    last_research_refresh = time.monotonic()
+                    log.info(
+                        "Background news/earnings refresh checked: symbols=%s news_failures=%s fundamentals_failures=%s",
+                        len(SP500_SYMBOLS),
+                        len(research_failures.get("news", [])),
+                        len(research_failures.get("fundamentals", [])),
+                    )
                 market_close = get_us_equity_market_close(now_et.date())
                 if market_close is None:
                     self._daily_history_stop.wait(300)
@@ -310,20 +323,7 @@ class ScanController:
                         ", ".join(item.get("symbol", "?") for item in failures[:30]),
                     )
 
-                # Research data has its own per-symbol durable cache schedules:
-                # non-empty news every 4h, quarterly fundamentals every 24h,
-                # empty/error responses on shorter retry windows. Running this
-                # pass every 15m does not mean 493 provider requests every time:
-                # fresh entries are served directly from SQLite.
-                research_failures = screener.refresh_universe_research_data()
-                log.info(
-                    "Background news/earnings refresh checked: symbols=%s news_failures=%s fundamentals_failures=%s",
-                    len(SP500_SYMBOLS),
-                    len(research_failures.get("news", [])),
-                    len(research_failures.get("fundamentals", [])),
-                )
-                # Recheck each quarter-hour. Per-dataset cache age determines
-                # which individual symbols actually need a provider request.
+                # Recheck the completed daily history after each cache cooldown.
                 self._daily_history_stop.wait(15 * 60)
             except Exception:
                 log.exception("Background daily history scheduler failed")
@@ -860,7 +860,7 @@ class ScanController:
                 live_df = candles.copy()
                 if not live_df.empty:
                     live_df["date"] = pd.to_datetime(live_df["date"], errors="coerce")
-                    today = datetime.now(ZoneInfo("America/New_York")).date()
+                    today = MarketTime.state().trading_date
                     today_mask = live_df["date"].dt.date == today
                     raw_volume = quote.get("volume")
                     try:
