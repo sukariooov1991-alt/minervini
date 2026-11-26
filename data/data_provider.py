@@ -107,6 +107,23 @@ def _find_nearest_prior_value(
     return best_val
 
 
+def _latest_completed_session(now_et: datetime) -> date | None:
+    """Return the newest US equity session whose daily bar should be complete."""
+    timezone_et = ZoneInfo("America/New_York")
+    local_now = now_et.astimezone(timezone_et)
+    candidate = local_now.date()
+    for _ in range(14):
+        market_close = get_us_equity_market_close(candidate)
+        if market_close is not None:
+            completed_at = datetime.combine(
+                candidate, market_close, tzinfo=timezone_et
+            ) + timedelta(hours=1)
+            if local_now >= completed_at:
+                return candidate
+        candidate -= timedelta(days=1)
+    return None
+
+
 class DataProvider:
     def __init__(self, symbol: str, storage: StorageManager | None = None):
         self.symbol = symbol.upper().strip()
@@ -343,112 +360,93 @@ class DataProvider:
         )
 
     def ensure_daily_history(self, initial_period: str = "2y") -> int:
-        """Use the durable rolling 300-bar cache and refresh only completed daily bars."""
+        """Keep a permanent rolling 300-session cache; refresh only when a new session completes."""
         cached = self.storage.get_candles_df(self.symbol)
-        refresh_key = f"daily_refresh:{self.symbol}"
-        refresh_state = self.storage.get_cache(refresh_key)
         known_source = self.storage.get_cache(f"daily_source:{self.symbol}")
-        age = self.storage.cache_age_seconds(refresh_key)
+        failure_key = f"daily_refresh_failure:{self.symbol}"
+        failure_state = self.storage.get_cache(failure_key)
+        failure_age = self.storage.cache_age_seconds(failure_key)
+
         now_et = datetime.now(ZoneInfo("America/New_York"))
-        today_et = now_et.date().isoformat()
+        expected_session = _latest_completed_session(now_et)
         latest_bar_date = (
-            cached["date"].iloc[-1].date().isoformat()
+            cached["date"].iloc[-1].date()
             if not cached.empty and "date" in cached.columns else None
         )
-        regular_close = get_us_equity_market_close(now_et.date())
-        completed_after = (
-            datetime.combine(now_et.date(), regular_close) + timedelta(hours=1)
-            if regular_close is not None else None
-        )
-        after_regular_close = bool(
-            completed_after is not None and now_et >= completed_after.replace(tzinfo=now_et.tzinfo)
-        )
-        needs_post_close_check = bool(
-            after_regular_close
-            and latest_bar_date != today_et
-            and (not isinstance(refresh_state, dict)
-                 or refresh_state.get("post_close_check_date") != today_et)
-        )
 
-        # After-close checks are retried every 15 minutes until the provider
-        # actually publishes today's completed bar. A successful HTTP response
-        # containing only yesterday's data is not proof today's candle is ready.
-        if (
-            needs_post_close_check
-            and isinstance(refresh_state, dict)
-            and refresh_state.get("last_refresh")
-            and age is not None
-            and age < 15 * 60
+        # The candle rows themselves are permanent SQLite history. Their age in
+        # hours is irrelevant: only a newly completed exchange session can make
+        # this cache stale. Weekends and holidays therefore cause no provider call.
+        if len(cached) > 0 and known_source and (
+            expected_session is None
+            or (latest_bar_date is not None and latest_bar_date >= expected_session)
         ):
             self.last_source = "SQLite daily cache"
             return 0
 
-        # A failed refresh must never be recorded as a successful refresh. Keep
-        # the last good candles, but throttle repeated provider calls for 15 min.
+        # Keep the last good history if a provider is temporarily unavailable.
+        # Retry a stale/missing session after 15 minutes without re-downloading
+        # history on every scan or every scheduler wake-up.
         if (
-            isinstance(refresh_state, dict)
-            and refresh_state.get("last_failed_attempt")
-            and age is not None
-            and age < 15 * 60
+            isinstance(failure_state, dict)
+            and failure_state.get("last_failed_attempt")
+            and failure_age is not None
+            and failure_age < 15 * 60
         ):
-            raise RuntimeError(
-                f"Recent daily-history refresh failed for {self.symbol}; "
-                "retaining the last good SQLite candles and retrying after the cooldown."
+            self.last_source = "SQLite daily cache" if len(cached) else None
+            log.warning(
+                "%s: retaining %s stored candles; retrying daily refresh after cooldown",
+                self.symbol, len(cached),
             )
-
-        # Reuse the successful cache, except for one explicit check after today's
-        # regular close: an intraday scan must not suppress today's completed bar.
-        if (
-            isinstance(refresh_state, dict)
-            and refresh_state.get("last_refresh")
-            and age is not None
-            and age < 20 * 3600
-            and not needs_post_close_check
-            and len(cached) > 0
-            and bool(known_source)
-        ):
-            self.last_source = "SQLite daily cache"
             return 0
 
-        # Once the full available history has been seeded from a known vendor,
-        # even a young IPO with fewer than 300 bars needs only a recent delta.
-        # Unknown/legacy caches are backfilled once from the full initial window.
+        # Seed missing/legacy data from the full history once. Thereafter fetch
+        # only a short overlapping window so a missed session can be recovered.
         period = "10d" if len(cached) > 0 and known_source else initial_period
         try:
             count = self.fetch_and_store_daily_candles(period, append=True)
-            refreshed_candles = self.storage.get_candles_df(self.symbol)
+            refreshed = self.storage.get_candles_df(self.symbol)
             latest_refreshed_date = (
-                refreshed_candles["date"].iloc[-1].date().isoformat()
-                if not refreshed_candles.empty and "date" in refreshed_candles.columns
-                else None
+                refreshed["date"].iloc[-1].date()
+                if not refreshed.empty and "date" in refreshed.columns else None
             )
-            previous_post_close_date = (
-                refresh_state.get("post_close_check_date")
-                if isinstance(refresh_state, dict) else None
+
+            # Some vendors return HTTP success before publishing the completed
+            # daily bar. Do not mark the day refreshed until its date is stored.
+            if (
+                expected_session is not None
+                and (latest_refreshed_date is None or latest_refreshed_date < expected_session)
+            ):
+                self.storage.set_cache(
+                    failure_key,
+                    {"last_failed_attempt": datetime.now(timezone.utc).isoformat()},
+                )
+                log.info(
+                    "%s: provider has not published completed session %s yet; "
+                    "keeping %s stored candles and retrying in 15 minutes",
+                    self.symbol, expected_session, len(refreshed),
+                )
+                return 0
+
+            self.storage.set_cache(failure_key, None)
+            self.last_source = self.last_source or "SQLite daily cache"
+            log.info(
+                "%s: daily history current through %s; stored_bars=%s",
+                self.symbol, latest_refreshed_date, len(refreshed),
             )
-            new_state = {
-                "last_refresh": datetime.now(timezone.utc).isoformat(),
-                "post_close_check_date": (
-                    today_et
-                    if after_regular_close and latest_refreshed_date == today_et
-                    else previous_post_close_date
-                ),
-            }
-            self.storage.set_cache(refresh_key, new_state)
             return count
-        except Exception:
-            # Store failure state separately in the payload. Do not advance the
-            # successful-refresh timestamp or disguise stale history as fresh.
+        except Exception as exc:
             self.storage.set_cache(
-                refresh_key,
-                {
-                    "last_failed_attempt": datetime.now(timezone.utc).isoformat(),
-                    "post_close_check_date": (
-                        refresh_state.get("post_close_check_date")
-                        if isinstance(refresh_state, dict) else None
-                    ),
-                },
+                failure_key,
+                {"last_failed_attempt": datetime.now(timezone.utc).isoformat()},
             )
+            log.warning(
+                "%s: daily refresh failed; preserving %s stored candles: %s",
+                self.symbol, len(cached), exc,
+            )
+            if len(cached):
+                self.last_source = "SQLite daily cache (last good history)"
+                return 0
             raise
 
     def get_ohlcv_dataframe(self) -> pd.DataFrame:
