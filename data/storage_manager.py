@@ -405,16 +405,32 @@ class StorageManager:
         if event_type not in {"news", "earnings"}:
             raise ValueError("event_type must be news or earnings")
         with self._get_conn() as conn:
+            clean_symbol = symbol.upper().strip()
             encoded = json.dumps(payload, ensure_ascii=False, default=str, sort_keys=True)
-            conn.execute(
-                """INSERT INTO events(symbol,type,timestamp,payload)
-                   SELECT ?,?,?,? WHERE NOT EXISTS (
-                     SELECT 1 FROM events
-                     WHERE symbol=? AND type=? AND timestamp=? AND payload=?
-                   )""",
-                (symbol.upper(), event_type, timestamp, encoded,
-                 symbol.upper(), event_type, timestamp, encoded),
-            )
+            if event_type == "earnings":
+                # A reported quarter is one logical event per symbol/period.
+                # Replace changed figures for that quarter instead of storing
+                # duplicate versions each time the daily refresh detects an update.
+                conn.execute(
+                    "DELETE FROM events WHERE symbol=? AND type='earnings' AND timestamp=?",
+                    (clean_symbol, str(timestamp)),
+                )
+                conn.execute(
+                    "INSERT INTO events(symbol,type,timestamp,payload) VALUES (?,?,?,?)",
+                    (clean_symbol, event_type, str(timestamp), encoded),
+                )
+            else:
+                # News can contain multiple articles with the same publication
+                # timestamp, so deduplicate by the complete article payload.
+                conn.execute(
+                    """INSERT INTO events(symbol,type,timestamp,payload)
+                       SELECT ?,?,?,? WHERE NOT EXISTS (
+                         SELECT 1 FROM events
+                         WHERE symbol=? AND type=? AND timestamp=? AND payload=?
+                       )""",
+                    (clean_symbol, event_type, str(timestamp), encoded,
+                     clean_symbol, event_type, str(timestamp), encoded),
+                )
 
     def get_events(self, symbol: str, event_type: str, limit: int = 10) -> list[dict[str, Any]]:
         if event_type not in {"news", "earnings"}:
