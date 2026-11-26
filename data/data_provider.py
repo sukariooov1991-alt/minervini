@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone, date, timedelta
-from zoneinfo import ZoneInfo
 from typing import Any
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -331,7 +330,7 @@ class DataProvider:
                 raise RuntimeError("source returned no valid OHLCV candles")
             # The current session's daily bar is incomplete until the regular
             # US session closes and the provider publishes its final OHLCV.
-            now_et = datetime.now(ZoneInfo("America/New_York"))
+            now_et = MarketTime.now()
             regular_close = get_us_equity_market_close(now_et.date())
             completed_after = (
                 datetime.combine(now_et.date(), regular_close) + timedelta(hours=1)
@@ -411,7 +410,7 @@ class DataProvider:
         failure_state = self.storage.get_cache(failure_key)
         failure_age = self.storage.cache_age_seconds(failure_key)
 
-        now_et = datetime.now(ZoneInfo("America/New_York"))
+        now_et = MarketTime.now()
         expected_session = _latest_completed_session(now_et)
         latest_bar_date = (
             cached["date"].iloc[-1].date()
