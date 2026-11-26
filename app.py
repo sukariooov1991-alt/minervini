@@ -260,9 +260,9 @@ class ScanController:
             daemon=True,
         )
         self._realtime_watchdog.start()
-        # Independent daily data maintenance: this worker refreshes only the
-        # permanent OHLCV cache after the completed US session. It never runs a
-        # stock scan, changes cards, or depends on a user pressing the Scan button.
+        # Independent background maintenance: refresh durable research caches
+        # every four hours, including holidays, and OHLCV after completed US
+        # sessions. It never runs a stock scan or changes watchlist eligibility.
         self._daily_history_stop = threading.Event()
         self._daily_history_scheduler = threading.Thread(
             target=self._daily_history_scheduler_loop,
@@ -272,7 +272,7 @@ class ScanController:
         self._daily_history_scheduler.start()
 
     def _daily_history_scheduler_loop(self) -> None:
-        """Refresh the rolling 300-bar universe cache after each completed US session."""
+        """Refresh durable research caches and the rolling 300-bar OHLCV universe."""
         last_research_refresh = 0.0
         while not self._daily_history_stop.is_set():
             try:
