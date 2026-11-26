@@ -1,6 +1,7 @@
 import unittest
 from datetime import date, datetime
 from threading import Condition, Event, RLock
+import time
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
@@ -16,6 +17,44 @@ class RealtimeCandleTests(unittest.TestCase):
         controller._lock = RLock()
         controller._live_candles = {}
         return controller
+
+    def test_watchdog_reconnects_during_exchange_holiday_when_stream_is_stale(self):
+        controller = ScanController.__new__(ScanController)
+
+        class FakeLongbridge:
+            def __init__(self):
+                self.reconnect_calls = []
+            def has_credentials(self):
+                return True
+            @property
+            def last_message_monotonic(self):
+                return time.monotonic() - 2000.0
+            def reconnect(self, symbols):
+                self.reconnect_calls.append(list(symbols))
+                return list(symbols)
+
+        controller.lb_client = FakeLongbridge()
+        controller._detect_market_session = lambda: "مغلق"
+        controller._lock = RLock()
+        controller._state_cv = Condition(controller._lock)
+        controller._state_version = 0
+        controller._running = False
+        controller._cards = {"ABBV": {"symbol": "ABBV"}}
+        controller._last_ws_subscription_monotonic = time.monotonic() - 2000.0
+        controller._last_ws_reconnect_monotonic = 0.0
+        controller._latest_quote_sequence = {}
+        controller._latest_quote_timestamp = {}
+        controller._processed_quote_timestamp = {}
+        controller._ws_seen_symbols = set()
+        controller._ws_last_log_at = {}
+        controller._ws_connected = True
+        controller._notify_state_changed_locked = lambda: None
+
+        with patch("app.time.sleep", side_effect=[None, StopIteration]):
+            with self.assertRaises(StopIteration):
+                controller._realtime_watchdog_loop()
+
+        self.assertEqual(controller.lb_client.reconnect_calls, [["ABBV"]])
 
     def test_websocket_callback_publishes_fractional_price_immediately(self):
         controller = ScanController.__new__(ScanController)
