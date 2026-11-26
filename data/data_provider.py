@@ -7,6 +7,7 @@ from typing import Any
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 import json
+import math
 import logging
 import os
 import time
@@ -601,8 +602,8 @@ class DataProvider:
             r = pd.to_numeric(rev.get(d, float("nan")), errors="coerce")
 
             prior_target = d_ts - pd.DateOffset(months=12)
-            prior_e = _find_nearest_prior_value(eps, prior_target, max_window_days=45)
-            prior_r = _find_nearest_prior_value(rev, prior_target, max_window_days=45)
+            prior_e = _find_nearest_prior_value(eps, prior_target, max_window_days=60)
+            prior_r = _find_nearest_prior_value(rev, prior_target, max_window_days=60)
 
             def growth(cur, prior):
                 try:
