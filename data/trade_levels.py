@@ -150,7 +150,7 @@ def default_targets(
     *,
     shared_stop_loss: float | None = None,
 ) -> list[float]:
-    if not entry_zones:
+    if len(entry_zones) != NUM_ZONES:
         return []
 
     # Minervini's risk framework targets at least 2:1 reward/risk and aims
