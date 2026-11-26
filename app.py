@@ -475,8 +475,9 @@ class ScanController:
             if not self.lb_client.has_credentials():
                 continue
             session_label = self._detect_market_session()
-            if session_label == "مغلق":
-                continue
+            # Longbridge can publish extended/overnight quotes when the regular
+            # exchange calendar says closed (weekends/holidays included).
+            # Keep the stream supervised; use the extended-session timeout.
             stale_after_seconds = 300 if session_label == "مفتوح" else 900
             now_mono = time.monotonic()
             with self._lock:
