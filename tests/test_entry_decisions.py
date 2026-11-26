@@ -180,6 +180,23 @@ class EntryDecisionTests(unittest.TestCase):
         self.assertTrue(pd.isna(relative_strength_score(pd.Series(range(1, 253)))))
         self.assertTrue(pd.notna(relative_strength_score(pd.Series(range(1, 254)))))
 
+    def test_rs_universe_does_not_admit_252_close_history(self):
+        class FakeStorage:
+            def get_candles_df(self, symbol):
+                return pd.DataFrame({
+                    "date": pd.date_range("2025-01-01", periods=252, freq="B"),
+                    "close": range(1, 253),
+                })
+
+        scanner = DailyScreener.__new__(DailyScreener)
+        scanner.symbols = ["SHORT"]
+        scanner.storage = FakeStorage()
+
+        ratings, frames = scanner.compute_rs_ratings()
+
+        self.assertEqual(ratings, {})
+        self.assertNotIn("SHORT", frames)
+
     def test_atr_uses_wilder_smoothing(self):
         frame = pd.DataFrame({
             "high": [11.0, 12.0, 13.0, 14.0],
