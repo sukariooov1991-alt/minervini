@@ -64,6 +64,7 @@ class RealtimeCandleTests(unittest.TestCase):
         controller._latest_quote_sequence = {}
         controller._latest_quote_timestamp = {}
         controller._live_prices = {}
+        controller._live_quote_metadata = {}
         controller._cards = {"ABBV": {"symbol": "ABBV"}}
         controller._ws_last_log_at = {}
         controller._realtime_pending = []
