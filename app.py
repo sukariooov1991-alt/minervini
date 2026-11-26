@@ -187,7 +187,6 @@ class ScanController:
         self._latest_quote_sequence: dict[str, int] = {}
         self._latest_quote_timestamp: dict[str, float] = {}
         self._processed_quote_timestamp: dict[str, float] = {}
-        self._last_ws_push_monotonic: float | None = None
         self._last_ws_reconnect_monotonic = 0.0
         self._ws_last_log_at: dict[str, float] = {}
         # Quote callbacks must stay short: the SDK dispatches pushes on its
@@ -379,7 +378,7 @@ class ScanController:
                 if self._running:
                     continue
                 symbols = sorted(self._cards)
-                last_push = self._last_ws_push_monotonic
+                last_push = self.lb_client.last_message_monotonic
                 last_reconnect = self._last_ws_reconnect_monotonic
                 stale_stream = bool(
                     symbols
@@ -496,7 +495,6 @@ class ScanController:
                 self._latest_quote_sequence[sym] = sequence
             if quote_order is not None:
                 self._latest_quote_timestamp[sym] = max(previous_timestamp or quote_order, quote_order)
-            self._last_ws_push_monotonic = now_mono
             self._ws_connected = True
             self._live_prices[sym] = price
             card = self._cards.get(sym)
