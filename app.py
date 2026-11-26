@@ -379,7 +379,7 @@ class ScanController:
                         elif name == "Market Regime Favorable":
                             item["passed"] = market_favorable
                             item["pending"] = not setup_passed
-                    card["smart_reading"] = self._build_smart_reading_from_card(card)
+                    card["smart_reading"] = self._build_smart_reading_from_card(card, live_df)
                     self.storage.save_watchlist_card(card)
                     if not was_entry_ready and card["entry_ready"]:
                         alert_card = dict(card)
@@ -413,43 +413,146 @@ class ScanController:
                         card["within_entry_range"] = within_range
                         if range_note and range_note not in card.get("notes", []):
                             card["notes"] = [range_note] + list(card.get("notes") or [])
-                        card["smart_reading"] = self._build_smart_reading_from_card(card)
+                        card["smart_reading"] = self._build_smart_reading_from_card(card, df)
                         try:
                             self.storage.save_watchlist_card(card)
                         except Exception:
                             log.exception("Failed to persist realtime fallback card for %s", sym)
                     self._notify_state_changed_locked()
 
-    def _build_smart_reading_from_card(self, card: dict[str, Any]) -> str:
-        sym = card.get("symbol", "")
-        cur = card.get("current_price")
-        src = card.get("price_source", "Stored daily data")
+    def _build_smart_reading_from_card(
+        self, card: dict[str, Any], candles_df: pd.DataFrame | None = None
+    ) -> str:
+        """Build a technical, decision-oriented explanation; never expose feed/vendor metadata."""
+        import numpy as np
+
+        sym = str(card.get("symbol") or "السهم")
         rs = card.get("rs_rating")
-        regime = card.get("market_regime")
-        lvl_status = card.get("levels_status")
+        regime = str(card.get("market_regime") or "غير محدد")
         within_range = card.get("within_entry_range")
-        filters = card.get("filters") or []
-        failed_filters = [f.get("name", "") for f in filters if not f.get("passed", False)]
+        pivot = card.get("pivot_price")
+        final_low = card.get("final_low")
+        entries = card.get("entry_zones") or []
+        targets = card.get("targets") or []
+        stop = card.get("shared_stop_loss")
+        notes = [str(x) for x in (card.get("notes") or []) if x]
+        sections: list[str] = []
 
-        if within_range is False:
-            range_note = "السعر الحالي خارج نطاق الدخول المحدد (5%) — لا تطارد السعر."
-        elif within_range is True:
-            range_note = "السعر الحالي ضمن نطاق الدخول المحدد (5%)."
+        def fmt(value: Any) -> str:
+            try:
+                number = float(value)
+                return f"{number:.2f}" if np.isfinite(number) else "غير متاح"
+            except (TypeError, ValueError):
+                return "غير متاح"
+
+        def nearest_levels(values: list[float], current: float, above: bool) -> list[float]:
+            valid = sorted({
+                round(float(v), 4) for v in values
+                if v is not None and np.isfinite(float(v)) and float(v) > 0
+                and ((float(v) >= current) if above else (float(v) <= current))
+            })
+            return valid[:2] if above else valid[-2:]
+
+        # Derive support/resistance and trend from the same daily OHLCV history
+        # used by the screener, rather than from the quote provider label.
+        if candles_df is not None and not candles_df.empty:
+            df = candles_df.copy()
+            required = {"high", "low", "close"}
+            if required.issubset(df.columns):
+                for col in ("high", "low", "close"):
+                    df[col] = pd.to_numeric(df[col], errors="coerce")
+                df = df.dropna(subset=["high", "low", "close"]).tail(220)
+                if len(df) >= 30:
+                    close = df["close"]
+                    last = float(close.iloc[-1])
+                    ma20 = float(close.tail(20).mean()) if len(df) >= 20 else None
+                    ma50 = float(close.tail(50).mean()) if len(df) >= 50 else None
+                    ma150 = float(close.tail(150).mean()) if len(df) >= 150 else None
+                    ma200 = float(close.tail(200).mean()) if len(df) >= 200 else None
+                    trend_parts = []
+                    for label, ma in (("20 يوم", ma20), ("50 يوم", ma50), ("150 يوم", ma150), ("200 يوم", ma200)):
+                        if ma is not None:
+                            relation = "فوق" if last >= ma else "تحت"
+                            trend_parts.append(f"{relation} متوسط {label} ({fmt(ma)})")
+                    if ma20 is not None and ma50 is not None:
+                        trend_state = "صاعد قصير الأجل" if ma20 > ma50 else "ضعيف/هابط قصير الأجل"
+                    else:
+                        trend_state = "غير مكتمل"
+                    sections.append("الاتجاه والبنية: " + trend_state + "؛ " + "، ".join(trend_parts) + ".")
+
+                    # Local swing points over the latest 60 sessions, excluding
+                    # the last two bars to avoid treating an unfinished extreme as confirmed.
+                    recent = df.tail(60).reset_index(drop=True)
+                    lows, highs = [], []
+                    for i in range(2, max(2, len(recent) - 2)):
+                        lo = float(recent.loc[i, "low"])
+                        hi = float(recent.loc[i, "high"])
+                        if lo <= float(recent.loc[i-1:i+1, "low"].min()) and lo <= float(recent.loc[i-2:i+2, "low"].min()):
+                            lows.append(lo)
+                        if hi >= float(recent.loc[i-1:i+1, "high"].max()) and hi >= float(recent.loc[i-2:i+2, "high"].max()):
+                            highs.append(hi)
+                    supports = nearest_levels(lows, last, above=False)
+                    resistances = nearest_levels(highs, last, above=True)
+                    support_text = "، ".join(fmt(x) for x in reversed(supports)) if supports else "لم يُعثر على قاع محوري قريب مؤكد"
+                    resistance_text = "، ".join(fmt(x) for x in resistances) if resistances else "لم تُرصد قمة محورية أعلى قريبة"
+                    sections.append(f"الدعم والمقاومة: أقرب مناطق الدعم {support_text}؛ وأقرب مناطق المقاومة {resistance_text}. هذه مناطق قمم/قيعان يومية تاريخية وليست ضمانًا لارتداد السعر.")
+
+                    tr = pd.concat([
+                        df["high"] - df["low"],
+                        (df["high"] - df["close"].shift(1)).abs(),
+                        (df["low"] - df["close"].shift(1)).abs(),
+                    ], axis=1).max(axis=1)
+                    atr = float(tr.tail(14).mean()) if len(tr.dropna()) >= 14 else None
+                    if atr is not None and np.isfinite(atr):
+                        sections.append(f"التذبذب والمخاطر: متوسط المدى الحقيقي ATR(14) يقارب {fmt(atr)}؛ لذلك يجب تقييم مسافة وقف الخسارة وحجم المركز وفق هذا التذبذب.")
+                else:
+                    sections.append("التحليل الفني: عدد الشموع الصالحة غير كافٍ لاستخراج اتجاه ومستويات دعم ومقاومة موثوقة.")
+            else:
+                sections.append("التحليل الفني: بيانات OHLC المطلوبة لاستخراج الدعم والمقاومة غير مكتملة.")
         else:
-            range_note = "حالة نطاق الدخول غير محددة لعدم توفر نقطة ارتكاز."
+            sections.append("التحليل الفني: سجل الشموع اليومية غير متاح حاليًا؛ لا يمكن تأكيد الدعم والمقاومة أو المتوسطات.")
 
-        if card.get("setup_passed") and card.get("entry_ready"):
-            filters_note = "اكتمل نموذج الدخول واجتازت حالة السوق شرط الملاءمة."
+        if card.get("setup_passed"):
+            setup = "VCP" if card.get("vcp_passed") else ("Pullback" if card.get("pullback_passed") else "نموذج دخول متحقق")
+            sections.append(f"النموذج الفني: تحقق {setup}. نقطة الارتكاز المعتمدة {fmt(pivot)}" if pivot else f"النموذج الفني: تحقق {setup} لكن لا توجد نقطة ارتكاز صالحة؛ لذلك لا تُعرض مناطق دخول أو أهداف أو وقف خسارة مصطنعة.")
+            if final_low:
+                sections.append(f"قاع النموذج: {fmt(final_low)}؛ كسره قد يبطل بنية النموذج بحسب شكل القاعدة.")
+        else:
+            sections.append("النموذج الفني: السهم اجتاز شروط التأهل الأولية، لكنه ما زال بانتظار تأكيد VCP أو Pullback. لا توجد إشارة دخول مكتملة حتى الآن.")
+
+        if entries:
+            sections.append("خطة الدخول: المناطق الخمس المحسوبة " + "، ".join(fmt(x) for x in entries) + ".")
+        else:
+            sections.append("خطة الدخول: لا توجد مناطق دخول مؤكدة حاليًا لعدم توفر ارتكاز صالح للنموذج.")
+        if within_range is True:
+            sections.append("موضع السعر بالنسبة للخطة: داخل نطاق الدخول المسموح؛ يظل التنفيذ مشروطًا بتأكيد النموذج والسوق.")
+        elif within_range is False:
+            sections.append("موضع السعر بالنسبة للخطة: خارج نطاق الشراء الممتد 5% فوق الارتكاز؛ تجنب مطاردة الحركة وانتظر فرصة جديدة.")
+        else:
+            sections.append("موضع السعر بالنسبة للخطة: غير قابل للتقييم قبل توفر نقطة ارتكاز صحيحة.")
+
+        if targets:
+            sections.append("الأهداف السعرية المحسوبة للمناطق الخمس: " + "، ".join(fmt(x) for x in targets) + ".")
+        else:
+            sections.append("الأهداف: غير محددة بعد؛ لا يصح وضع أهداف رقمية قبل اكتمال نموذج الدخول ووجود ارتكاز صالح.")
+        sections.append(f"وقف الخسارة: {fmt(stop)}." if stop else "وقف الخسارة: غير محدد بعد؛ لا تعتمد صفقة دون مستوى إبطال فني واضح.")
+
+        market_text = {
+            "CORRECTION_OR_DOWNTREND": "السوق العام في تصحيح أو اتجاه هابط، ما يرفع مخاطر نجاح الاختراقات.",
+            "UPTREND": "السوق العام في اتجاه صاعد، وهو عامل داعم لكنه لا يغني عن تأكيد السهم.",
+            "UPTREND_UNDER_PRESSURE": "الاتجاه العام صاعد لكنه تحت ضغط؛ يلزم تشدد أكبر في تأكيد الدخول.",
+            "UNKNOWN": "حالة السوق العام غير محسومة من البيانات المتاحة.",
+        }.get(regime.upper(), f"حالة السوق العام: {regime}.")
+        sections.append(f"السوق والقوة النسبية: {market_text} تصنيف RS={fmt(rs)}.")
+        if card.get("entry_ready"):
+            sections.append("القرار الحالي: النموذج والسوق اجتازا شروط الجاهزية؛ انتظر تنفيذًا منضبطًا مع الالتزام بوقف الخسارة.")
         elif card.get("setup_passed"):
-            filters_note = "تحقق أحد نموذجي الدخول، لكن حالة السوق لا تسمح حاليًا."
+            sections.append("القرار الحالي: النموذج تحقق لكن ظروف السوق غير مواتية؛ الأفضل عدم تفعيل دخول جديد حتى تتحسن البيئة العامة.")
         else:
-            filters_note = "السهم مؤهل للمراقبة؛ ننتظر تحقق VCP أو Pullback قبل تقييم السوق."
-
-        return (
-            f"السهم {sym} (السعر الحالي: {cur} عبر {src}) — {filters_note} "
-            f"حالة السوق العام: {regime}، وتصنيف القوة النسبية RS={rs}. "
-            f"{range_note} حالة المستويات: {lvl_status}."
-        )
+            sections.append("القرار الحالي: مراقبة فقط، وليس توصية دخول. انتظر اكتمال النموذج ثم أعد تقييم السوق والمستويات.")
+        if notes:
+            sections.append("ملاحظات التحليل: " + " ".join(notes[:3]))
+        return "\\n\\n".join(sections)
 
     def _build_filters_detail(self, row: dict[str, Any]) -> list[dict[str, Any]]:
         filters: list[dict[str, Any]] = []
