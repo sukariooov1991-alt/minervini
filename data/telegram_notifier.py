@@ -95,6 +95,7 @@ class TelegramNotifier:
                 and all(math.isfinite(v) and v > 0 for v in entry_values)
                 and all(a < b for a, b in zip(entry_values, entry_values[1:]))
                 and all(math.isfinite(t) and t > e for t, e in zip(target_values, entry_values))
+                and all(a < b for a, b in zip(target_values, target_values[1:]))
                 and math.isfinite(stop_value)
                 and 0 < stop_value < entry_values[0]
             )
