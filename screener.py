@@ -212,7 +212,7 @@ class DailyScreener:
                         })
                     continue
                 try:
-                    n = self._get_provider(sym).fetch_and_store_daily_candles(period)
+                    n = self._get_provider(sym).ensure_daily_history(initial_period=period)
                     self.storage.mark_scan_symbol_completed(scan_checkpoint_name, sym)
                     completed_downloads.add(sym)
                     log.info("[%s/%s] %s: stored %s bars", i, total, sym, n)
@@ -441,6 +441,13 @@ class DailyScreener:
                             ),
                             "screen_date": datetime.now(timezone.utc).date().isoformat(),
                         }
+                        if row["watchlist_eligible"]:
+                            try:
+                                # News is strategy context, not a per-scan dependency.
+                                # DataProvider serves its durable six-hour cache.
+                                self._get_provider(sym).fetch_and_store_news()
+                            except Exception:
+                                log.exception("News refresh failed for eligible symbol %s", sym)
                         rows.append(row)
                         batch_rows.append(row)
                         # Missing fundamentals remain uncertain and therefore
