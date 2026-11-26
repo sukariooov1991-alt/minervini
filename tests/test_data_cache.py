@@ -59,6 +59,56 @@ class PermanentDataCacheTests(unittest.TestCase):
         self.storage.add_event("AAPL", "earnings", "2026-10-30", event)
         self.assertEqual(len(self.storage.get_events("AAPL", "earnings", limit=10)), 1)
 
+    def test_earnings_period_updates_in_place_instead_of_duplicating(self):
+        self.storage.add_event(
+            "AAPL", "earnings", "2026-10-30",
+            {"period": "2026-10-30", "eps_current": 1.2},
+        )
+        self.storage.add_event(
+            "AAPL", "earnings", "2026-10-30",
+            {"period": "2026-10-30", "eps_current": 1.5},
+        )
+        events = self.storage.get_events("AAPL", "earnings", limit=10)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["payload"]["eps_current"], 1.5)
+
+    def test_news_articles_with_same_timestamp_are_both_retained(self):
+        self.storage.add_event("AAPL", "news", "2026-11-26T12:00:00Z", {"title": "Article A"})
+        self.storage.add_event("AAPL", "news", "2026-11-26T12:00:00Z", {"title": "Article B"})
+        self.storage.add_event("AAPL", "news", "2026-11-26T12:00:00Z", {"title": "Article A"})
+        events = self.storage.get_events("AAPL", "news", limit=10)
+        self.assertEqual(len(events), 2)
+        self.assertEqual({item["payload"]["title"] for item in events}, {"Article A", "Article B"})
+
+    def test_quarterly_fundamentals_cache_expires_after_one_day(self):
+        provider = DataProvider.__new__(DataProvider)
+        provider.symbol = "AAPL"
+        provider.storage = self.storage
+        provider._fetch_fundamentals_dataframe = lambda: pd.DataFrame([{
+            "period": pd.Timestamp("2026-09-30"),
+            "eps_current": 2.0,
+            "eps_year_ago": 1.5,
+            "revenue_current": 100.0,
+            "revenue_year_ago": 90.0,
+        }])
+        self.storage.set_cache("fundamentals:AAPL", [{"period": "2026-06-30"}])
+        with patch.object(self.storage, "cache_age_seconds", return_value=25 * 3600):
+            result = provider.get_fundamentals_dataframe()
+        self.assertEqual(pd.Timestamp(result.iloc[0]["period"]), pd.Timestamp("2026-09-30"))
+
+    def test_news_cache_expires_after_four_hours(self):
+        provider = DataProvider.__new__(DataProvider)
+        provider.symbol = "AAPL"
+        provider.storage = self.storage
+        provider.ticker = type("Ticker", (), {"news": [
+            {"title": "Fresh headline", "providerPublishTime": 1795694400}
+        ]})()
+        self.storage.set_cache("news:AAPL", [{"title": "Old headline"}])
+        with patch.object(self.storage, "cache_age_seconds", return_value=5 * 3600):
+            result = provider.fetch_and_store_news()
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["title"], "Fresh headline")
+
     def test_news_and_earnings_event_history_is_not_trimmed(self):
         for idx in range(501):
             self.storage.add_event(
