@@ -1424,14 +1424,26 @@ class ScanController:
             analysis_errors = sum(1 for failure in failures if failure.get("phase") == "analysis_error")
             fundamentals_warnings = sum(1 for failure in failures if failure.get("phase") == "fundamentals")
             history_warnings = sum(1 for failure in failures if failure.get("phase") == "history")
-            log.info(
-                "Scan finished: %s result rows, %s download errors, %s analysis exceptions, %s fundamentals warnings, %s history warnings",
-                0 if result_df is None else len(result_df),
-                download_errors,
-                analysis_errors,
-                fundamentals_warnings,
-                history_warnings,
+            overall_status = (
+                "STOPPED" if self._stop_event.is_set()
+                else "COMPLETED_WITH_ERRORS" if (download_errors or analysis_errors)
+                else "COMPLETED_WITH_WARNINGS" if (fundamentals_warnings or history_warnings)
+                else "SUCCESS"
             )
+            log.info(
+                "STEP=FULL_SCAN STATUS=%s result_rows=%s download_errors=%s "
+                "analysis_errors=%s fundamentals_warnings=%s history_warnings=%s",
+                overall_status,
+                0 if result_df is None else len(result_df),
+                download_errors, analysis_errors, fundamentals_warnings, history_warnings,
+            )
+            for failure in failures:
+                log.error(
+                    "STEP=SCAN_DIAGNOSTIC STATUS=FAILED phase=%s symbol=%s reason=%s",
+                    failure.get("phase", "unknown"),
+                    failure.get("symbol", "UNKNOWN"),
+                    failure.get("error", "No error detail supplied"),
+                )
         except Exception as exc:
             log.exception("Scan cycle failed")
             with self._state_cv:
