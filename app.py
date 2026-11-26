@@ -19,7 +19,7 @@ from flask import Flask, Response, jsonify, render_template, request, stream_wit
 
 from data.longbridge_stream import LongbridgeRealtimeClient
 from data.storage_manager import StorageManager
-from data.us_market_calendar import get_us_equity_market_close
+from data.market_time import MarketTime, get_us_equity_market_close
 from data.trade_levels import build_trade_levels, compute_atr, evaluate_entry_range
 from data.sp500_symbols import SP500_SYMBOLS
 from data.telegram_notifier import TelegramNotifier
@@ -642,20 +642,8 @@ class ScanController:
         if override:
             if override in MARKET_STATES:
                 return override
-            log.warning("Invalid MARKET_SESSION_LABEL=%r; falling back to NY session clock", override)
-        now_ny = datetime.now(ZoneInfo("America/New_York"))
-        regular_close = get_us_equity_market_close(now_ny.date())
-        if regular_close is None:
-            return "مغلق"
-        minutes = now_ny.hour * 60 + now_ny.minute
-        close_minutes = regular_close.hour * 60 + regular_close.minute
-        if 4 * 60 <= minutes < 9 * 60 + 30:
-            return "قبل الافتتاح"
-        if 9 * 60 + 30 <= minutes < close_minutes:
-            return "مفتوح"
-        if close_minutes <= minutes < 20 * 60:
-            return "بعد الإغلاق"
-        return "تداول ليلي"
+            log.warning("Invalid MARKET_SESSION_LABEL=%r; falling back to central MarketTime calendar", override)
+        return MarketTime.session_label_ar()
 
     def _on_realtime_quote(self, quote: dict[str, Any]) -> None:
         """Publish each tick immediately, then queue technical work off the SDK thread."""
