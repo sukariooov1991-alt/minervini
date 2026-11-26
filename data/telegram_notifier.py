@@ -12,6 +12,7 @@ import json
 import math
 import os
 import sqlite3
+import threading
 from pathlib import Path
 from typing import Any
 from urllib import parse, request
@@ -31,6 +32,7 @@ class TelegramNotifier:
         db_target = state_db_path or os.getenv("DB_PATH", "stock_data.db")
         self.state_db_path = str(db_target)
         self._sent_symbols: set[str] = set()
+        self._send_lock = threading.Lock()
         self._init_state_table()
         self._load_sent_symbols()
 
@@ -129,28 +131,32 @@ class TelegramNotifier:
         if not symbol:
             return False
 
-        if not force_resend and symbol in self._sent_symbols:
-            return False
+        # Scan-batch publication and realtime recalculation can both discover
+        # the same entry transition. Serialize check/send/mark to prevent
+        # duplicate Telegram messages from concurrent worker threads.
+        with self._send_lock:
+            if not force_resend and symbol in self._sent_symbols:
+                return False
 
-        if not self.bot_token or not self.chat_id:
-            raise RuntimeError("TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID must be configured.")
+            if not self.bot_token or not self.chat_id:
+                raise RuntimeError("TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID must be configured.")
 
-        text = self.format_message(stock_item)
-        url = f"https://api.telegram.org/bot{parse.quote(self.bot_token)}/sendMessage"
-        payload = json.dumps({
-            "chat_id": self.chat_id,
-            "text": text,
-        }).encode("utf-8")
+            text = self.format_message(stock_item)
+            url = f"https://api.telegram.org/bot{parse.quote(self.bot_token)}/sendMessage"
+            payload = json.dumps({
+                "chat_id": self.chat_id,
+                "text": text,
+            }).encode("utf-8")
 
-        req = request.Request(
-            url,
-            data=payload,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        with request.urlopen(req, timeout=self.timeout) as resp:
-            body = json.loads(resp.read().decode("utf-8"))
-            ok = bool(body.get("ok", False))
-            if ok:
-                self._mark_symbol_sent(symbol)
-            return ok
+            req = request.Request(
+                url,
+                data=payload,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with request.urlopen(req, timeout=self.timeout) as resp:
+                body = json.loads(resp.read().decode("utf-8"))
+                ok = bool(body.get("ok", False))
+                if ok:
+                    self._mark_symbol_sent(symbol)
+                return ok
