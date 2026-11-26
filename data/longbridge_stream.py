@@ -237,6 +237,11 @@ class LongbridgeRealtimeClient:
         _, _, price, timestamp, session = max(candidates, key=lambda item: (item[0], item[1]))
         return price, timestamp, session
 
+    def reconnect(self, symbols: list[str]) -> list[str]:
+        """Recreate the QuoteContext and restore the complete active subscription set."""
+        self.close()
+        return self.ensure_subscriptions(symbols)
+
     def close(self) -> None:
         with self._context_lock:
             ctx = self._ctx
