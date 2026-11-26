@@ -78,6 +78,40 @@ class EntryDecisionTests(unittest.TestCase):
         self.assertEqual(scanner.compute_market_breadth(), 50.0)
         self.assertEqual(scanner.compute_market_breadth(exclude_symbols={"A"}), 100.0)
 
+    def test_relative_strength_refuses_to_rank_when_universe_coverage_is_low(self):
+        class FakeStorage:
+            def get_candles_df(self, symbol):
+                if symbol != "A":
+                    return pd.DataFrame()
+                close = [100.0 + i * 0.2 for i in range(253)]
+                return pd.DataFrame({
+                    "date": pd.date_range("2025-01-01", periods=253, freq="B"),
+                    "close": close,
+                })
+
+        scanner = DailyScreener.__new__(DailyScreener)
+        scanner.symbols = ["A", "B", "C"]
+        scanner.storage = FakeStorage()
+
+        ratings, frames = scanner.compute_rs_ratings()
+
+        self.assertEqual(ratings, {})
+        self.assertEqual(set(frames), {"A"})
+
+    def test_market_breadth_is_unknown_when_universe_coverage_is_low(self):
+        class FakeStorage:
+            def get_candles_df(self, symbol):
+                if symbol != "A":
+                    return pd.DataFrame()
+                return pd.DataFrame({"close": [100.0 + i for i in range(50)]})
+
+        scanner = DailyScreener.__new__(DailyScreener)
+        scanner.symbols = ["A", "B", "C", "D", "E"]
+        scanner.storage = FakeStorage()
+
+        self.assertIsNone(scanner.compute_market_breadth())
+        self.assertEqual(scanner._last_breadth_participating, 1)
+
     def test_relative_strength_excludes_symbols_with_failed_daily_refresh(self):
         class FakeStorage:
             def get_candles_df(self, symbol):
