@@ -1503,7 +1503,7 @@ def api_start_scan():
         if (
             not normalized
             or len(normalized) > 500
-            or any(not re.fullmatch(r"\\^?[A-Z0-9][A-Z0-9.\\-]{0,14}", sym) for sym in normalized)
+            or any(not re.fullmatch(r"\^?[A-Z0-9][A-Z0-9.-]{0,14}", sym) for sym in normalized)
         ):
             return jsonify({"error": "symbols must contain 1 to 500 valid ticker symbols"}), 400
         symbols = sorted(set(normalized))
