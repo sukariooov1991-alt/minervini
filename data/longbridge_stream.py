@@ -158,12 +158,22 @@ class LongbridgeRealtimeClient:
                     "tag": _value(event, "tag"),
                     "source": "longbridge_websocket",
                 }
-                self.on_quote(payload)
+                try:
+                    self.on_quote(payload)
+                except Exception:
+                    log.exception(
+                        "STEP=WEBSOCKET_QUOTE_CALLBACK STATUS=FAILED symbol=%s price=%s",
+                        payload["symbol"], payload["last_done"],
+                    )
 
             ctx.set_on_quote(_handle_quote)
             self._ctx = ctx
             self._sub_type_quote = SubType.Quote
             self._subscribed_symbols = []
+            log.info(
+                "STEP=WEBSOCKET_CONNECT STATUS=SUCCESS overnight_enabled=%s",
+                enable_overnight,
+            )
 
     def ensure_subscriptions(self, symbols: list[str]) -> list[str]:
         """Idempotently subscribe new symbols through the single persistent context.
@@ -188,11 +198,19 @@ class LongbridgeRealtimeClient:
 
             # Submit all new symbols in one SDK subscribe call. Only record them
             # after the SDK accepts the request, so the watchdog can retry errors.
-            self._ctx.subscribe(missing, [self._sub_type_quote])
+            try:
+                self._ctx.subscribe(missing, [self._sub_type_quote])
+            except Exception:
+                log.exception(
+                    "STEP=WEBSOCKET_SUBSCRIBE STATUS=FAILED requested=%s symbols=%s",
+                    len(missing), ",".join(self._denormalize_symbol(s) for s in missing),
+                )
+                raise
             self._subscribed_symbols = sorted(active | set(missing))
             log.info(
-                "Longbridge WebSocket bulk subscribe accepted: new=%s total=%s",
+                "STEP=WEBSOCKET_SUBSCRIBE STATUS=ACCEPTED requested=%s total_subscribed=%s symbols=%s",
                 len(missing), len(self._subscribed_symbols),
+                ",".join(self._denormalize_symbol(s) for s in missing),
             )
             return [self._denormalize_symbol(symbol) for symbol in missing]
 
