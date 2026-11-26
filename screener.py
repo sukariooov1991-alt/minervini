@@ -167,6 +167,7 @@ class DailyScreener:
         above = 0
         excluded = {str(symbol).upper().strip() for symbol in (exclude_symbols or set())}
         eligible_universe = max(0, len(self.symbols) - len(excluded))
+        self._last_breadth_universe_count = eligible_universe
         for symbol in self.symbols:
             if symbol.upper().strip() in excluded:
                 continue
@@ -203,11 +204,11 @@ class DailyScreener:
         index_df = self._fetch_market_index(market_symbol, period)
         status = check_market_regime(index_df, breadth_pct=breadth_pct)
         status["breadth_pct"] = breadth_pct
-        status["breadth_universe_count"] = len(self.symbols)
+        status["breadth_universe_count"] = getattr(self, "_last_breadth_universe_count", len(self.symbols))
         status["breadth_participating_count"] = getattr(self, "_last_breadth_participating", 0)
         status["breadth_coverage_pct"] = (
-            status["breadth_participating_count"] / len(self.symbols) * 100.0
-            if self.symbols else 0.0
+            status["breadth_participating_count"] / status["breadth_universe_count"] * 100.0
+            if status["breadth_universe_count"] else 0.0
         )
         log.info(
             "Market regime: %s | favorable=%s | distribution_days=%s",
