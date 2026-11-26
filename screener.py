@@ -376,6 +376,8 @@ class DailyScreener:
                             "vcp_passed": bool(vcp.get("passed")),
                             "breakout": bool(br),
                             "pullback_passed": bool(pb.get("passed", False)),
+                            "pullback_candidate": bool(pb.get("candidate", False)),
+                            "pullback_turning_up": bool(pb.get("turning_up", False)),
                             "pivot_price": pivot_val,
                             "final_low": vcp.get("final_low") if vcp.get("passed") else pb.get("support_low"),
                             "pullback_entry_price": pb.get("entry_trigger_price"),
