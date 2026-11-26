@@ -215,6 +215,23 @@ class EntryDecisionTests(unittest.TestCase):
         self.assertNotEqual(too_wide.status, "جاهز")
         self.assertTrue(any("الحد الأقصى 10%" in note for note in too_wide.notes))
 
+    def test_trade_plan_rejects_non_monotonic_target_ladder(self):
+        frame = pd.DataFrame({
+            "high": [101.0] * 20,
+            "low": [99.0] * 20,
+            "close": [100.0] * 20,
+        })
+        plan = build_trade_levels(
+            "BADTARGET",
+            current_price=100.0,
+            pivot_price=100.0,
+            candles_df=frame,
+            final_low=95.0,
+            target_calculator=lambda *args: [150.0, 140.0, 160.0, 170.0, 180.0],
+        )
+        self.assertNotEqual(plan.status, "جاهز")
+        self.assertTrue(any("هدف غير صالح" in note for note in plan.notes))
+
     def test_earnings_growth_exact_minimum_thresholds_pass(self):
         result = check_earnings(
             eps_current=12.0,
