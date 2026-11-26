@@ -3,6 +3,7 @@ import unittest
 import pandas as pd
 
 from analysis.market_filter import check_market_regime
+from analysis.trend_template import check_trend_template
 from analysis.pullback import check_pullback
 from data.trade_levels import build_trade_levels
 from screener import DailyScreener
@@ -43,6 +44,22 @@ class EntryDecisionTests(unittest.TestCase):
             }),
             [],
         )
+
+    def test_market_breadth_defaults_to_unavailable_when_index_data_is_missing(self):
+        result = check_market_regime(pd.DataFrame())
+        self.assertFalse(result["market_favorable"])
+        self.assertFalse(result["breadth_ok"])
+
+    def test_trend_template_rejects_infinite_relative_strength(self):
+        close = [100.0 + i * 0.3 for i in range(252)]
+        frame = pd.DataFrame({
+            "close": close,
+            "high": [value + 1.0 for value in close],
+            "low": [value - 1.0 for value in close],
+        })
+        result = check_trend_template(frame, float("inf"))
+        self.assertFalse(result["conditions"]["relative_strength_rating_at_least_70"])
+        self.assertFalse(result["passed"])
 
     def test_market_breadth_excludes_symbols_with_failed_downloads(self):
         class FakeStorage:
