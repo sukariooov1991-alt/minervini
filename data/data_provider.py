@@ -307,12 +307,13 @@ class DataProvider:
                     and existing_count > 0
                     and (not previous_source or previous_source != source)
                 )
-                if source_changed and str(period).lower() != "2y":
+                if source_changed:
                     reason = "unknown legacy source" if not previous_source else (
                         f"source changed from {previous_source} to {source}"
                     )
                     log.warning("%s: %s; rebasing the full daily history", self.symbol, reason)
-                    frame = completed_frame(fetch("2y"))
+                    if str(period).lower() != "2y":
+                        frame = completed_frame(fetch("2y"))
                     if len(frame) < existing_count:
                         raise RuntimeError(
                             f"full source rebase returned only {len(frame)} completed candles; "
