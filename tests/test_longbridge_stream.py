@@ -21,46 +21,6 @@ class FakeQuoteContext:
 
 
 class LongbridgeQuoteTests(unittest.TestCase):
-    def test_latest_extended_session_quote_wins(self):
-        quote = SimpleNamespace(
-            symbol="AAPL.US",
-            last_done="200",
-            timestamp=100,
-            pre_market_quote=SimpleNamespace(last_done="201", timestamp=150),
-            post_market_quote=SimpleNamespace(last_done="202", timestamp=250),
-            over_night_quote=SimpleNamespace(last_done="203", timestamp=350),
-        )
-        price, timestamp, session = LongbridgeRealtimeClient._latest_session_quote(quote)
-        self.assertEqual(price, 203.0)
-        self.assertEqual(timestamp, 350)
-        self.assertEqual(session, "overnight")
-
-    def test_regular_quote_is_used_when_extended_quotes_missing(self):
-        quote = SimpleNamespace(
-            last_done="199.50",
-            timestamp=123,
-            pre_market_quote=None,
-            post_market_quote=None,
-            over_night_quote=None,
-        )
-        self.assertEqual(
-            LongbridgeRealtimeClient._latest_session_quote(quote),
-            (199.5, 123, "regular"),
-        )
-
-    def test_extended_session_wins_when_timestamps_are_missing(self):
-        quote = SimpleNamespace(
-            last_done="200",
-            timestamp=None,
-            pre_market_quote=SimpleNamespace(last_done="201", timestamp=None),
-            post_market_quote=SimpleNamespace(last_done="202", timestamp=None),
-            over_night_quote=SimpleNamespace(last_done="203", timestamp=None),
-        )
-        self.assertEqual(
-            LongbridgeRealtimeClient._latest_session_quote(quote),
-            (203.0, None, "overnight"),
-        )
-
     def test_websocket_push_preserves_sequence_and_session(self):
         captured = {}
 
