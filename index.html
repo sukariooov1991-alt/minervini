@@ -370,7 +370,7 @@
         const priceUpdated = quoteDate ? quoteDate.toLocaleTimeString('ar-SA', { hour:'2-digit', minute:'2-digit', second:'2-digit' }) : '';
         el.querySelector('.price-text').textContent = c.current_price == null ? '—' : String(c.current_price);
         const isLivePrice = c.price_source === 'Longbridge WebSocket';
-        const sourceLabel = isLivePrice ? 'سعر لحظي' : 'إغلاق يومي محفوظ';
+        const sourceLabel = isLivePrice ? 'آخر سعر من Longbridge' : 'إغلاق يومي محفوظ';
         el.querySelector('.price-sub').textContent = [
           sourceLabel,
           isLivePrice ? (c.price_session || 'regular') : '',
