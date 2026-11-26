@@ -127,7 +127,7 @@ class ScanController:
         # receive path. Coalesce pending work per symbol and recalculate setups
         # on this independent worker so one slow VCP/SQLite pass cannot stall
         # the WebSocket stream for every other symbol.
-        self._realtime_pending: dict[str, dict[str, Any]] = {}
+        self._realtime_pending: list[dict[str, Any]] = {}
         self._realtime_event = threading.Event()
         self._realtime_worker = threading.Thread(
             target=self._realtime_worker_loop,
@@ -264,10 +264,10 @@ class ScanController:
                 sym, price, quote.get("trade_session"), sequence, quote.get("timestamp"),
             )
 
-        # Keep only the newest not-yet-processed tick for each symbol. This
-        # bounds backlog during fast markets without dropping the UI price.
+        # Preserve every price tick for the requested per-tick setup recalculation.
+        # UI publication above never waits for this background work.
         with self._lock:
-            self._realtime_pending[sym] = dict(quote)
+            self._realtime_pending.append(dict(quote))
             self._realtime_event.set()
 
     def _realtime_worker_loop(self) -> None:
@@ -275,8 +275,8 @@ class ScanController:
             self._realtime_event.wait()
             self._realtime_event.clear()
             with self._lock:
-                pending = list(self._realtime_pending.values())
-                self._realtime_pending.clear()
+                pending = self._realtime_pending
+                self._realtime_pending = []
             for quote in pending:
                 try:
                     self._process_realtime_quote(quote)
