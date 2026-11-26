@@ -124,6 +124,45 @@ class PermanentDataCacheTests(unittest.TestCase):
         self.assertEqual(prior_eps, 1.25)
         self.assertEqual(prior_revenue, 100.0)
 
+    def test_failed_fundamentals_without_good_cache_is_cached_as_empty(self):
+        provider = DataProvider.__new__(DataProvider)
+        provider.symbol = "NOFUND"
+        provider.storage = self.storage
+        provider._fetch_fundamentals_dataframe = lambda: (_ for _ in ()).throw(
+            RuntimeError("temporary Yahoo failure")
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "temporary Yahoo failure"):
+            provider.get_fundamentals_dataframe()
+
+        self.assertEqual(self.storage.get_cache("fundamentals:NOFUND"), [])
+
+    def test_stale_fundamentals_failure_uses_six_hour_retry_cooldown(self):
+        cached = [{
+            "period": "2026-06-30",
+            "eps_current": 2.0,
+            "eps_year_ago": 1.5,
+            "revenue_current": 100.0,
+            "revenue_year_ago": 90.0,
+        }]
+        self.storage.set_cache("fundamentals:COOLDOWN", cached)
+        self.storage.set_cache(
+            "fundamentals_failure:COOLDOWN",
+            {"last_failed_attempt": pd.Timestamp.now(tz="UTC").isoformat()},
+        )
+        provider = DataProvider.__new__(DataProvider)
+        provider.symbol = "COOLDOWN"
+        provider.storage = self.storage
+        provider._fetch_fundamentals_dataframe = lambda: (_ for _ in ()).throw(
+            AssertionError("Yahoo should remain in cooldown")
+        )
+
+        with patch.object(self.storage, "cache_age_seconds", side_effect=[25 * 3600, 3600]):
+            result = provider.get_fundamentals_dataframe()
+
+        self.assertTrue(result.attrs["stale"])
+        self.assertEqual(len(result), 1)
+
     def test_fundamentals_fetch_uses_60_day_fiscal_matching_for_eps_and_revenue(self):
         from types import SimpleNamespace
         from unittest.mock import patch
