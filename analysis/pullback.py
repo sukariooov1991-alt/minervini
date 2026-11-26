@@ -12,15 +12,7 @@ from __future__ import annotations
 import pandas as pd
 
 
-def _ordered_frame(df: pd.DataFrame) -> pd.DataFrame:
-    out = df.copy()
-    if isinstance(out.index, pd.DatetimeIndex) and not out.index.is_monotonic_increasing:
-        out = out.sort_index()
-    if "date" in out.columns:
-        out["date"] = pd.to_datetime(out["date"], errors="coerce")
-        out = out.sort_values("date", kind="stable")
-    return out.reset_index(drop=True)
-
+from analysis.frame_utils import ordered_frame
 
 def check_pullback(df: pd.DataFrame) -> dict:
     """Detect a recent pullback and a simple current-candle turn-up.
@@ -42,7 +34,7 @@ def check_pullback(df: pd.DataFrame) -> dict:
     if df is None or getattr(df, "empty", True) or not required.issubset(df.columns):
         return result
 
-    x = _ordered_frame(df)
+    x = ordered_frame(df, reset_index=True)
     close = pd.to_numeric(x["close"], errors="coerce")
     low = pd.to_numeric(x["low"], errors="coerce")
     if len(x) < 6 or close.iloc[-6:].isna().any() or low.iloc[-6:].isna().any():
