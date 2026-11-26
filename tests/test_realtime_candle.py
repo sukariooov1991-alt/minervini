@@ -145,12 +145,12 @@ class RealtimeCandleTests(unittest.TestCase):
                 )
                 self.assertEqual(ScanController._detect_market_session(), "مغلق")
 
-                mocked_datetime.now.return_value = datetime(
+                mocked_now.return_value = datetime(
                     2026, 11, 27, 14, 0, tzinfo=ZoneInfo("America/New_York")
                 )
                 self.assertEqual(ScanController._detect_market_session(), "بعد الإغلاق")
 
-                mocked_datetime.now.return_value = datetime(
+                mocked_now.return_value = datetime(
                     2026, 11, 30, 10, 0, tzinfo=ZoneInfo("America/New_York")
                 )
                 self.assertEqual(ScanController._detect_market_session(), "مفتوح")
