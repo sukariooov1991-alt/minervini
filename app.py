@@ -1,6 +1,7 @@
 """MINERVINI web server & mobile-first dark UI (minervini_v2 structure)."""
 from __future__ import annotations
 
+import hmac
 import json
 import logging
 import math
@@ -31,6 +32,24 @@ log = logging.getLogger("minervini_v2_app")
 
 BASE_DIR = Path(__file__).resolve().parent
 app = Flask(__name__, template_folder=str(BASE_DIR))
+
+
+@app.before_request
+def require_dashboard_access():
+    """Protect the dashboard and its HTTP APIs with a Render-managed access key."""
+    access_key = os.getenv("MINERVINI_ACCESS_KEY", "").strip()
+    if not access_key:
+        return jsonify({"error": "dashboard access is not configured"}), 503
+
+    credentials = request.authorization
+    supplied_key = credentials.password if credentials and credentials.type.lower() == "basic" else ""
+    if not hmac.compare_digest(supplied_key or "", access_key):
+        response = jsonify({"error": "authentication required"})
+        response.status_code = 401
+        response.headers["WWW-Authenticate"] = 'Basic realm="MINERVINI", charset="UTF-8"'
+        return response
+    return None
+
 
 MARKET_STATES = ["مفتوح", "بعد الإغلاق", "تداول ليلي", "قبل الافتتاح", "مغلق"]
 
