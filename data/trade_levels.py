@@ -299,6 +299,7 @@ def build_trade_levels(
     targets_valid = (
         len(targets) == NUM_ZONES
         and all(np.isfinite(v) and v > entry for v, entry in zip(targets, entry_zones))
+        and all(a < b for a, b in zip(targets, targets[1:]))
     ) if entries_valid else False
     stop_beyond_entries = bool(
         shared_stop is not None
@@ -329,7 +330,7 @@ def build_trade_levels(
         notes.append("وقف الخسارة غير صالح أو ليس أسفل جميع مناطق الدخول.")
     elif not stop_within_max_loss:
         notes.append(
-            f"المخاطرة من أعلى منطقة دخول إلى الوقف تبلغ {stop_risk_pct:.2f}%؛ "
+            f"أعلى نسبة مخاطرة بين مناطق الدخول إلى الوقف تبلغ {stop_risk_pct:.2f}%؛ "
             f"تتجاوز الحد الأقصى {MAX_INITIAL_STOP_LOSS_PCT:.0f}% ولا تُعتمد الخطة."
         )
     status = "جاهز" if has_complete_levels else "غير مكتمل"
