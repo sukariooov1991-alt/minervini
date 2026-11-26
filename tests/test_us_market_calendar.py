@@ -28,7 +28,8 @@ class MarketTimeTests(unittest.TestCase):
         self.assertEqual(MarketTime.state(datetime(2026, 11, 27, 8, 0, tzinfo=ny)).session, MarketSession.PRE_MARKET)
         self.assertEqual(MarketTime.state(datetime(2026, 11, 27, 9, 30, tzinfo=ny)).session, MarketSession.REGULAR)
         self.assertEqual(MarketTime.state(datetime(2026, 11, 27, 13, 0, tzinfo=ny)).session, MarketSession.POST_MARKET)
-        self.assertEqual(MarketTime.state(datetime(2026, 11, 27, 20, 0, tzinfo=ny)).session, MarketSession.OVERNIGHT)
+        self.assertEqual(MarketTime.state(datetime(2026, 11, 30, 20, 0, tzinfo=ny)).session, MarketSession.OVERNIGHT)
+        self.assertEqual(MarketTime.state(datetime(2026, 11, 27, 20, 0, tzinfo=ny)).session, MarketSession.CLOSED)
         self.assertEqual(MarketTime.state(datetime(2026, 11, 26, 12, 0, tzinfo=ny)).session, MarketSession.CLOSED)
 
     def test_naive_datetime_is_interpreted_as_new_york(self):
