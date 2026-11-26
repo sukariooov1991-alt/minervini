@@ -79,5 +79,54 @@ class PermanentDataCacheTests(unittest.TestCase):
         self.assertEqual(provider.last_source, "SQLite daily cache")
 
 
+    def test_partial_history_uses_full_window_to_reach_300_bars(self):
+        dates = pd.bdate_range("2025-01-01", periods=260)
+        rows = [
+            (day.strftime("%Y-%m-%d"), 10.0, 11.0, 9.0, 10.5, 1000.0)
+            for day in dates
+        ]
+        self.storage.upsert_candles_bulk("PART", rows)
+        provider = DataProvider.__new__(DataProvider)
+        provider.symbol = "PART"
+        provider.storage = self.storage
+        provider.last_source = None
+        requested = []
+        provider.fetch_and_store_daily_candles = lambda period, append=False: requested.append((period, append)) or 40
+
+        self.assertEqual(provider.ensure_daily_history(initial_period="2y"), 40)
+        self.assertEqual(requested, [("2y", True)])
+
+    def test_recent_failed_refresh_is_not_mistaken_for_fresh_success(self):
+        dates = pd.bdate_range("2025-01-01", periods=300)
+        rows = [
+            (day.strftime("%Y-%m-%d"), 10.0, 11.0, 9.0, 10.5, 1000.0)
+            for day in dates
+        ]
+        self.storage.upsert_candles_bulk("FAIL", rows)
+        self.storage.set_cache(
+            "daily_refresh:FAIL",
+            {"last_failed_attempt": pd.Timestamp.now(tz="UTC").isoformat()},
+        )
+        provider = DataProvider.__new__(DataProvider)
+        provider.symbol = "FAIL"
+        provider.storage = self.storage
+        provider.last_source = None
+        with patch.object(provider, "fetch_and_store_daily_candles", side_effect=AssertionError("must respect retry cooldown")):
+            with self.assertRaisesRegex(RuntimeError, "refresh failed"):
+                provider.ensure_daily_history()
+        self.assertNotEqual(provider.last_source, "SQLite daily cache")
+
+    def test_empty_fundamentals_response_is_cached_briefly(self):
+        provider = DataProvider.__new__(DataProvider)
+        provider.symbol = "EMPTY"
+        provider.storage = self.storage
+        calls = []
+        provider._fetch_fundamentals_dataframe = lambda: calls.append(1) or pd.DataFrame()
+
+        self.assertTrue(provider.get_fundamentals_dataframe().empty)
+        self.assertTrue(provider.get_fundamentals_dataframe().empty)
+        self.assertEqual(len(calls), 1)
+
+
 if __name__ == "__main__":
     unittest.main()
