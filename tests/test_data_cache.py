@@ -345,6 +345,32 @@ class PermanentDataCacheTests(unittest.TestCase):
         self.assertEqual(stored.iloc[-1]["close"], 20.5)
         self.assertEqual(self.storage.get_cache("daily_source:SWITCH"), "Stooq")
 
+    def test_legacy_dividend_adjusted_yahoo_cache_forces_full_raw_ohlc_rebase(self):
+        dates = pd.bdate_range("2025-01-01", periods=300)
+        rows = [
+            (day.strftime("%Y-%m-%d"), 10.0, 11.0, 9.0, 10.5, 1000.0)
+            for day in dates
+        ]
+        self.storage.upsert_candles_bulk("LEGACY", rows)
+        self.storage.set_cache("daily_source:LEGACY", "Yahoo Finance")
+        provider = DataProvider.__new__(DataProvider)
+        provider.symbol = "LEGACY"
+        provider.storage = self.storage
+        provider.last_source = None
+        requested = []
+
+        def rebase(period, append=True):
+            requested.append((period, append))
+            self.storage.set_cache("daily_source:LEGACY", "Yahoo Finance (raw OHLC)")
+            return 1
+
+        provider.fetch_and_store_daily_candles = rebase
+        with patch("data.data_provider._latest_completed_session", return_value=dates[-1].date()):
+            self.assertEqual(provider.ensure_daily_history(), 1)
+
+        self.assertEqual(requested, [("2y", True)])
+        self.assertEqual(self.storage.get_cache("daily_source:LEGACY"), "Yahoo Finance (raw OHLC)")
+
     def test_permanent_300_bar_cache_skips_provider_regardless_of_cache_age(self):
         dates = pd.bdate_range("2025-01-01", periods=300)
         rows = [
