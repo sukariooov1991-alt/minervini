@@ -222,7 +222,6 @@ class DailyScreener:
         # that have not yet been refreshed in this scan.
         download_failed_symbols: set[str] = set()
         scan_checkpoint_name = "daily_universe_update"
-        completed_downloads: set[str] = set()
         if update:
             # Record per-symbol scan progress in SQLite for restart diagnostics.
             # The durable candle cache independently decides whether a provider
