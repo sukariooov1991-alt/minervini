@@ -78,6 +78,21 @@ class StorageManager:
                 updated_at TEXT DEFAULT CURRENT_TIMESTAMP
             );
             """)
+            # One-time-safe migration: trim any legacy 600-bar histories to the
+            # latest 300 rows per symbol without touching cards or event records.
+            conn.execute("""
+                DELETE FROM candles
+                WHERE rowid IN (
+                    SELECT rowid FROM (
+                        SELECT rowid,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY symbol ORDER BY date DESC
+                               ) AS position
+                        FROM candles
+                    )
+                    WHERE position > ?
+                )
+            """, (self.MAX_CANDLES,))
 
 
     def get_cache(self, cache_key: str, max_age_seconds: int | None = None) -> Any | None:
@@ -356,7 +371,7 @@ class StorageManager:
         with self._get_conn() as conn:
             rows = conn.execute(
                 "SELECT date,open,high,low,close,volume FROM candles "
-                "WHERE symbol=? ORDER BY date ASC LIMIT ?",
+                "WHERE symbol=? ORDER BY date DESC LIMIT ?",
                 (symbol.upper(), self.MAX_CANDLES),
             ).fetchall()
 
