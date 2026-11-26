@@ -866,6 +866,8 @@ class ScanController:
 
             alert_card = None
             try:
+                with self._lock:
+                    card_snapshot = dict(self._cards.get(sym) or {})
                 candles = self.storage.get_candles_df(sym)
                 live_df = candles.copy()
                 if not live_df.empty:
@@ -937,6 +939,21 @@ class ScanController:
                     vcp_info = {}
 
                 setup_passed = bool(vcp_passed or pullback_info.get("candidate", False))
+                tt_info = (
+                    check_trend_template(live_df, card_snapshot.get("rs_rating"))
+                    if not live_df.empty else {"passed": False, "conditions": {}}
+                )
+                trend_template_passed = bool(tt_info.get("passed", False))
+                trend_conditions = dict(tt_info.get("conditions") or {})
+                accumulation_passed = bool(card_snapshot.get(
+                    "accumulation_passed",
+                    next((item.get("passed", False) for item in card_snapshot.get("filters", []) if item.get("name") == "Accumulation"), False),
+                ))
+                earnings_passed = bool(card_snapshot.get(
+                    "earnings_passed",
+                    next((item.get("passed", False) for item in card_snapshot.get("filters", []) if item.get("name") == "Earnings Growth"), False),
+                ))
+                watchlist_eligible = bool(trend_template_passed and accumulation_passed and earnings_passed)
                 with self._state_cv:
                     latest_sequence = self._latest_quote_sequence.get(sym)
                     if sequence is not None and latest_sequence is not None and sequence < latest_sequence:
@@ -984,7 +1001,8 @@ class ScanController:
                         (vcp_passed and breakout_passed) or pullback_passed
                     )
                     entry_ready = bool(
-                        entry_confirmation_passed
+                        watchlist_eligible
+                        and entry_confirmation_passed
                         and market_favorable
                         and plan.get("status") == "جاهز"
                         and plan.get("within_entry_range") is True
@@ -1013,13 +1031,21 @@ class ScanController:
                         "pullback_entry_anchor": active_pivot if use_pullback_entry else None,
                         "pullback_support_low": active_low if use_pullback_entry else None,
                         "entry_confirmation_passed": entry_confirmation_passed,
+                        "trend_template_passed": trend_template_passed,
+                        "trend_conditions": trend_conditions,
+                        "accumulation_passed": accumulation_passed,
+                        "earnings_passed": earnings_passed,
+                        "watchlist_eligible": watchlist_eligible,
                         "breakout_passed": breakout_passed,
                         "entry_ready": entry_ready,
                         "passed_all_filters": entry_ready,
                         "market_favorable": market_favorable,
                         "updated_at": datetime.now(timezone.utc).isoformat(),
                     })
-                    if setup_passed and not entry_confirmation_passed:
+                    if not watchlist_eligible:
+                        card["status"] = "شروط الاتجاه أو الأساسيات لم تعد مستوفاة — بانتظار الفحص"
+                        card["stage"] = "المرحلة 1: إعادة تقييم أهلية السهم"
+                    elif setup_passed and not entry_confirmation_passed:
                         card["status"] = "النموذج قيد التأكيد — لا توجد إشارة دخول"
                         card["stage"] = "المرحلة 2: تأكيد نموذج الدخول"
                     elif setup_passed and not market_favorable:
@@ -1036,8 +1062,11 @@ class ScanController:
                         card["stage"] = "المرحلة 1: سهم مؤهل للمراقبة"
 
                     for item in card.get("filters", []):
-                        name = item.get("name")
-                        if name == "VCP Pattern":
+                        name = item.get("name", "")
+                        if name.startswith("Trend Template — "):
+                            condition_name = name.split(" — ", 1)[1]
+                            item["passed"] = bool(trend_conditions.get(condition_name, False))
+                        elif name == "VCP Pattern":
                             item["passed"] = vcp_passed
                         elif name in ("Breakout Confirmation", "VCP Breakout Confirmation"):
                             item["passed"] = breakout_passed
