@@ -138,7 +138,7 @@ class PermanentDataCacheTests(unittest.TestCase):
         self.assertEqual(stored.iloc[-1]["close"], 20.5)
         self.assertEqual(self.storage.get_cache("daily_source:SWITCH"), "Stooq")
 
-    def test_fresh_300_bar_cache_skips_historical_provider(self):
+    def test_permanent_300_bar_cache_skips_provider_regardless_of_cache_age(self):
         dates = pd.bdate_range("2025-01-01", periods=300)
         rows = [
             (day.strftime("%Y-%m-%d"), 10.0, 11.0, 9.0, 10.5, 1000.0)
@@ -146,14 +146,16 @@ class PermanentDataCacheTests(unittest.TestCase):
         ]
         self.storage.upsert_candles_bulk("MSFT", rows)
         self.storage.set_cache("daily_source:MSFT", "Yahoo Finance")
-        self.storage.set_cache("daily_refresh:MSFT", {"last_refresh": pd.Timestamp.now(tz="UTC").isoformat()})
         provider = DataProvider.__new__(DataProvider)
         provider.symbol = "MSFT"
         provider.storage = self.storage
         provider.last_source = None
-        with patch.object(provider, "fetch_and_store_daily_candles", side_effect=AssertionError("provider should not be called")):
-            self.assertEqual(provider.ensure_daily_history(), 0)
+        # The stored history already contains the latest completed session.
+        with patch("data.data_provider._latest_completed_session", return_value=dates[-1].date()):
+            with patch.object(provider, "fetch_and_store_daily_candles", side_effect=AssertionError("provider should not be called")):
+                self.assertEqual(provider.ensure_daily_history(), 0)
         self.assertEqual(provider.last_source, "SQLite daily cache")
+        self.assertEqual(len(self.storage.get_candles_df("MSFT")), 300)
 
 
     def test_partial_history_uses_full_window_to_reach_300_bars(self):
@@ -199,17 +201,17 @@ class PermanentDataCacheTests(unittest.TestCase):
         ]
         self.storage.upsert_candles_bulk("FAIL", rows)
         self.storage.set_cache(
-            "daily_refresh:FAIL",
+            "daily_refresh_failure:FAIL",
             {"last_failed_attempt": pd.Timestamp.now(tz="UTC").isoformat()},
         )
         provider = DataProvider.__new__(DataProvider)
         provider.symbol = "FAIL"
         provider.storage = self.storage
         provider.last_source = None
-        with patch.object(provider, "fetch_and_store_daily_candles", side_effect=AssertionError("must respect retry cooldown")):
-            with self.assertRaisesRegex(RuntimeError, "refresh failed"):
-                provider.ensure_daily_history()
-        self.assertNotEqual(provider.last_source, "SQLite daily cache")
+        with patch("data.data_provider._latest_completed_session", return_value=pd.Timestamp.now().date() + pd.Timedelta(days=1)):
+            with patch.object(provider, "fetch_and_store_daily_candles", side_effect=AssertionError("must respect retry cooldown")):
+                self.assertEqual(provider.ensure_daily_history(), 0)
+        self.assertEqual(provider.last_source, "SQLite daily cache (last good history)")
 
     def test_empty_fundamentals_response_is_cached_briefly(self):
         provider = DataProvider.__new__(DataProvider)
