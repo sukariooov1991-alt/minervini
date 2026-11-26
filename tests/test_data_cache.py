@@ -72,6 +72,32 @@ class PermanentDataCacheTests(unittest.TestCase):
         self.assertEqual(stored.iloc[-1]["date"], pd.Timestamp(new_dates[-1]))
         self.assertEqual(stored.iloc[0]["date"], pd.Timestamp(initial_dates[10]))
 
+    def test_initial_full_fetch_persists_only_latest_300_completed_bars(self):
+        dates = pd.bdate_range(
+            end=pd.Timestamp.now().normalize() - pd.offsets.BDay(1),
+            periods=501,
+        )
+        frame = pd.DataFrame({
+            "open": [10.0] * 501,
+            "high": [11.0] * 501,
+            "low": [9.0] * 501,
+            "close": [10.5] * 501,
+            "volume": [1000.0] * 501,
+        }, index=dates)
+        provider = DataProvider.__new__(DataProvider)
+        provider.symbol = "FIRST"
+        provider.storage = self.storage
+        provider.last_source = None
+        provider._fetch_yahoo = lambda period: frame
+
+        fetched = provider.fetch_and_store_daily_candles("2y", append=True)
+        stored = self.storage.get_candles_df("FIRST")
+        self.assertEqual(fetched, 501)
+        self.assertEqual(len(stored), 300)
+        self.assertEqual(stored.iloc[0]["date"], pd.Timestamp(dates[201]))
+        self.assertEqual(stored.iloc[-1]["date"], pd.Timestamp(dates[-1]))
+        self.assertEqual(self.storage.get_cache("daily_source:FIRST"), "Yahoo Finance")
+
     def test_provider_change_rebases_full_history_instead_of_mixing_prices(self):
         old_dates = pd.bdate_range("2024-01-01", periods=300)
         old_rows = [
