@@ -82,6 +82,7 @@ class RealtimeCandleTests(unittest.TestCase):
         self.assertEqual(card["price_session"], "post-market")
         self.assertIsNotNone(card["price_received_at"])
         self.assertEqual(controller._live_prices["ABBV"], 294.48)
+        self.assertEqual(controller._live_quote_metadata["ABBV"]["price_timestamp"], "2026-11-26T20:00:00Z")
         self.assertEqual(len(controller._realtime_pending), 1)
 
     def test_watchdog_uses_new_subscription_time_after_quiet_reconnect(self):
