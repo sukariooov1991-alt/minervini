@@ -236,6 +236,10 @@ class DailyScreener:
                         "current_symbol": batch[0] if batch else "",
                     })
 
+                # Publish completed analysis results once per five-symbol batch.
+                # This lets the realtime layer subscribe/seed quotes in groups
+                # instead of making a separate Longbridge API round-trip per stock.
+                batch_rows: list[dict] = []
                 for sym in batch:
                     if stop_callback and stop_callback():
                         stopped = True
@@ -367,18 +371,11 @@ class DailyScreener:
                             "screen_date": datetime.now(timezone.utc).date().isoformat(),
                         }
                         rows.append(row)
+                        batch_rows.append(row)
                         # Missing fundamentals remain uncertain and therefore
                         # are deliberately excluded from destructive reconciliation.
                         if fundamental_status != "UNKNOWN":
                             evaluated_symbols.add(sym)
-                        if batch_callback:
-                            try:
-                                batch_callback([row], market_status)
-                            except Exception:
-                                log.exception(
-                                    "Result publish failed for %s in batch %s",
-                                    sym, batch_no,
-                                )
                     except Exception as exc:
                         log.exception("Unexpected analysis error for symbol %s", sym)
                         failures.append({
@@ -399,6 +396,14 @@ class DailyScreener:
 
                 if stopped:
                     break
+                if batch_callback and batch_rows:
+                    try:
+                        batch_callback(batch_rows, market_status)
+                    except Exception:
+                        log.exception(
+                            "Result publish failed for batch %s (%s symbols)",
+                            batch_no, len(batch_rows),
+                        )
                 if progress_callback:
                     progress_callback({
                         "phase": "اكتملت الدفعة",
