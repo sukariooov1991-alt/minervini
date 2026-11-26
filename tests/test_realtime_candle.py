@@ -4,7 +4,7 @@ from threading import RLock
 
 import pandas as pd
 
-from app import ScanController
+from app import ScanController, _stable_pullback_levels
 
 
 class RealtimeCandleTests(unittest.TestCase):
@@ -69,6 +69,24 @@ class RealtimeCandleTests(unittest.TestCase):
         self.assertEqual(card["entry_zones"], [])
         self.assertEqual(card["targets"], [])
         self.assertIsNone(card["shared_stop_loss"])
+
+    def test_pullback_entry_anchor_is_frozen_across_price_ticks(self):
+        first_anchor, first_low = _stable_pullback_levels(
+            {},
+            {"entry_trigger_price": 100.0, "support_low": 95.0},
+            True,
+        )
+        next_anchor, next_low = _stable_pullback_levels(
+            {
+                "pullback_entry_anchor": first_anchor,
+                "pullback_support_low": first_low,
+            },
+            {"entry_trigger_price": 104.0, "support_low": 94.0},
+            True,
+        )
+        self.assertEqual((first_anchor, first_low), (100.0, 95.0))
+        self.assertEqual((next_anchor, next_low), (100.0, 95.0))
+        self.assertEqual(_stable_pullback_levels({}, {}, False), (None, None))
 
     def test_previous_completed_close_is_a_safe_reference_when_session_open_is_unknown(self):
         controller = self._controller()
