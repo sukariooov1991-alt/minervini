@@ -99,12 +99,6 @@
       flex-direction: column;
       gap: 12px;
     }
-    .card {
-      background: var(--card);
-      border: 1px solid var(--card-border);
-      border-radius: 12px;
-      padding: 14px;
-    }
     .card { padding: 0; overflow: hidden; }
     .card-header {
       display: grid;
@@ -359,7 +353,7 @@
         el.querySelector('.price-text').textContent = c.current_price == null ? '—' : String(c.current_price);
         el.querySelector('.price-sub').textContent = [c.price_session, priceUpdated].filter(Boolean).join(' • ');
         const status = el.querySelector('.status-badge');
-        status.textContent = c.entry_ready ? 'جاهز' : (c.status || 'انتظار');
+        status.textContent = c.entry_ready ? 'جاهز' : (c.setup_passed && !c.entry_confirmation_passed ? 'انتظار التأكيد' : (c.setup_passed && !c.market_favorable ? 'السوق غير مناسب' : 'مراقبة'));
         status.classList.toggle('ready', Boolean(c.entry_ready));
         el.querySelector('.stage-badge').textContent = String(c.stage || 'تجميع بانتظار النموذج').replace(/^المرحلة\\s*\\d+\\s*:\\s*/, '');
         const entries = Array.isArray(c.entry_zones) ? c.entry_zones : [];
