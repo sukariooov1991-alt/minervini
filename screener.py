@@ -318,10 +318,10 @@ class DailyScreener:
                         pivot_val = vcp.get("pivot_price")
                         br = check_breakout(df, pivot=pivot_val) if vcp.get("passed") else False
                         pb = check_pullback(df)
-                        entry_confirmation_passed = bool(
-                            (vcp.get("passed", False) and br)
-                            or pb.get("passed", False)
-                        )
+                        # Pullback is source-described but has no published
+                        # mechanical trigger/stop in the cited material.
+                        # It remains manual-review only, never EntryReady.
+                        entry_confirmation_passed = bool(vcp.get("passed", False) and br)
                         ad = accumulation_distribution_summary(df)
 
                         try:
@@ -375,11 +375,11 @@ class DailyScreener:
                             "trend_conditions": tt.get("conditions", {}),
                             "vcp_passed": bool(vcp.get("passed")),
                             "breakout": bool(br),
-                            "pullback_passed": bool(pb.get("passed", False)),
+                            "pullback_passed": False,
+                            "pullback_review_only": True,
+                            "pullback_review_reason": pb.get("reason"),
                             "pivot_price": pivot_val,
-                            "final_low": vcp.get("final_low") if vcp.get("passed") else pb.get("support_low"),
-                            "pullback_entry_price": pb.get("entry_trigger_price"),
-                            "pullback_final_low": pb.get("support_low"),
+                            "final_low": vcp.get("final_low") if vcp.get("passed") else None,
                             "entry_confirmation_passed": entry_confirmation_passed,
                             "contraction_depths": vcp.get("contraction_depths", []),
                             "volume_dry_up": vcp.get("volume_dry_up", False),
@@ -394,10 +394,7 @@ class DailyScreener:
                                 and ad.get("accumulation", False)
                                 and earnings.get("passed", False)
                             ),
-                            "setup_passed": bool(
-                                vcp.get("passed", False)
-                                or pb.get("passed", False)
-                            ),
+                            "setup_passed": bool(vcp.get("passed", False)),
                             "passed_all_filters": bool(
                                 entry_confirmation_passed
                                 and ad.get("accumulation", False)
@@ -462,7 +459,7 @@ class DailyScreener:
         self.output_path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
             "generated_at": datetime.now(timezone.utc).isoformat(),
-            "strategy": "Minervini SEPA — watchlist: Trend Template + Accumulation + Earnings; setup: VCP OR Pullback; market regime evaluated after setup",
+            "strategy": "Minervini SEPA — watchlist: Trend Template + Accumulation + Earnings; automated entry: VCP breakout only; Pullback is manual-review only pending a source-defined trigger and stop",
             "market_status": market_status,
             "failures": failures,
             "results": result.to_dict(orient="records"),
