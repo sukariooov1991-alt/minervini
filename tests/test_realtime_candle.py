@@ -254,18 +254,28 @@ class RealtimeCandleTests(unittest.TestCase):
             "pivot_price": 115.0,
             "final_low": 105.0,
             "market_favorable": True,
+            "rs_rating": 99,
+            "accumulation_passed": True,
+            "earnings_passed": True,
             "filters": [
+                {"name": "Trend Template — price_above_sma50", "passed": True},
                 {"name": "VCP Pattern", "passed": True},
                 {"name": "VCP Breakout Confirmation", "passed": True},
             ],
         }
 
         with (
+            patch("app.check_trend_template", return_value={
+                "passed": False,
+                "conditions": {"price_above_sma50": False},
+            }),
             patch("app.check_vcp", return_value={"passed": False}),
             patch("app.check_breakout", return_value=False),
         ):
             controller._refresh_restored_pullback("AAPL", card, history)
 
+        self.assertFalse(card["trend_template_passed"])
+        self.assertFalse(card["watchlist_eligible"])
         self.assertFalse(card["vcp_passed"])
         self.assertFalse(card["breakout_passed"])
         self.assertFalse(card["entry_confirmation_passed"])
@@ -273,6 +283,7 @@ class RealtimeCandleTests(unittest.TestCase):
         self.assertIsNone(card["pivot_price"])
         self.assertFalse(card["filters"][0]["passed"])
         self.assertFalse(card["filters"][1]["passed"])
+        self.assertFalse(card["filters"][2]["passed"])
 
     def test_pullback_entry_anchor_is_frozen_across_price_ticks(self):
         first_anchor, first_low = _stable_pullback_levels(
