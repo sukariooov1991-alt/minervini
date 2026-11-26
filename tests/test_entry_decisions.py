@@ -137,6 +137,31 @@ class EntryDecisionTests(unittest.TestCase):
         self.assertEqual(plan.targets, [])
 
 
+    def test_trade_plan_uses_two_to_three_risk_reward_targets_and_caps_stop_at_10_percent(self):
+        frame = pd.DataFrame({
+            "high": [101.0] * 20,
+            "low": [99.0] * 20,
+            "close": [100.0] * 20,
+        })
+        valid = build_trade_levels(
+            "TEST", current_price=100.0, pivot_price=100.0,
+            candles_df=frame, final_low=95.0,
+        )
+        self.assertEqual(valid.status, "جاهز")
+        first_risk = valid.entry_zones[0] - valid.shared_stop_loss
+        first_reward = valid.targets[0] - valid.entry_zones[0]
+        last_risk = valid.entry_zones[-1] - valid.shared_stop_loss
+        last_reward = valid.targets[-1] - valid.entry_zones[-1]
+        self.assertAlmostEqual(first_reward / first_risk, 2.0)
+        self.assertAlmostEqual(last_reward / last_risk, 3.0)
+
+        too_wide = build_trade_levels(
+            "WIDE", current_price=100.0, pivot_price=100.0,
+            candles_df=frame, final_low=80.0,
+        )
+        self.assertNotEqual(too_wide.status, "جاهز")
+        self.assertTrue(any("الحد الأقصى 10%" in note for note in too_wide.notes))
+
     def test_earnings_growth_exact_minimum_thresholds_pass(self):
         result = check_earnings(
             eps_current=12.0,
