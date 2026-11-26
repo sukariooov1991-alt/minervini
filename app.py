@@ -419,6 +419,17 @@ class ScanController:
                 if symbol in self._live_prices
                 else "Stored daily data (Daily Close)"
             ),
+            # A restored card's persisted WebSocket timestamp is historical,
+            # not proof that a live quote is still arriving after restart.
+            "price_session": (
+                card.get("price_session") if symbol in self._live_prices else "daily-close"
+            ),
+            "price_timestamp": (
+                card.get("price_timestamp") if symbol in self._live_prices else None
+            ),
+            "price_received_at": (
+                card.get("price_received_at") if symbol in self._live_prices else None
+            ),
             "pivot_price": plan["pivot_price"],
             "final_low": plan["final_low"],
             "entry_zones": plan["entry_zones"],
@@ -616,6 +627,7 @@ class ScanController:
                     "price_source": "Longbridge WebSocket",
                     "price_session": quote.get("trade_session") or "regular",
                     "price_timestamp": quote.get("timestamp"),
+                    "price_received_at": datetime.now(timezone.utc).isoformat(),
                     "updated_at": datetime.now(timezone.utc).isoformat(),
                 })
             should_log = now_mono - self._ws_last_log_at.get(sym, 0.0) >= 15.0
@@ -899,6 +911,7 @@ class ScanController:
                         ),
                         "price_session": quote.get("trade_session") or "regular",
                         "price_timestamp": quote.get("timestamp"),
+                        "price_received_at": datetime.now(timezone.utc).isoformat(),
                         "pivot_price": plan["pivot_price"],
                         "final_low": plan["final_low"],
                         "entry_zones": plan["entry_zones"],
@@ -981,6 +994,7 @@ class ScanController:
                         )
                         card["price_session"] = quote.get("trade_session") or "regular"
                         card["price_timestamp"] = quote.get("timestamp")
+                        card["price_received_at"] = datetime.now(timezone.utc).isoformat()
                         card["updated_at"] = datetime.now(timezone.utc).isoformat()
                         within_range, range_note = evaluate_entry_range(price, card.get("pivot_price"))
                         card["within_entry_range"] = within_range
