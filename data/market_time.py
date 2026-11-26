@@ -168,17 +168,37 @@ class MarketTime:
         close_dt = datetime.combine(day, close_time, tzinfo=NEW_YORK) if trading else None
         clock = now.timetz().replace(tzinfo=None)
 
-        if not trading:
+        # Longbridge's overnight session runs 20:00-04:00 ET Sunday through
+        # Thursday and belongs to the NEXT trading date. Friday night and
+        # holiday eves without a following trading day are not overnight sessions.
+        overnight_after_midnight = (
+            time(0, 0) <= clock < cls.OVERNIGHT_END
+            and trading
+            and (day - timedelta(days=1)).weekday() in {6, 0, 1, 2, 3}
+        )
+        overnight_before_midnight = (
+            clock >= cls.POST_MARKET_END
+            and day.weekday() in {6, 0, 1, 2, 3}
+            and is_trading_day(day + timedelta(days=1))
+        )
+
+        if overnight_after_midnight or overnight_before_midnight:
+            session = MarketSession.OVERNIGHT
+            if overnight_before_midnight:
+                day += timedelta(days=1)
+        elif not trading:
             session = MarketSession.CLOSED
         elif cls.PRE_MARKET_OPEN <= clock < cls.REGULAR_OPEN:
             session = MarketSession.PRE_MARKET
         elif cls.REGULAR_OPEN <= clock < close_time:
             session = MarketSession.REGULAR
-        elif close_time <= clock < cls.POST_MARKET_END:
-            session = MarketSession.POST_MARKET
         else:
-            # Label only: actual overnight execution depends on broker/product support.
-            session = MarketSession.OVERNIGHT
+            post_market_end = time(17, 0) if close_time == time(13, 0) else cls.POST_MARKET_END
+            session = (
+                MarketSession.POST_MARKET
+                if close_time <= clock < post_market_end
+                else MarketSession.CLOSED
+            )
 
         events: list[tuple[datetime, str]] = []
         if trading:
