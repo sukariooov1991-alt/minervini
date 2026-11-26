@@ -1456,7 +1456,9 @@ class ScanController:
         })
         # The quote worker may already have consumed this tick while no card
         # existed. Requeue it now so technical state and trade levels catch up.
-        self._realtime_pending.append(dict(latest_quote))
+        queued_quote = dict(latest_quote)
+        queued_quote.setdefault("_received_at", latest_meta.get("price_received_at"))
+        self._realtime_pending.append(queued_quote)
         self._realtime_event.set()
         return True
 
