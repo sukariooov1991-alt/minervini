@@ -33,6 +33,32 @@ app = Flask(__name__, template_folder=str(BASE_DIR))
 MARKET_STATES = ["مفتوح", "بعد الإغلاق", "تداول ليلي", "قبل الافتتاح"]
 
 
+def _stable_pullback_levels(
+    card: dict[str, Any], pullback_info: dict[str, Any], enabled: bool
+) -> tuple[float | None, float | None]:
+    """Freeze Pullback's first confirmed trigger/support instead of chasing each tick."""
+    if not enabled:
+        return None, None
+
+    def positive(value):
+        try:
+            number = float(value)
+            return number if math.isfinite(number) and number > 0 else None
+        except (TypeError, ValueError):
+            return None
+
+    anchor = positive(card.get("pullback_entry_anchor"))
+    if anchor is None:
+        anchor = positive(pullback_info.get("entry_trigger_price"))
+
+    support = positive(card.get("pullback_support_low"))
+    if anchor is None or support is None or support >= anchor:
+        support = positive(pullback_info.get("support_low"))
+    if anchor is None or support is None or support >= anchor:
+        return anchor, None
+    return anchor, support
+
+
 class ScanController:
     def __init__(self, db_path: str = "stock_data.db", output_path: str = "watchlist.json"):
         self.db_path = db_path
@@ -160,6 +186,8 @@ class ScanController:
                 "pullback_passed": False,
                 "pullback_candidate": False,
                 "pullback_turning_up": False,
+                "pullback_entry_anchor": None,
+                "pullback_support_low": None,
                 "vcp_passed": False,
                 "breakout_passed": False,
                 "setup_passed": False,
@@ -189,6 +217,8 @@ class ScanController:
                 "pullback_passed": False,
                 "pullback_candidate": False,
                 "pullback_turning_up": False,
+                "pullback_entry_anchor": None,
+                "pullback_support_low": None,
                 "setup_passed": False,
                 "entry_confirmation_passed": False,
                 "entry_ready": False,
@@ -222,6 +252,8 @@ class ScanController:
             "pullback_passed": pullback_passed,
             "pullback_candidate": pullback_candidate,
             "pullback_turning_up": bool(pullback.get("turning_up", False)),
+            "pullback_entry_anchor": pullback_anchor,
+            "pullback_support_low": pullback_support,
         })
 
         current_price = float(
@@ -229,14 +261,11 @@ class ScanController:
             or pd.to_numeric(history["close"], errors="coerce").dropna().iloc[-1]
         )
         entry_confirmation = bool(vcp_confirmed or pullback_passed)
-        active_pivot = (
-            card.get("pivot_price") if vcp_confirmed
-            else (pullback.get("entry_trigger_price") if pullback_passed else None)
+        pullback_anchor, pullback_support = _stable_pullback_levels(
+            card, pullback, pullback_passed and not vcp_confirmed
         )
-        active_low = (
-            card.get("final_low") if vcp_confirmed
-            else (pullback.get("support_low") if pullback_passed else None)
-        )
+        active_pivot = card.get("pivot_price") if vcp_confirmed else pullback_anchor
+        active_low = card.get("final_low") if vcp_confirmed else pullback_support
         plan = build_trade_levels(
             symbol=symbol,
             current_price=current_price,
@@ -629,11 +658,13 @@ class ScanController:
                     # remain explicitly unavailable rather than fabricated.
                     use_vcp_entry = bool(vcp_passed and breakout_passed)
                     use_pullback_entry = bool(pullback_passed and not use_vcp_entry)
-                    active_pivot = pivot if use_vcp_entry else (
-                        pullback_anchor if use_pullback_entry else None
+                    stable_pullback_anchor, stable_pullback_low = _stable_pullback_levels(
+                        card, pullback_info, use_pullback_entry
                     )
-                    active_low = vcp_info.get("final_low") if use_vcp_entry else (
-                        pullback_low if use_pullback_entry else None
+                    active_pivot = pivot if use_vcp_entry else stable_pullback_anchor
+                    active_low = (
+                        vcp_info.get("final_low") if use_vcp_entry
+                        else stable_pullback_low
                     )
                     plan = build_trade_levels(
                         symbol=sym,
@@ -681,6 +712,8 @@ class ScanController:
                         "pullback_passed": pullback_passed,
                         "pullback_candidate": bool(pullback_info.get("candidate", False)),
                         "pullback_turning_up": bool(pullback_info.get("turning_up", False)),
+                        "pullback_entry_anchor": active_pivot if use_pullback_entry else None,
+                        "pullback_support_low": active_low if use_pullback_entry else None,
                         "entry_confirmation_passed": entry_confirmation_passed,
                         "breakout_passed": breakout_passed,
                         "entry_ready": entry_ready,
@@ -976,12 +1009,11 @@ class ScanController:
 
         use_vcp_entry = bool(vcp_passed and br)
         use_pullback_entry = bool(pullback_passed and not use_vcp_entry)
-        pivot_price = row.get("pivot_price") if use_vcp_entry else (
-            pullback_info.get("entry_trigger_price") if use_pullback_entry else None
+        pullback_anchor, pullback_support = _stable_pullback_levels(
+            {}, pullback_info, use_pullback_entry
         )
-        final_low = row.get("final_low") if use_vcp_entry else (
-            pullback_info.get("support_low") if use_pullback_entry else None
-        )
+        pivot_price = row.get("pivot_price") if use_vcp_entry else pullback_anchor
+        final_low = row.get("final_low") if use_vcp_entry else pullback_support
         plan = (
             build_trade_levels(
                 symbol=sym,
@@ -1053,6 +1085,8 @@ class ScanController:
             "pullback_passed": pullback_passed,
             "pullback_candidate": pullback_candidate,
             "pullback_turning_up": bool(pullback_info.get("turning_up", False)),
+            "pullback_entry_anchor": pullback_anchor if use_pullback_entry else None,
+            "pullback_support_low": pullback_support if use_pullback_entry else None,
             "market_favorable": bool(market_favorable),
             "entry_ready": entry_ready,
             "passed_all_filters": entry_ready,
