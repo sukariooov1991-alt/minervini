@@ -1,3 +1,5 @@
+import base64
+import os
 import unittest
 from unittest.mock import patch
 
@@ -6,7 +8,14 @@ from app import app, controller
 
 class ScanAPIValidationTests(unittest.TestCase):
     def setUp(self):
+        self.access_key_patcher = patch.dict(
+            os.environ, {"MINERVINI_ACCESS_KEY": "test-secret"}
+        )
+        self.access_key_patcher.start()
+        self.addCleanup(self.access_key_patcher.stop)
         self.client = app.test_client()
+        token = base64.b64encode(b"admin:test-secret").decode("ascii")
+        self.client.environ_base["HTTP_AUTHORIZATION"] = f"Basic {token}"
 
     def test_empty_symbol_list_is_rejected_instead_of_starting_full_scan(self):
         with patch.object(controller, "start_scan") as start_scan:
