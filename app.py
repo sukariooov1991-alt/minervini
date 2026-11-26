@@ -228,6 +228,23 @@ class ScanController:
 
         # Serialize callbacks per symbol to prevent stale calculations winning.
         with symbol_lock:
+            # Publish the quote immediately. Technical recalculation can be
+            # comparatively expensive and must never delay the live price shown
+            # by the card/SSE stream.
+            with self._state_cv:
+                self._ws_connected = True
+                self._live_prices[sym] = price
+                live_card = self._cards.get(sym)
+                if live_card is not None:
+                    live_card.update({
+                        "current_price": round(price, 4),
+                        "price_source": "Longbridge WebSocket",
+                        "price_session": quote.get("trade_session") or "regular",
+                        "price_timestamp": quote.get("timestamp"),
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                    })
+                self._notify_state_changed_locked()
+
             alert_card = None
             try:
                 candles = self.storage.get_candles_df(sym)
