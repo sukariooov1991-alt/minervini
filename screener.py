@@ -74,8 +74,12 @@ class DailyScreener:
         total = len(self.symbols)
         for i, sym in enumerate(self.symbols, 1):
             try:
-                n = self._get_provider(sym).ensure_daily_history(initial_period=period)
-                log.info("[%s/%s] %s: stored %s bars", i, total, sym, n)
+                refreshed = self._get_provider(sym).ensure_daily_history(initial_period=period)
+                cached_count = len(self.storage.get_candles_df(sym))
+                log.info(
+                    "[%s/%s] %s: refresh_rows=%s cache_bars=%s",
+                    i, total, sym, refreshed, cached_count,
+                )
             except Exception as exc:
                 failures.append({"symbol": sym, "error": str(exc)})
                 log.warning("%s: %s", sym, exc)
@@ -203,10 +207,14 @@ class DailyScreener:
                 # decides whether this symbol needs a provider refresh. Always
                 # run ensure_daily_history so a stale cache cannot be skipped.
                 try:
-                    n = self._get_provider(sym).ensure_daily_history(initial_period=period)
+                    refreshed = self._get_provider(sym).ensure_daily_history(initial_period=period)
                     self.storage.mark_scan_symbol_completed(scan_checkpoint_name, sym)
                     completed_downloads.add(sym)
-                    log.info("[%s/%s] %s: stored %s bars", i, total, sym, n)
+                    cached_count = len(self.storage.get_candles_df(sym))
+                    log.info(
+                        "[%s/%s] %s: refresh_rows=%s cache_bars=%s",
+                        i, total, sym, refreshed, cached_count,
+                    )
                 except Exception as exc:
                     download_failed_symbols.add(sym)
                     failures.append({"symbol": sym, "error": str(exc), "phase": "download"})
