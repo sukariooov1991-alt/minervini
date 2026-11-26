@@ -1,4 +1,6 @@
 """Minervini Trend Template: eight yes/no conditions."""
+import math
+
 import pandas as pd
 
 
@@ -49,9 +51,16 @@ def check_trend_template(df: pd.DataFrame, rs_rating: float) -> dict:
     low52 = float(df_clean["low"].tail(252).min())
     high52 = float(df_clean["high"].tail(252).max())
 
-    if low52 <= 0 or high52 <= 0 or price <= 0:
-        result["failed"] = ["invalid non-positive prices"]
+    if not all(math.isfinite(value) and value > 0 for value in (
+        price, ma50, ma150, ma200, ma200_1m_ago, low52, high52,
+    )):
+        result["failed"] = ["invalid or non-finite OHLC/average values"]
         return result
+
+    try:
+        rs_value = float(rs_rating)
+    except (TypeError, ValueError):
+        rs_value = float("nan")
 
     conditions = {
         "price_above_150_and_200": price > ma150 and price > ma200,
@@ -62,9 +71,7 @@ def check_trend_template(df: pd.DataFrame, rs_rating: float) -> dict:
         "price_at_least_30_percent_above_52w_low": price >= low52 * 1.30,
         "price_within_25_percent_of_52w_high": price >= high52 * 0.75,
         "relative_strength_rating_at_least_70": (
-            pd.notna(rs_rating) and pd.api.types.is_number(rs_rating)
-            and float(rs_rating) >= 70.0 and pd.notna(float(rs_rating))
-            and abs(float(rs_rating)) != float("inf")
+            math.isfinite(rs_value) and rs_value >= 70.0
         ),
     }
     result["conditions"] = conditions
