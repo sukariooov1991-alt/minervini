@@ -1497,9 +1497,9 @@ def api_start_scan():
     if isinstance(symbols, str):
         symbols = [symbols]
     if symbols is not None:
-        if not isinstance(symbols, list):
-            return jsonify({"error": "symbols must be an array of ticker symbols"}), 400
-        normalized = [str(sym).upper().strip() for sym in symbols]
+        if not isinstance(symbols, list) or any(not isinstance(sym, str) for sym in symbols):
+            return jsonify({"error": "symbols must be an array of ticker strings"}), 400
+        normalized = [sym.upper().strip() for sym in symbols]
         if (
             not normalized
             or len(normalized) > 500
