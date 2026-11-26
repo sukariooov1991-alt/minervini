@@ -145,6 +145,7 @@ class MarketTime:
     PRE_MARKET_OPEN = time(4, 0)
     REGULAR_OPEN = time(9, 30)
     POST_MARKET_END = time(20, 0)
+    OVERNIGHT_END = time(4, 0)
 
     @staticmethod
     def now() -> datetime:
