@@ -14,7 +14,7 @@ import pandas as pd
 
 class StorageManager:
     MAX_CANDLES = 300
-    MAX_EVENTS = 50
+    MAX_EVENTS = 500
 
     def __init__(self, db_path: str = "stock_data.db"):
         self.db_path = str(db_path)
@@ -360,9 +360,15 @@ class StorageManager:
         if event_type not in {"news", "earnings"}:
             raise ValueError("event_type must be news or earnings")
         with self._get_conn() as conn:
+            encoded = json.dumps(payload, ensure_ascii=False, default=str, sort_keys=True)
             conn.execute(
-                "INSERT INTO events(symbol,type,timestamp,payload) VALUES(?,?,?,?)",
-                (symbol.upper(), event_type, timestamp, json.dumps(payload, default=str)),
+                """INSERT INTO events(symbol,type,timestamp,payload)
+                   SELECT ?,?,?,? WHERE NOT EXISTS (
+                     SELECT 1 FROM events
+                     WHERE symbol=? AND type=? AND timestamp=? AND payload=?
+                   )""",
+                (symbol.upper(), event_type, timestamp, encoded,
+                 symbol.upper(), event_type, timestamp, encoded),
             )
             conn.execute(
                 """DELETE FROM events WHERE symbol=? AND type=? AND id NOT IN (
