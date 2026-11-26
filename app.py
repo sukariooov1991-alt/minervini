@@ -1355,6 +1355,27 @@ class ScanController:
         card["smart_reading"] = self._build_smart_reading_from_card(card, df)
         return card
 
+    def _merge_latest_quote_into_card_locked(self, card: dict[str, Any]) -> bool:
+        """Preserve and reprocess a tick that arrived before its scan card existed."""
+        symbol = str(card.get("symbol") or "").upper()
+        latest_quote = self._latest_quote_payloads.get(symbol)
+        if latest_quote is None:
+            return False
+        latest_price = self._live_prices.get(symbol)
+        if latest_price is None:
+            return False
+        latest_meta = self._live_quote_metadata.get(symbol, {})
+        card.update({
+            "current_price": round(float(latest_price), 4),
+            "price_source": "Longbridge WebSocket",
+            **latest_meta,
+        })
+        # The quote worker may already have consumed this tick while no card
+        # existed. Requeue it now so technical state and trade levels catch up.
+        self._realtime_pending.append(dict(latest_quote))
+        self._realtime_event.set()
+        return True
+
     def _update_scan_progress(self, progress: dict[str, Any]) -> None:
         total = int(progress.get("total") or 0)
         completed = int(progress.get("completed") or 0)
@@ -1396,25 +1417,8 @@ class ScanController:
                 with self._state_cv:
                     for card in qualified:
                         symbol = str(card["symbol"]).upper()
-                        # A WebSocket tick can arrive while this batch is being
-                        # analysed. Do not let the older daily-close snapshot
-                        # overwrite that newer tick when publishing the card.
-                        latest_quote = self._latest_quote_payloads.get(symbol)
-                        if latest_quote is not None:
-                            latest_price = self._live_prices.get(symbol)
-                            latest_meta = self._live_quote_metadata.get(symbol, {})
-                            if latest_price is not None:
-                                card.update({
-                                    "current_price": round(float(latest_price), 4),
-                                    "price_source": "Longbridge WebSocket",
-                                    **latest_meta,
-                                })
-                                # The quote worker may already have consumed
-                                # this tick before the card existed. Requeue the
-                                # latest tick so setup/levels are recalculated
-                                # against the newly published card.
-                                self._realtime_pending.append(dict(latest_quote))
-                                self._realtime_event.set()
+                        # A tick can arrive before the scan card is published.
+                        self._merge_latest_quote_into_card_locked(card)
                         self._cards[symbol] = card
                         try:
                             self.storage.save_watchlist_card(card)
