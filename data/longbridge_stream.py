@@ -123,18 +123,26 @@ class LongbridgeRealtimeClient:
             def _handle_quote(symbol: str, event: Any) -> None:
                 if self.on_quote is None:
                     return
-                last_done = _valid_price(_value(event, "last_done"))
+
+                # WebSocket quote events can carry distinct pre-market,
+                # post-market and overnight quote objects. Prefer the newest
+                # timestamped session quote instead of blindly using the
+                # regular-session last_done, which may be stale after hours.
+                last_done, quote_timestamp, quote_session = self._latest_session_quote(event)
                 if last_done is None:
                     return
+
+                event_session = _session_label(_value(event, "trade_session"))
                 payload = {
                     "symbol": self._denormalize_symbol(symbol),
                     "raw_symbol": symbol,
                     "last_done": last_done,
-                    "timestamp": _value(event, "timestamp"),
+                    "timestamp": quote_timestamp or _value(event, "timestamp"),
                     "volume": _value(event, "volume"),
                     "turnover": _value(event, "turnover"),
-                    "trade_session": _session_label(_value(event, "trade_session")),
+                    "trade_session": quote_session if quote_session != "regular" else (event_session or quote_session),
                     "trade_status": _value(event, "trade_status"),
+                    "prev_close": _value(event, "prev_close"),
                     "source": "longbridge_websocket",
                 }
                 self.on_quote(payload)
