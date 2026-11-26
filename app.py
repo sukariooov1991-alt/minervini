@@ -188,6 +188,7 @@ class ScanController:
         self._latest_quote_timestamp: dict[str, float] = {}
         self._processed_quote_timestamp: dict[str, float] = {}
         self._last_ws_reconnect_monotonic = 0.0
+        self._last_ws_subscription_monotonic: float | None = None
         self._ws_last_log_at: dict[str, float] = {}
         # Quote callbacks must stay short: the SDK dispatches pushes on its
         # receive path. Recalculate setups on this independent worker so one
@@ -379,11 +380,13 @@ class ScanController:
                     continue
                 symbols = sorted(self._cards)
                 last_push = self.lb_client.last_message_monotonic
+                last_subscription = self._last_ws_subscription_monotonic
+                stream_reference = last_push if last_push is not None else last_subscription
                 last_reconnect = self._last_ws_reconnect_monotonic
                 stale_stream = bool(
                     symbols
-                    and last_push is not None
-                    and now_mono - last_push > stale_after_seconds
+                    and stream_reference is not None
+                    and now_mono - stream_reference > stale_after_seconds
                     and now_mono - last_reconnect > 120
                 )
                 if stale_stream:
@@ -397,12 +400,16 @@ class ScanController:
                         stale_after_seconds, len(symbols),
                     )
                     self.lb_client.reconnect(symbols)
+                    with self._lock:
+                        self._last_ws_subscription_monotonic = time.monotonic()
                     with self._state_cv:
                         self._ws_connected = False
                         self._notify_state_changed_locked()
                     continue
                 restored = self.lb_client.ensure_subscriptions(symbols)
                 if restored:
+                    with self._lock:
+                        self._last_ws_subscription_monotonic = time.monotonic()
                     log.warning(
                         "Longbridge watchdog bulk-subscribed missing symbols: %s",
                         ",".join(restored),
@@ -423,6 +430,9 @@ class ScanController:
             return
         try:
             newly_subscribed = self.lb_client.subscribe(clean)
+            if newly_subscribed:
+                with self._lock:
+                    self._last_ws_subscription_monotonic = time.monotonic()
             log.info(
                 "Longbridge WebSocket subscription sync: requested=%s newly_subscribed=%s (%s)",
                 len(clean), len(newly_subscribed), context,
