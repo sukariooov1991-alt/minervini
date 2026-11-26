@@ -209,7 +209,6 @@ class DailyScreener:
                 try:
                     refreshed = self._get_provider(sym).ensure_daily_history(initial_period=period)
                     self.storage.mark_scan_symbol_completed(scan_checkpoint_name, sym)
-                    completed_downloads.add(sym)
                     cached_count = len(self.storage.get_candles_df(sym))
                     log.info(
                         "[%s/%s] %s: refresh_rows=%s cache_bars=%s",
