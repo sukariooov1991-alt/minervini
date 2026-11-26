@@ -244,7 +244,9 @@
     function renderScanProgress(data) {
       const p = data.scan_progress || {};
       const box = document.getElementById('scanProgress');
-      box.classList.add('visible');
+      const hasProgress = Boolean(data.running || (p.phase && p.phase !== 'idle'));
+      box.classList.toggle('visible', hasProgress);
+      if (!hasProgress) return;
       const percent = Math.max(0, Math.min(100, Number(p.percent) || 0));
       document.getElementById('scanProgressFill').style.width = percent + '%';
       document.getElementById('scanPercent').textContent = percent + '%';
