@@ -108,15 +108,14 @@ class PermanentDataCacheTests(unittest.TestCase):
     def test_prior_year_quarter_matching_allows_53_week_fiscal_calendar(self):
         from data.data_provider import _find_nearest_prior_period
 
-        # The comparable fiscal quarter can fall more than 45 days from the
-        # calendar-year target in a 52/53-week reporting calendar.
+        # A 53-week fiscal year can shift the comparable quarter by seven days.
         eps = pd.Series(
             [1.25, 9.99],
-            index=[pd.Timestamp("2025-08-02"), pd.Timestamp("2025-10-01")],
+            index=[pd.Timestamp("2025-09-23"), pd.Timestamp("2025-10-01")],
         )
         revenue = pd.Series(
             [100.0, 999.0],
-            index=[pd.Timestamp("2025-08-02"), pd.Timestamp("2025-10-01")],
+            index=[pd.Timestamp("2025-09-23"), pd.Timestamp("2025-10-01")],
         )
         prior_eps, prior_revenue = _find_nearest_prior_period(
             eps, revenue, pd.Timestamp("2025-09-30")
@@ -163,7 +162,7 @@ class PermanentDataCacheTests(unittest.TestCase):
         self.assertTrue(result.attrs["stale"])
         self.assertEqual(len(result), 1)
 
-    def test_fundamentals_fetch_uses_60_day_fiscal_matching_for_eps_and_revenue(self):
+    def test_fundamentals_fetch_matches_53_week_prior_period_for_eps_and_revenue(self):
         from types import SimpleNamespace
         from unittest.mock import patch
 
@@ -172,7 +171,7 @@ class PermanentDataCacheTests(unittest.TestCase):
         provider.ticker = SimpleNamespace(quarterly_financials=pd.DataFrame(
             {
                 pd.Timestamp("2026-09-30"): [2.0, 120.0],
-                pd.Timestamp("2025-08-02"): [1.0, 100.0],
+                pd.Timestamp("2025-09-23"): [1.0, 100.0],
             },
             index=["Diluted EPS", "Total Revenue"],
         ))
@@ -207,17 +206,34 @@ class PermanentDataCacheTests(unittest.TestCase):
 
         eps = pd.Series(
             [1.25, 9.99],
-            index=[pd.Timestamp("2025-08-01"), pd.Timestamp("2025-10-01")],
+            index=[pd.Timestamp("2025-09-29"), pd.Timestamp("2025-10-01")],
         )
         revenue = pd.Series(
             [100.0, 999.0],
-            index=[pd.Timestamp("2025-08-01"), pd.Timestamp("2025-10-01")],
+            index=[pd.Timestamp("2025-09-29"), pd.Timestamp("2025-10-01")],
         )
         prior_eps, prior_revenue = _find_nearest_prior_period(
-            eps, revenue, pd.Timestamp("2025-09-30"), max_window_days=60
+            eps, revenue, pd.Timestamp("2025-09-30"), max_window_days=14
         )
         self.assertEqual(prior_eps, 1.25)
         self.assertEqual(prior_revenue, 100.0)
+
+    def test_prior_year_quarter_matching_rejects_an_unrelated_earlier_quarter(self):
+        from data.data_provider import _find_nearest_prior_period
+
+        eps = pd.Series(
+            [1.25, 9.99],
+            index=[pd.Timestamp("2025-08-02"), pd.Timestamp("2025-10-01")],
+        )
+        revenue = pd.Series(
+            [100.0, 999.0],
+            index=[pd.Timestamp("2025-08-02"), pd.Timestamp("2025-10-01")],
+        )
+        prior_eps, prior_revenue = _find_nearest_prior_period(
+            eps, revenue, pd.Timestamp("2025-09-30")
+        )
+        self.assertTrue(pd.isna(prior_eps))
+        self.assertTrue(pd.isna(prior_revenue))
 
     def test_prior_eps_and_revenue_must_share_the_same_reported_quarter(self):
         from data.data_provider import _find_nearest_prior_period
