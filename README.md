@@ -28,9 +28,9 @@ Nasdaq's public endpoint does not require a key, but it is an undocumented publi
 The SQLite database on Render's persistent disk is the source of truth for daily history and cached research data. The cache is independent of watchlist cards; deleting a card never deletes its candles, fundamentals, news, or earnings events.
 
 - **Daily OHLCV:** retain the latest 300 completed daily candles per symbol (including the market index). The first load fetches enough history to fill the cache. Later scans read from SQLite and do not re-download the two-year history. When the cache is stale, the provider fetches a short recent window, upserts by (symbol, date), and trims the oldest rows to 300. The current, unfinished US session candle is excluded.
-- **Refresh cadence:** a successful daily-history refresh is reused for 20 hours. The next eligible scan refreshes the recent 10-day window, allowing missed sessions to be filled without replacing the stored history. Failed refreshes preserve the last good candles.
-- **Quarterly fundamentals / earnings:** cache the latest quarterly EPS and revenue data for 7 days. When refreshed, reported-quarter records are also persisted in the events table and deduplicated.
-- **News:** refresh news for stocks that qualify for the watchlist every 6 hours. Both the cached response and individual articles are stored in SQLite. Duplicate articles are ignored.
+- **Refresh cadence:** a successful daily-history refresh is reused for 20 hours, with one additional check after the regular US close if the latest completed candle is still from an earlier session. The next eligible scan refreshes the recent 10-day window, allowing missed sessions to be filled without replacing the stored history. Failed refreshes preserve the last good candles and are retried after a 15-minute cooldown; failed attempts do not reset the successful-refresh clock.
+- **Quarterly fundamentals / earnings:** cache valid quarterly EPS and revenue data for 7 days. Empty/unavailable responses are cached for 6 hours to avoid repeating failed requests on every scan. When refreshed, reported-quarter records are also persisted in the events table and deduplicated.
+- **News:** refresh non-empty news for stocks that qualify for the watchlist every 6 hours; empty/error responses are retried after 1 hour. Both the cached response and individual articles are stored in SQLite. Duplicate articles are ignored.
 - **Retention:** the events table retains up to 500 latest records per symbol and event type. All these tables are separate from watchlist_cards.
 
 A scan therefore uses local 300-bar history and cached quarterly fundamentals; external providers are called only when the relevant cache needs a refresh or is missing.
@@ -38,3 +38,26 @@ A scan therefore uses local 300-bar history and cached quarterly fundamentals; e
 ## Pullback entry path
 
 Pullback is evaluated independently from VCP. The screener keeps a recent-decline candidate visible, then waits for the current candle to turn upward before confirming a Pullback entry. Because Minervini's published material does not define one universal numeric turn-up trigger or fixed stop, the current candle test is an explicit implementation proxy (close above its open and previous close), not a quoted Minervini formula. The pullback's recent low anchors the structural risk level. Saved cards are revalidated on startup so old Pullback triggers cannot remain active after the rule changes. Trade targets require a valid calculated ATR; the application does not substitute a made-up percentage when ATR is unavailable.
+
+
+## Strategy source alignment and implementation boundaries
+
+The application distinguishes rules explicitly described by Mark Minervini from numeric proxies required to automate chart interpretation. A numeric threshold below that is not stated in the cited material is a project setting, not a claim about a universal Minervini rule.
+
+### Source-defined principles
+
+- **Trend Template:** all eight Stage 2 criteria are applied, including price above the 50/150/200-day averages in the specified order, a rising 200-day average, at least 30% above the 52-week low, within 25% of the 52-week high, and RS rank at least 70. Source: *Trade Like a Stock Market Wizard*, Chapter 5.
+- **VCP:** volatility contracts from left to right, usually across 2–6 contractions; successive contractions are roughly half the previous one, with reasonable variation; volume dries up at key points; the entry is the pivot break with expanding volume. Source: *Trade Like a Stock Market Wizard*, Chapter 10.
+- **Pullback:** Minervini waits for price to begin turning upward and does not buy while it is falling. Pullbacks can occur within a base, at a prior breakout level, or occasionally at the 20/50-day averages after a breakout. The source does not prescribe one universal numeric turn-up formula. Source: *Momentum Masters* (2015), Minervini interview, and *Trade Like a Stock Market Wizard*, Chapter 11.
+- **Risk:** establish a predetermined stop before entry; keep the maximum loss no greater than 10%; maintain at least a 2:1 win/loss ratio and aim for 3:1. Stop placement and profit-taking are tied to actual trading results and market conditions, not a universal ATR target formula. Source: *Trade Like a Stock Market Wizard*, Chapters 12–13.
+
+### Explicit project heuristics (not presented as Minervini's exact rules)
+
+- RS rating is a percentile rank calculated across this repository's current 493-symbol universe; it is not the proprietary IBD RS Rating.
+- VCP swing-pivot detection, the 0.75 maximum contraction ratio, 10% final-contraction cap, and 75%/55% volume-dry-up thresholds are mechanical screening proxies for the qualitative VCP footprint.
+- Breakout confirmation's 1.35x volume, 0.65 close-location, and 0.25% buffer are project thresholds for "expanding volume" and a confirmed pivot break.
+- Earnings growth minimums (20% EPS and 10% revenue), accumulation/distribution windows and ratios, market breadth minimum (25%), and five-distribution-day limit are project filters; they are not stated as universal fixed thresholds in the cited Minervini source material.
+- Pullback's five-bar decline window and live-price turn-up candle test are operational proxies. When the official session open is not available from PushQuote, the live candle uses the previous completed close as its reference instead of treating an arbitrary first tick as the open.
+- Five entry tranches, ATR-based target projections, and the structural stop calculation are application trade-planning outputs. They are not represented as Minervini's prescribed five-target or fixed ATR method. ATR is calculated using Wilder smoothing.
+
+These distinctions are deliberate: preserve the source-defined concepts, keep necessary automation parameters visible, and avoid attributing implementation choices to the author.
