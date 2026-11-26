@@ -74,7 +74,9 @@ class LongbridgeQuoteTests(unittest.TestCase):
             app_key="key", app_secret="secret", access_token="token",
             on_quote=lambda payload: captured.setdefault("quotes", []).append(payload),
         )
-        with patch.dict(sys.modules, {"longbridge": ModuleType("longbridge"), "longbridge.openapi": fake_module}):
+        fake_package = ModuleType("longbridge")
+        fake_package.__path__ = []
+        with patch.dict(sys.modules, {"longbridge": fake_package, "longbridge.openapi": fake_module}):
             client.connect()
 
         event = SimpleNamespace(
@@ -115,7 +117,9 @@ class LongbridgeQuoteTests(unittest.TestCase):
             app_key="key", app_secret="secret", access_token="token",
             on_quote=lambda payload: captured.setdefault("quotes", []).append(payload),
         )
-        with patch.dict(sys.modules, {"longbridge": ModuleType("longbridge"), "longbridge.openapi": fake_module}):
+        fake_package = ModuleType("longbridge")
+        fake_package.__path__ = []
+        with patch.dict(sys.modules, {"longbridge": fake_package, "longbridge.openapi": fake_module}):
             client.connect()
         captured["callback"]("AAPL.US", SimpleNamespace(volume=1000, sequence=987654322))
         self.assertEqual(captured.get("quotes", []), [])
