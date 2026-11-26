@@ -1340,12 +1340,14 @@ class ScanController:
             download_errors = sum(1 for failure in failures if failure.get("phase") == "download")
             analysis_errors = sum(1 for failure in failures if failure.get("phase") == "analysis_error")
             fundamentals_warnings = sum(1 for failure in failures if failure.get("phase") == "fundamentals")
+            history_warnings = sum(1 for failure in failures if failure.get("phase") == "history")
             log.info(
-                "Scan finished: %s result rows, %s download errors, %s analysis exceptions, %s fundamentals warnings",
+                "Scan finished: %s result rows, %s download errors, %s analysis exceptions, %s fundamentals warnings, %s history warnings",
                 0 if result_df is None else len(result_df),
                 download_errors,
                 analysis_errors,
                 fundamentals_warnings,
+                history_warnings,
             )
         except Exception as exc:
             log.exception("Scan cycle failed")
