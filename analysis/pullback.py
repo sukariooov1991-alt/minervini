@@ -51,7 +51,10 @@ def check_pullback(df: pd.DataFrame, **_unused) -> dict:
     # Look only at the five bars preceding the current/evolving candle when
     # identifying the pullback; the current candle is the potential turn-up.
     prior_closes = close.iloc[-6:-1]
-    prior_decline = bool(prior_closes.diff().lt(0).any())
+    prior_decline = bool(
+        prior_closes.diff().lt(0).any()
+        and prior_closes.iloc[-1] < prior_closes.max()
+    )
     support_low = float(low.iloc[-6:].min())
     current_close = float(close.iloc[-1])
     previous_close = float(close.iloc[-2])
