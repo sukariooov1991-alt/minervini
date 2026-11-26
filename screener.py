@@ -134,7 +134,6 @@ class DailyScreener:
             # RS needs 253 closes to compare the latest close with the close 252 sessions earlier.
             if len(df) >= 253:
                 frames[sym] = df
-            if len(df) >= 253:
                 prices[sym] = df.set_index("date")["close"]
 
         if not prices:
@@ -228,9 +227,7 @@ class DailyScreener:
             # Record per-symbol scan progress in SQLite for restart diagnostics.
             # The durable candle cache independently decides whether a provider
             # refresh is due, so completed symbols are still checked cheaply.
-            completed_downloads = self.storage.get_scan_checkpoint(
-                scan_checkpoint_name, self.symbols
-            )
+            self.storage.get_scan_checkpoint(scan_checkpoint_name, self.symbols)
             for i, sym in enumerate(self.symbols, 1):
                 if stop_callback and stop_callback():
                     stopped = True
