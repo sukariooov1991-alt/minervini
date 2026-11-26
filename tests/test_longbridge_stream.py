@@ -128,6 +128,8 @@ class LongbridgeQuoteTests(unittest.TestCase):
         client = LongbridgeRealtimeClient()
         client._ctx = ctx
         client._sub_type_quote = quote_type
+        # The adapter's in-memory set is authoritative for this context life.
+        client._subscribed_symbols = ["AAPL.US"]
 
         added = client.ensure_subscriptions(["AAPL", "MSFT"])
         self.assertEqual(added, ["MSFT"])
