@@ -3,9 +3,10 @@ import unittest
 import pandas as pd
 
 from analysis.market_filter import check_market_regime
+from analysis.earnings import check_earnings
 from analysis.trend_template import check_trend_template
 from analysis.pullback import check_pullback
-from data.trade_levels import build_trade_levels
+from data.trade_levels import build_trade_levels, compute_atr
 from screener import DailyScreener
 
 
@@ -135,6 +136,29 @@ class EntryDecisionTests(unittest.TestCase):
         self.assertEqual(plan.entry_zones, [])
         self.assertEqual(plan.targets, [])
 
+
+    def test_earnings_growth_exact_minimum_thresholds_pass(self):
+        result = check_earnings(
+            eps_current=12.0,
+            eps_year_ago=10.0,
+            revenue_current=110.0,
+            revenue_year_ago=100.0,
+            min_eps_growth_pct=20.0,
+            min_revenue_growth_pct=10.0,
+        )
+        self.assertTrue(result["passed"])
+        self.assertAlmostEqual(result["eps_growth_pct"], 20.0)
+        self.assertAlmostEqual(result["revenue_growth_pct"], 10.0)
+
+    def test_atr_uses_wilder_smoothing(self):
+        frame = pd.DataFrame({
+            "high": [11.0, 12.0, 13.0, 14.0],
+            "low": [9.0, 8.0, 7.0, 6.0],
+            "close": [10.0, 10.0, 10.0, 10.0],
+        })
+        # True ranges are 2, 4, 6, 8; Wilder seed is 4, then
+        # ((4 * 2) + 8) / 3 = 16/3.
+        self.assertAlmostEqual(compute_atr(frame, period=3), 16.0 / 3.0)
 
 if __name__ == "__main__":
     unittest.main()
