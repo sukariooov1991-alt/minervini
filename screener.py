@@ -23,6 +23,7 @@ from data.storage_manager import StorageManager
 from data.sp500_symbols import SP500_SYMBOLS
 
 log = logging.getLogger("minervini_v2")
+MIN_UNIVERSE_DATA_COVERAGE = 0.80
 
 
 FUNDAMENTAL_FIELDS = (
@@ -136,6 +137,15 @@ class DailyScreener:
                 frames[sym] = df
                 prices[sym] = df.set_index("date")["close"]
 
+        eligible_universe = max(0, len(self.symbols) - len(excluded))
+        required_coverage = max(1, math.ceil(eligible_universe * MIN_UNIVERSE_DATA_COVERAGE))
+        if len(prices) < required_coverage:
+            log.error(
+                "Relative-strength universe coverage is insufficient: valid=%s required=%s universe=%s; "
+                "refusing to rank a small biased subset",
+                len(prices), required_coverage, eligible_universe,
+            )
+            return {}, frames
         if not prices:
             return {}, frames
 
@@ -156,6 +166,7 @@ class DailyScreener:
         participating = 0
         above = 0
         excluded = {str(symbol).upper().strip() for symbol in (exclude_symbols or set())}
+        eligible_universe = max(0, len(self.symbols) - len(excluded))
         for symbol in self.symbols:
             if symbol.upper().strip() in excluded:
                 continue
@@ -174,6 +185,15 @@ class DailyScreener:
                 above += int(last > sma50)
             except Exception as exc:
                 log.debug("Breadth skipped %s: %s", symbol, exc)
+        self._last_breadth_participating = participating
+        required_coverage = max(1, math.ceil(eligible_universe * MIN_UNIVERSE_DATA_COVERAGE))
+        if participating < required_coverage:
+            log.error(
+                "Market-breadth coverage is insufficient: valid=%s required=%s universe=%s; "
+                "breadth remains UNKNOWN",
+                participating, required_coverage, eligible_universe,
+            )
+            return None
         return above / participating * 100.0 if participating else None
 
     def check_market(
@@ -184,6 +204,11 @@ class DailyScreener:
         status = check_market_regime(index_df, breadth_pct=breadth_pct)
         status["breadth_pct"] = breadth_pct
         status["breadth_universe_count"] = len(self.symbols)
+        status["breadth_participating_count"] = getattr(self, "_last_breadth_participating", 0)
+        status["breadth_coverage_pct"] = (
+            status["breadth_participating_count"] / len(self.symbols) * 100.0
+            if self.symbols else 0.0
+        )
         log.info(
             "Market regime: %s | favorable=%s | distribution_days=%s",
             status.get("regime"), status.get("market_favorable"),
@@ -365,8 +390,16 @@ class DailyScreener:
                         })
                         continue
 
+                    if sym not in rs or not math.isfinite(float(rs.get(sym, float("nan")))):
+                        failures.append({
+                            "symbol": sym,
+                            "error": "Relative-strength rating unavailable or universe coverage below threshold",
+                            "phase": "relative_strength",
+                        })
+                        continue
+
                     try:
-                        rating = rs.get(sym, float("nan"))
+                        rating = rs[sym]
                         tt = check_trend_template(df, rating)
                         if not tt["passed"]:
                             # A valid completed TT failure is a definitive
