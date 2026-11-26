@@ -110,7 +110,7 @@ class PermanentDataCacheTests(unittest.TestCase):
         with patch("data.data_provider._wait_for_yahoo_request_slot"):
             frame = provider._fetch_fundamentals_dataframe()
 
-        self.assertEqual(len(frame), 1)
+        self.assertEqual(frame.iloc[0]["period"], pd.Timestamp("2026-09-30"))
         self.assertEqual(frame.iloc[0]["eps_year_ago"], 1.0)
         self.assertEqual(frame.iloc[0]["revenue_year_ago"], 100.0)
 
