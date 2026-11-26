@@ -258,7 +258,8 @@ class DataProvider:
         return _normalise_ohlcv(frame)
 
     def fetch_and_store_daily_candles(self, period: str = "2y") -> int:
-        # Daily-history fallback order: Yahoo -> Stooq -> Nasdaq -> Alpha Vantage.\n        # Longbridge is intentionally reserved for realtime WebSocket quotes only.
+        # Daily-history fallback order: Yahoo -> Stooq -> Nasdaq -> Alpha Vantage.
+        # Longbridge is intentionally reserved for realtime WebSocket quotes only.
         providers = (
             ("Yahoo Finance", lambda: self._fetch_yahoo(period)),
             ("Stooq", lambda: self._fetch_stooq(period)),
