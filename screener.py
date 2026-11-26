@@ -388,11 +388,18 @@ class DailyScreener:
                                     "phase": "fundamentals",
                                 })
                             missing_fields = _missing_fundamental_fields(latest)
+                            stale_fundamentals = bool(fdf.attrs.get("stale", False))
 
-                            if fdf.empty or missing_fields:
+                            if fdf.empty or stale_fundamentals or missing_fields:
                                 earnings = {"passed": False}
                                 fundamental_status = "UNKNOWN"
-                                if not fdf.empty and missing_fields:
+                                if stale_fundamentals:
+                                    failures.append({
+                                        "symbol": sym,
+                                        "error": "Quarterly fundamentals refresh failed; retained statements are stale",
+                                        "phase": "fundamentals",
+                                    })
+                                elif not fdf.empty and missing_fields:
                                     failures.append({
                                         "symbol": sym,
                                         "error": "Incomplete quarterly fundamentals; missing or invalid: "
