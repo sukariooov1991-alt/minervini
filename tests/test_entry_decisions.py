@@ -215,6 +215,19 @@ class EntryDecisionTests(unittest.TestCase):
         self.assertNotEqual(too_wide.status, "جاهز")
         self.assertTrue(any("الحد الأقصى 10%" in note for note in too_wide.notes))
 
+    def test_trade_plan_rejects_wrong_number_of_custom_entry_zones_without_crashing(self):
+        plan = build_trade_levels(
+            symbol="AAPL",
+            current_price=100.0,
+            pivot_price=100.0,
+            candles_df=self._index(),
+            final_low=95.0,
+            entry_calculator=lambda *args: [100.0, 101.0, 102.0, 103.0, 104.0, 105.0],
+        )
+        self.assertEqual(len(plan.entry_zones), 6)
+        self.assertEqual(plan.targets, [])
+        self.assertNotEqual(plan.status, "جاهز")
+
     def test_trade_plan_rejects_non_monotonic_target_ladder(self):
         frame = pd.DataFrame({
             "high": [101.0] * 20,
