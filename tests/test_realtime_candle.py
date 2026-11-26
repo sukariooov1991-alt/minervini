@@ -89,6 +89,10 @@ class RealtimeCandleTests(unittest.TestCase):
         self.assertEqual(controller._live_quote_metadata["ABBV"]["price_timestamp"], "2026-11-26T20:00:00+00:00")
         self.assertEqual(controller._live_quote_metadata["ABBV"]["price_tag"], 1)
         self.assertEqual(len(controller._realtime_pending), 1)
+        self.assertEqual(
+            controller._realtime_pending[0]["_received_at"],
+            controller._live_quote_metadata["ABBV"]["price_received_at"],
+        )
 
     def test_scan_card_publication_preserves_latest_fractional_websocket_price(self):
         controller = ScanController.__new__(ScanController)
