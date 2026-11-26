@@ -319,6 +319,31 @@ class PermanentDataCacheTests(unittest.TestCase):
         self.assertTrue(provider.get_fundamentals_dataframe().empty)
         self.assertEqual(len(calls), 1)
 
+    def test_cached_fundamentals_backfill_missing_durable_earnings_event(self):
+        period = "2026-09-30"
+        self.storage.set_cache("fundamentals:CACHE", [{
+            "period": period,
+            "eps_current": 2.0,
+            "eps_year_ago": 1.5,
+            "revenue_current": 100.0,
+            "revenue_year_ago": 90.0,
+        }])
+        provider = DataProvider.__new__(DataProvider)
+        provider.symbol = "CACHE"
+        provider.storage = self.storage
+        provider._fetch_fundamentals_dataframe = lambda: self.fail(
+            "fresh cached fundamentals must not trigger a provider request"
+        )
+
+        with patch.object(self.storage, "cache_age_seconds", return_value=60):
+            frame = provider.get_fundamentals_dataframe()
+
+        self.assertEqual(len(frame), 1)
+        events = self.storage.get_events("CACHE", "earnings", limit=10)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["timestamp"], period)
+        self.assertEqual(events[0]["payload"]["eps_current"], 2.0)
+
 
 if __name__ == "__main__":
     unittest.main()
