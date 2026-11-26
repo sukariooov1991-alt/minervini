@@ -19,6 +19,7 @@ from analysis.accumulation_distribution import accumulation_distribution_summary
 from analysis.earnings import check_earnings
 from analysis.market_filter import check_market_regime
 from data.data_provider import DataProvider
+from data.market_time import MarketTime
 from data.storage_manager import StorageManager
 from data.sp500_symbols import SP500_SYMBOLS
 
@@ -529,7 +530,7 @@ class DailyScreener:
                                 and earnings.get("passed", False)
                                 and market_favorable
                             ),
-                            "screen_date": datetime.now(timezone.utc).date().isoformat(),
+                            "screen_date": MarketTime.now().date().isoformat(),
                         }
                         if row["watchlist_eligible"]:
                             try:
