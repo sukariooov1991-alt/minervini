@@ -1,119 +1,93 @@
-"""Pullback filter: looks for support, volatility contraction, and a turn back up."""
-import numpy as np
+"""Pullback detection with an explicit, minimal price-turn-up proxy.
+
+Minervini describes buying a pullback only after price begins turning upward.
+His cited material does not prescribe a universal numeric trigger, moving-average
+tolerance, ATR contraction ratio, or fixed stop. This module therefore avoids
+those invented filters. The operational proxy used here is transparent:
+a recent decline in completed closes, followed by a current candle closing
+above both its open and the previous close. The setup remains independent of VCP.
+"""
+from __future__ import annotations
+
 import pandas as pd
 
 
-def _prepare_df(df: pd.DataFrame) -> pd.DataFrame:
+def _ordered_frame(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
     if isinstance(out.index, pd.DatetimeIndex) and not out.index.is_monotonic_increasing:
         out = out.sort_index()
+    if "date" in out.columns:
+        out["date"] = pd.to_datetime(out["date"], errors="coerce")
+        out = out.sort_values("date", kind="stable")
     return out.reset_index(drop=True)
 
 
-def _compute_atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
-    high = pd.to_numeric(df["high"], errors="coerce")
-    low = pd.to_numeric(df["low"], errors="coerce")
-    close = pd.to_numeric(df["close"], errors="coerce")
-    prev_close = close.shift(1)
+def check_pullback(df: pd.DataFrame, **_unused) -> dict:
+    """Detect a recent pullback and a simple current-candle turn-up.
 
-    tr = pd.concat(
-        [
-            high - low,
-            (high - prev_close).abs(),
-            (low - prev_close).abs(),
-        ],
-        axis=1,
-    ).max(axis=1)
-    return tr.rolling(period, min_periods=period).mean()
-
-
-def check_pullback(
-    df: pd.DataFrame,
-    ma_period: int = 50,
-    proximity_pct: float = 3.0,
-    require_turn_up: bool = True,
-    require_volatility_contraction: bool = True,
-    atr_period: int = 14,
-    max_atr_ratio: float = 0.85,
-) -> dict:
-    out = {
+    This is an operational interpretation of Minervini's qualitative guidance,
+    not a claim that he specified this exact candle formula.
+    """
+    result = {
         "passed": False,
-        "near_average": False,
+        "candidate": False,
+        "entry_eligible": False,
         "turning_up": False,
-        "volatility_contracted": not require_volatility_contraction,
+        "pullback_detected": False,
+        "entry_trigger_price": None,
+        "support_low": None,
+        "reason": "insufficient or invalid price history",
     }
-    min_len = max(ma_period + 5, atr_period + 20)
-    if df is None or "close" not in df.columns or len(df) < min_len:
-        out["reason"] = "insufficient close history"
-        return out
+    required = {"close", "low"}
+    if df is None or getattr(df, "empty", True) or not required.issubset(df.columns):
+        return result
 
-    x = _prepare_df(df)
+    x = _ordered_frame(df)
     close = pd.to_numeric(x["close"], errors="coerce")
-    if close.iloc[-5:].isna().any():
-        out["reason"] = "missing recent close data"
-        return out
+    low = pd.to_numeric(x["low"], errors="coerce")
+    if len(x) < 6 or close.iloc[-6:].isna().any() or low.iloc[-6:].isna().any():
+        return result
 
-    ma = close.rolling(ma_period, min_periods=ma_period).mean()
-    if pd.isna(ma.iloc[-1]):
-        out["reason"] = "insufficient valid data for MA"
-        return out
+    # Look only at the five bars preceding the current/evolving candle when
+    # identifying the pullback; the current candle is the potential turn-up.
+    prior_closes = close.iloc[-6:-1]
+    prior_decline = bool(prior_closes.diff().lt(0).any())
+    support_low = float(low.iloc[-6:].min())
+    current_close = float(close.iloc[-1])
+    previous_close = float(close.iloc[-2])
 
-    price = float(close.iloc[-1])
-    average = float(ma.iloc[-1])
+    if "open" in x.columns and pd.notna(x["open"].iloc[-1]):
+        current_open = float(pd.to_numeric(x["open"].iloc[-1], errors="coerce"))
+        turning_up = current_close > current_open and current_close > previous_close
+    else:
+        turning_up = current_close > previous_close
 
-    recent_closes = close.iloc[-3:]
-    recent_mas = ma.iloc[-3:]
-    within_band = ((recent_closes - recent_mas).abs() / recent_mas * 100.0) <= proximity_pct
-    near = bool(
-        (recent_mas > 0).all()
-        and within_band.any()
-        and price >= average * (1.0 - proximity_pct / 100.0)
-    )
-
-    recent_window = close.iloc[-5:-1]
-    had_dip = bool((recent_window < recent_window.shift(1)).iloc[1:].any())
-    # Confirm a reclaim of the prior session high after the pullback.
-    previous_high = (
-        float(pd.to_numeric(x["high"].iloc[-2], errors="coerce"))
-        if "high" in x.columns and pd.notna(x["high"].iloc[-2]) else float("nan")
-    )
-    turn = bool(np.isfinite(previous_high) and price > previous_high and had_dip)
-
-    vol_contracted = True
-    atr_ratio = float("nan")
-    if require_volatility_contraction:
-        if not {"high", "low"}.issubset(x.columns):
-            out["reason"] = "high/low columns required for ATR contraction check"
-            return out
-        atr = _compute_atr(x, period=atr_period)
-        recent_atr = float(atr.iloc[-1]) if pd.notna(atr.iloc[-1]) else float("nan")
-        prior_atr = float(atr.iloc[-20:-5].mean()) if len(atr) >= 20 else float("nan")
-        if pd.notna(recent_atr) and pd.notna(prior_atr) and prior_atr > 0:
-            atr_ratio = recent_atr / prior_atr
-            vol_contracted = bool(atr_ratio <= max_atr_ratio)
-        else:
-            vol_contracted = False
-
-    support_low = (
-        float(pd.to_numeric(x["low"].iloc[-5:], errors="coerce").min())
-        if "low" in x.columns and pd.to_numeric(x["low"].iloc[-5:], errors="coerce").notna().all()
-        else float("nan")
-    )
-    out.update({
-        "near_average": bool(near),
-        "turning_up": turn,
-        "volatility_contracted": vol_contracted,
-        "moving_average": average,
-        "last_close": price,
-        "entry_trigger_price": previous_high if np.isfinite(previous_high) else None,
-        "support_low": support_low if np.isfinite(support_low) and support_low > 0 else None,
-        "atr_ratio": atr_ratio,
+    result.update({
+        "candidate": prior_decline,
+        "pullback_detected": prior_decline,
+        "turning_up": bool(turning_up),
+        "support_low": support_low if support_low > 0 else None,
+        "last_close": current_close,
+        "entry_trigger_price": current_close if prior_decline and turning_up else None,
+        "passed": bool(prior_decline and turning_up and support_low > 0),
+        "entry_eligible": bool(prior_decline and turning_up and support_low > 0),
     })
-    out["passed"] = bool(
-        near and (turn or not require_turn_up) and vol_contracted
-    )
-    return out
+    if not prior_decline:
+        result["reason"] = "no recent pullback detected in the preceding five bars"
+    elif not turning_up:
+        result["reason"] = "pullback detected; waiting for price to turn upward"
+    elif support_low <= 0:
+        result["reason"] = "invalid pullback low; no trade levels can be anchored"
+    else:
+        result["reason"] = (
+            "pullback followed by a positive current candle; "
+            "turn-up is an operational proxy, not a source-defined numeric rule"
+        )
+    return result
 
 
 def filter_pullbacks(prices: dict, **kwargs) -> list:
-    return [symbol for symbol, df in prices.items() if check_pullback(df, **kwargs)["passed"]]
+    return [
+        symbol for symbol, frame in prices.items()
+        if check_pullback(frame, **kwargs)["passed"]
+    ]
