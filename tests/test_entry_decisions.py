@@ -22,17 +22,39 @@ class EntryDecisionTests(unittest.TestCase):
         threshold = check_market_regime(index, breadth_pct=25.0)
         self.assertTrue(threshold["breadth_ok"])
 
-    def test_pullback_requires_reclaim_of_previous_high(self):
-        n = 80
-        close = [100.0] * (n - 6) + [99.0, 98.5, 98.0, 98.4, 98.7, 99.0]
-        high = [v + 0.4 for v in close]
-        low = [v - 0.4 for v in close]
-        frame = pd.DataFrame({"close": close, "high": high, "low": low, "volume": [100000.0] * n})
-        result = check_pullback(frame, require_volatility_contraction=False, proximity_pct=5.0)
-        self.assertFalse(result["passed"])
+    def _pullback_frame(self, current_open, current_close):
+        close = [100.0] * 74 + [99.5, 99.0, 98.7, 98.2, 98.0]
+        low = [value - 0.5 for value in close]
+        high = [value + 0.5 for value in close]
+        close.append(current_close)
+        low.append(min(current_open, current_close) - 0.4)
+        high.append(max(current_open, current_close) + 0.4)
+        open_prices = [value for value in close[:-1]] + [current_open]
+        return pd.DataFrame({
+            "open": open_prices,
+            "high": high,
+            "low": low,
+            "close": close,
+            "volume": [100000.0] * len(close),
+        })
+
+    def test_pullback_is_independent_and_passes_after_turn_up(self):
+        frame = self._pullback_frame(98.1, 98.8)
+        result = check_pullback(frame)
+        self.assertTrue(result["candidate"])
+        self.assertTrue(result["pullback_detected"])
+        self.assertTrue(result["turning_up"])
+        self.assertTrue(result["passed"])
+        self.assertEqual(result["entry_trigger_price"], 98.8)
+        self.assertLess(result["support_low"], result["entry_trigger_price"])
+
+    def test_pullback_waits_while_current_candle_is_falling(self):
+        frame = self._pullback_frame(98.5, 98.1)
+        result = check_pullback(frame)
+        self.assertTrue(result["candidate"])
         self.assertFalse(result["turning_up"])
-        self.assertIsNotNone(result["entry_trigger_price"])
-        self.assertIsNotNone(result["support_low"])
+        self.assertFalse(result["passed"])
+        self.assertIsNone(result["entry_trigger_price"])
 
     def test_trade_plan_without_anchor_is_never_complete(self):
         frame = pd.DataFrame({
