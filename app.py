@@ -160,6 +160,8 @@ class ScanController:
                 "pullback_passed": False,
                 "pullback_candidate": False,
                 "pullback_turning_up": False,
+                "vcp_passed": False,
+                "breakout_passed": False,
                 "setup_passed": False,
                 "entry_confirmation_passed": False,
                 "entry_ready": False,
@@ -175,7 +177,7 @@ class ScanController:
                 "stage": "المرحلة 1: انتظار بيانات صالحة",
             })
             for item in card.get("filters", []):
-                if item.get("name") in {"Pullback Setup", "Pullback Entry Confirmation"}:
+                if item.get("name") in {"VCP Pattern", "VCP Breakout Confirmation", "Pullback Setup", "Pullback Entry Confirmation"}:
                     item["passed"] = False
                 elif item.get("name") == "Market Regime Favorable":
                     item["pending"] = True
