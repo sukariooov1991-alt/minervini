@@ -602,9 +602,10 @@ class DailyScreener:
             )
 
         self.output_path.parent.mkdir(parents=True, exist_ok=True)
+        safe_result = result.replace([math.inf, -math.inf], float("nan"))
         result_records = (
-            result.astype(object).where(pd.notna(result), None).to_dict(orient="records")
-            if not result.empty else []
+            safe_result.astype(object).where(pd.notna(safe_result), None).to_dict(orient="records")
+            if not safe_result.empty else []
         )
         payload = {
             "generated_at": datetime.now(timezone.utc).isoformat(),
