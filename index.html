@@ -278,7 +278,8 @@
       const completed = Number(p.completed) || 0;
       const symbolTotal = Math.floor(total / 2);
       const downloaded = Math.min(symbolTotal, completed);
-      const analyzed = Math.max(0, Math.min(symbolTotal, completed - symbolTotal));      let details = total
+      const analyzed = Math.max(0, Math.min(symbolTotal, completed - symbolTotal));
+      let details = total
         ? 'تحميل البيانات: ' + downloaded + '/' + symbolTotal + ' — تحليل الأسهم: ' + analyzed + '/' + symbolTotal + ' — الدفعة ' + (p.batch || 1)
         : '';
       if (p.batch_total) details += ' — إجمالي الدفعات: ' + p.batch_total;
