@@ -167,6 +167,7 @@ class LongbridgeQuoteTests(unittest.TestCase):
             client.connect()
         captured["callback"]("AAPL.US", SimpleNamespace(volume=1000, sequence=987654322))
         self.assertEqual(captured.get("quotes", []), [])
+        self.assertIsNotNone(client.last_message_monotonic)
 
     def test_subscription_sync_is_idempotent_and_adds_only_missing_symbols(self):
         quote_type = object()
