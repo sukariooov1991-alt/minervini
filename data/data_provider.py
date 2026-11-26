@@ -23,10 +23,6 @@ _YAHOO_NEXT_REQUEST_AT = 0.0
 _YAHOO_MIN_REQUEST_INTERVAL = 1.25
 
 
-class YahooRateLimitError(RuntimeError):
-    """Legacy compatibility exception; market-data failover now handles Yahoo failures."""
-
-
 def _wait_for_yahoo_request_slot() -> None:
     global _YAHOO_NEXT_REQUEST_AT
     with _YAHOO_REQUEST_LOCK:
