@@ -109,6 +109,16 @@ class ScanController:
         except Exception:
             log.exception("Failed to recover watchlist cards from last screener output")
 
+        # Refresh persisted explanations from the latest stored OHLCV history.
+        # This prevents old vendor-centric smart_reading strings surviving a restart.
+        for symbol, card in list(self._cards.items()):
+            try:
+                history = self.storage.get_candles_df(symbol)
+                card["smart_reading"] = self._build_smart_reading_from_card(card, history)
+                self.storage.save_watchlist_card(card)
+            except Exception:
+                log.exception("Failed to refresh startup technical reading for %s", symbol)
+
         self._realtime_locks: dict[str, threading.Lock] = {}
         self._ws_seen_symbols: set[str] = set()
         self._ws_connected: bool = False
