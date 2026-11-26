@@ -73,6 +73,17 @@ def _quote_timestamp_order(value: Any) -> float | None:
         return None
 
 
+def _quote_timestamp_iso(value: Any) -> str | None:
+    """Serialize the provider's Unix/UTC quote time unambiguously for the browser."""
+    timestamp = _quote_timestamp_order(value)
+    if timestamp is None:
+        return None
+    try:
+        return datetime.fromtimestamp(timestamp, tz=timezone.utc).isoformat()
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
 def _latest_realtime_activity(
     last_push: float | None, last_subscription: float | None
 ) -> float | None:
@@ -488,6 +499,10 @@ class ScanController:
                 getattr(self, "_live_quote_metadata", {}).get(symbol, {}).get("price_received_at")
                 if symbol in self._live_prices else None
             ),
+            "price_tag": (
+                getattr(self, "_live_quote_metadata", {}).get(symbol, {}).get("price_tag")
+                if symbol in self._live_prices else None
+            ),
             "pivot_price": plan["pivot_price"],
             "final_low": plan["final_low"],
             "entry_zones": plan["entry_zones"],
@@ -666,7 +681,8 @@ class ScanController:
         received_at = datetime.now(timezone.utc).isoformat()
         quote_metadata = {
             "price_session": quote.get("trade_session") or "regular",
-            "price_timestamp": quote.get("timestamp"),
+            "price_timestamp": _quote_timestamp_iso(quote.get("timestamp")),
+            "price_tag": quote.get("tag"),
             "price_received_at": received_at,
         }
         with self._state_cv:
@@ -1001,7 +1017,8 @@ class ScanController:
                             "Longbridge WebSocket"
                         ),
                         "price_session": quote.get("trade_session") or "regular",
-                        "price_timestamp": quote.get("timestamp"),
+                        "price_timestamp": _quote_timestamp_iso(quote.get("timestamp")),
+                        "price_tag": quote.get("tag"),
                         "price_received_at": datetime.now(timezone.utc).isoformat(),
                         "pivot_price": plan["pivot_price"],
                         "final_low": plan["final_low"],
