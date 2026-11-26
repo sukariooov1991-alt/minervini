@@ -199,18 +199,9 @@ class DailyScreener:
                 if stop_callback and stop_callback():
                     stopped = True
                     break
-                if sym in completed_downloads:
-                    processed = i
-                    if progress_callback:
-                        progress_callback({
-                            "phase": "استئناف تحميل البيانات",
-                            "completed": processed,
-                            "total": progress_total,
-                            "batch": (i - 1) // batch_size + 1,
-                            "batch_total": (total + batch_size - 1) // batch_size,
-                            "current_symbol": sym,
-                        })
-                    continue
+                # Checkpoints preserve restart visibility, but the cache itself
+                # decides whether this symbol needs a provider refresh. Always
+                # run ensure_daily_history so a stale cache cannot be skipped.
                 try:
                     n = self._get_provider(sym).ensure_daily_history(initial_period=period)
                     self.storage.mark_scan_symbol_completed(scan_checkpoint_name, sym)
