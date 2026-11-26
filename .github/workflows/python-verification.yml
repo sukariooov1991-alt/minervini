@@ -102,5 +102,5 @@ jobs:
           rating = 99
           trend = check_trend_template(stored.set_index("date"), rating)
           assert trend["passed"], trend
-          print("Provider order, Longbridge fallback, 300-bar storage, RS and trend-template smoke checks passed.")
+          print("Daily provider failover, 300-bar storage, RS and trend-template smoke checks passed.")
           PY
