@@ -109,7 +109,7 @@ class RealtimeCandleTests(unittest.TestCase):
                 "pullback_entry_anchor": first_anchor,
                 "pullback_support_low": first_low,
             },
-            {"entry_trigger_price": 104.0, "support_low": 94.0},
+            {"entry_trigger_price": 104.0, "support_low": 96.0},
             True,
         )
         self.assertEqual((first_anchor, first_low), (100.0, 95.0))
