@@ -26,6 +26,7 @@ from data.telegram_notifier import TelegramNotifier
 from screener import DailyScreener
 from analysis.vcp import check_vcp, check_breakout
 from analysis.pullback import check_pullback
+from analysis.trend_template import check_trend_template
 import pandas as pd
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -339,6 +340,9 @@ class ScanController:
                 "pullback_turning_up": False,
                 "pullback_entry_anchor": None,
                 "pullback_support_low": None,
+                "trend_template_passed": False,
+                "trend_conditions": {},
+                "watchlist_eligible": False,
                 "vcp_passed": False,
                 "breakout_passed": False,
                 "setup_passed": False,
@@ -387,7 +391,9 @@ class ScanController:
                 "stage": "المرحلة 1: انتظار بيانات صالحة",
             })
             for item in card.get("filters", []):
-                if item.get("name") in {
+                if item.get("name", "").startswith("Trend Template — "):
+                    item["passed"] = False
+                elif item.get("name") in {
                     "VCP Pattern", "VCP Breakout Confirmation",
                     "Breakout Confirmation", "Pullback Setup",
                     "Pullback Entry Confirmation", "Pullback Check",
@@ -397,8 +403,21 @@ class ScanController:
                     item["pending"] = True
             return
 
-        # Recompute both setup paths from durable completed candles. Persisted
-        # flags may have come from a transient intraday candle before restart.
+        # Recompute the Trend Template and both setup paths from durable
+        # completed candles. Persisted flags may reflect an older daily scan
+        # or a transient intraday candle before restart.
+        tt_info = check_trend_template(history, card.get("rs_rating"))
+        trend_template_passed = bool(tt_info.get("passed", False))
+        trend_conditions = dict(tt_info.get("conditions") or {})
+        accumulation_passed = bool(card.get(
+            "accumulation_passed",
+            next((item.get("passed", False) for item in card.get("filters", []) if item.get("name") == "Accumulation"), False),
+        ))
+        earnings_passed = bool(card.get(
+            "earnings_passed",
+            next((item.get("passed", False) for item in card.get("filters", []) if item.get("name") == "Earnings Growth"), False),
+        ))
+        watchlist_eligible = bool(trend_template_passed and accumulation_passed and earnings_passed)
         pullback = check_pullback(history)
         pullback_passed = bool(pullback.get("passed", False))
         pullback_candidate = bool(pullback.get("candidate", False))
@@ -442,7 +461,8 @@ class ScanController:
         ).to_dict()
         market_favorable = bool(card.get("market_favorable", False))
         entry_ready = bool(
-            entry_confirmation
+            watchlist_eligible
+            and entry_confirmation
             and market_favorable
             and plan.get("status") == "جاهز"
             and plan.get("within_entry_range") is True
@@ -476,6 +496,11 @@ class ScanController:
             "levels_status": plan["status"],
             "within_entry_range": plan["within_entry_range"],
             "notes": plan["notes"],
+            "trend_template_passed": trend_template_passed,
+            "trend_conditions": trend_conditions,
+            "accumulation_passed": accumulation_passed,
+            "earnings_passed": earnings_passed,
+            "watchlist_eligible": watchlist_eligible,
             "vcp_passed": vcp_passed,
             "breakout_passed": breakout_passed,
             "setup_passed": setup_passed,
@@ -501,7 +526,10 @@ class ScanController:
 
         for item in card.get("filters", []):
             name = item.get("name")
-            if name == "VCP Pattern":
+            if name.startswith("Trend Template — "):
+                condition_name = name.split(" — ", 1)[1]
+                item["passed"] = bool(trend_conditions.get(condition_name, False))
+            elif name == "VCP Pattern":
                 item["passed"] = vcp_passed
             elif name in {"VCP Breakout Confirmation", "Breakout Confirmation"}:
                 item["passed"] = breakout_passed
