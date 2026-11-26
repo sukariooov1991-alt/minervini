@@ -87,6 +87,41 @@ class RealtimeCandleTests(unittest.TestCase):
         self.assertEqual(controller._live_quote_metadata["ABBV"]["price_timestamp"], "2026-11-26T20:00:00Z")
         self.assertEqual(len(controller._realtime_pending), 1)
 
+    def test_scan_card_publication_preserves_latest_fractional_websocket_price(self):
+        controller = ScanController.__new__(ScanController)
+        controller._live_prices = {"ABBV": 294.48}
+        controller._live_quote_metadata = {
+            "ABBV": {
+                "price_session": "post-market",
+                "price_timestamp": "2026-11-26T20:00:00Z",
+                "price_received_at": "2026-11-26T20:00:01Z",
+            }
+        }
+        controller._latest_quote_payloads = {
+            "ABBV": {
+                "symbol": "ABBV",
+                "last_done": 294.48,
+                "sequence": 10,
+                "timestamp": "2026-11-26T20:00:00Z",
+                "trade_session": "post-market",
+            }
+        }
+        controller._realtime_pending = []
+        controller._realtime_event = Event()
+        card = {
+            "symbol": "ABBV",
+            "current_price": 294.0,
+            "price_source": "Stored daily data (Daily Close)",
+        }
+
+        self.assertTrue(controller._merge_latest_quote_into_card_locked(card))
+
+        self.assertEqual(card["current_price"], 294.48)
+        self.assertEqual(card["price_source"], "Longbridge WebSocket")
+        self.assertEqual(card["price_session"], "post-market")
+        self.assertEqual(len(controller._realtime_pending), 1)
+        self.assertTrue(controller._realtime_event.is_set())
+
     def test_watchdog_uses_new_subscription_time_after_quiet_reconnect(self):
         self.assertEqual(_latest_realtime_activity(100.0, 200.0), 200.0)
         self.assertEqual(_latest_realtime_activity(250.0, 200.0), 250.0)
