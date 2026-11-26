@@ -1489,13 +1489,21 @@ def api_start_scan():
     symbols = body.get("symbols")
     if isinstance(symbols, str):
         symbols = [symbols]
-    if symbols is not None and not isinstance(symbols, list):
-        return jsonify({"error": "symbols must be an array of ticker symbols"}), 400
-    if isinstance(symbols, list):
-        symbols = [str(sym).upper().strip() for sym in symbols if str(sym).strip()]
-        if not symbols:
-            symbols = None
-    update = bool(body.get("update", True))
+    if symbols is not None:
+        if not isinstance(symbols, list):
+            return jsonify({"error": "symbols must be an array of ticker symbols"}), 400
+        normalized = [str(sym).upper().strip() for sym in symbols]
+        if (
+            not normalized
+            or len(normalized) > len(SP500_SYMBOLS)
+            or any(not re.fullmatch(r"\\^?[A-Z0-9][A-Z0-9.\\-]{0,14}", sym) for sym in normalized)
+        ):
+            return jsonify({"error": "symbols must contain 1 to 500 valid ticker symbols"}), 400
+        symbols = sorted(set(normalized))
+
+    update = body.get("update", True)
+    if not isinstance(update, bool):
+        return jsonify({"error": "update must be a boolean"}), 400
     started = controller.start_scan(symbols=symbols, update=update)
     return jsonify({"started": started, "running": controller.snapshot()["running"]})
 
