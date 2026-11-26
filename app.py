@@ -66,6 +66,37 @@ class ScanController:
                 "Watchlist startup restore: %s cards loaded from SQLite (db=%s)",
                 len(self._cards), self.db_path,
             )
+
+            # Migrate persisted cards created by the former unverified
+            # Pullback trigger. A Pullback-only card must not retain stale
+            # EntryReady, entry zones, targets, or stop after this deployment.
+            for restored_card in self._cards.values():
+                restored_card["pullback_review_only"] = True
+                restored_card["pullback_passed"] = False
+                has_vcp_confirmation = bool(
+                    restored_card.get("vcp_passed")
+                    and restored_card.get("breakout_passed")
+                )
+                if not has_vcp_confirmation:
+                    restored_card.update({
+                        "entry_confirmation_passed": False,
+                        "entry_ready": False,
+                        "passed_all_filters": False,
+                        "setup_passed": bool(restored_card.get("vcp_passed", False)),
+                        "pivot_price": None,
+                        "final_low": None,
+                        "entry_zones": [],
+                        "targets": [],
+                        "shared_stop_loss": None,
+                        "within_entry_range": None,
+                        "levels_status": "مراجعة يدوية — لا توجد قاعدة دخول Pullback موثقة",
+                        "status": "Pullback للمراجعة اليدوية — لا توجد إشارة دخول آلية",
+                        "stage": "المرحلة 2: مراجعة Pullback يدوياً",
+                        "notes": [
+                            "تم تعطيل إشارة Pullback القديمة لأنها اعتمدت على محفز دخول غير موثق.",
+                            "لا تصدر إشارة دخول آلية من Pullback حتى يتوفر مصدر يحدد المحفز والوقف.",
+                        ],
+                    })
         except Exception:
             log.exception("Failed to restore persisted watchlist cards")
             self._cards = {}
