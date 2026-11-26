@@ -319,7 +319,7 @@ class DailyScreener:
                         failures.append({
                             "symbol": sym,
                             "error": f"Insufficient daily candles: {available}; 252 required",
-                            "phase": "analysis",
+                            "phase": "history",
                         })
                         continue
 
