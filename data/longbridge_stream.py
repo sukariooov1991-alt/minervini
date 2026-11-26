@@ -124,25 +124,29 @@ class LongbridgeRealtimeClient:
                 if self.on_quote is None:
                     return
 
-                # WebSocket quote events can carry distinct pre-market,
-                # post-market and overnight quote objects. Prefer the newest
-                # timestamped session quote instead of blindly using the
-                # regular-session last_done, which may be stale after hours.
-                last_done, quote_timestamp, quote_session = self._latest_session_quote(event)
+                # PushQuote is an incremental WebSocket message, not the full
+                # SecurityQuote snapshot. Its session is identified by
+                # trade_session; pre/post/overnight nested quote objects belong
+                # to the pull quote response and are not part of PushQuote.
+                last_done = _valid_price(_value(event, "last_done"))
                 if last_done is None:
+                    # A push that changes only volume/turnover is not a new
+                    # price tick; do not fabricate a price from missing fields.
                     return
 
-                event_session = _session_label(_value(event, "trade_session"))
                 payload = {
                     "symbol": self._denormalize_symbol(symbol),
                     "raw_symbol": symbol,
                     "last_done": last_done,
-                    "timestamp": quote_timestamp or _value(event, "timestamp"),
+                    "sequence": _value(event, "sequence"),
+                    "timestamp": _value(event, "timestamp"),
                     "volume": _value(event, "volume"),
                     "turnover": _value(event, "turnover"),
-                    "trade_session": quote_session if quote_session != "regular" else (event_session or quote_session),
+                    "current_volume": _value(event, "current_volume"),
+                    "current_turnover": _value(event, "current_turnover"),
+                    "trade_session": _session_label(_value(event, "trade_session")) or "regular",
                     "trade_status": _value(event, "trade_status"),
-                    "prev_close": _value(event, "prev_close"),
+                    "tag": _value(event, "tag"),
                     "source": "longbridge_websocket",
                 }
                 self.on_quote(payload)
