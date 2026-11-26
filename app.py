@@ -34,6 +34,24 @@ app = Flask(__name__, template_folder=str(BASE_DIR))
 MARKET_STATES = ["مفتوح", "بعد الإغلاق", "تداول ليلي", "قبل الافتتاح", "مغلق"]
 
 
+def _quote_timestamp_order(value: Any) -> float | None:
+    """Normalize SDK quote timestamps for ordering pushes when sequence is absent."""
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        number = float(value)
+        return number if math.isfinite(number) else None
+    try:
+        parsed = pd.Timestamp(value)
+        if pd.isna(parsed):
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.tz_localize("UTC")
+        return float(parsed.timestamp())
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
 def _stable_pullback_levels(
     card: dict[str, Any], pullback_info: dict[str, Any], enabled: bool
 ) -> tuple[float | None, float | None]:
@@ -153,6 +171,10 @@ class ScanController:
         self._realtime_locks: dict[str, threading.Lock] = {}
         self._ws_seen_symbols: set[str] = set()
         self._latest_quote_sequence: dict[str, int] = {}
+        self._latest_quote_timestamp: dict[str, float] = {}
+        self._processed_quote_timestamp: dict[str, float] = {}
+        self._last_ws_push_monotonic: float | None = None
+        self._last_ws_reconnect_monotonic = 0.0
         self._ws_last_log_at: dict[str, float] = {}
         # Quote callbacks must stay short: the SDK dispatches pushes on its
         # receive path. Recalculate setups on this independent worker so one
@@ -327,20 +349,43 @@ class ScanController:
                 item["pending"] = not setup_passed
 
     def _realtime_watchdog_loop(self) -> None:
-        """Retry only missing symbols; live prices are delivered by WebSocket pushes."""
+        """Retry missing subscriptions and reconnect a stale stream during trading sessions."""
         while True:
             time.sleep(30)
             if not self.lb_client.has_credentials():
                 continue
+            if self._detect_market_session() == "مغلق":
+                continue
+            now_mono = time.monotonic()
             with self._lock:
                 # New eligible cards are subscribed together once the scan
                 # completes; never let the watchdog fragment that bulk request.
                 if self._running:
                     continue
                 symbols = sorted(self._cards)
+                last_push = self._last_ws_push_monotonic
+                last_reconnect = self._last_ws_reconnect_monotonic
+                stale_stream = bool(
+                    symbols
+                    and last_push is not None
+                    and now_mono - last_push > 300
+                    and now_mono - last_reconnect > 120
+                )
+                if stale_stream:
+                    self._last_ws_reconnect_monotonic = now_mono
             if not symbols:
                 continue
             try:
+                if stale_stream:
+                    log.warning(
+                        "Longbridge WebSocket has had no quote pushes for 5 minutes; reconnecting %s symbols",
+                        len(symbols),
+                    )
+                    self.lb_client.reconnect(symbols)
+                    with self._state_cv:
+                        self._ws_connected = False
+                        self._notify_state_changed_locked()
+                    continue
                 restored = self.lb_client.ensure_subscriptions(symbols)
                 if restored:
                     log.warning(
@@ -417,12 +462,25 @@ class ScanController:
             sequence = None
 
         now_mono = time.monotonic()
+        quote_order = _quote_timestamp_order(quote.get("timestamp"))
         with self._state_cv:
             previous_sequence = self._latest_quote_sequence.get(sym)
+            previous_timestamp = self._latest_quote_timestamp.get(sym)
             if sequence is not None and previous_sequence is not None and sequence <= previous_sequence:
+                return
+            if (
+                sequence is None
+                and quote_order is not None
+                and previous_timestamp is not None
+                and quote_order < previous_timestamp
+            ):
+                log.debug("Ignoring out-of-order sequence-less quote for %s", sym)
                 return
             if sequence is not None:
                 self._latest_quote_sequence[sym] = sequence
+            if quote_order is not None:
+                self._latest_quote_timestamp[sym] = max(previous_timestamp or quote_order, quote_order)
+            self._last_ws_push_monotonic = now_mono
             self._ws_connected = True
             self._live_prices[sym] = price
             card = self._cards.get(sym)
@@ -553,9 +611,22 @@ class ScanController:
         except (TypeError, ValueError, OverflowError):
             sequence = None
 
+        quote_order = _quote_timestamp_order(quote.get("timestamp"))
         with self._lock:
             first_ws_push = sym not in self._ws_seen_symbols
             self._ws_seen_symbols.add(sym)
+            previous_processed_timestamp = self._processed_quote_timestamp.get(sym)
+            if (
+                sequence is None
+                and quote_order is not None
+                and previous_processed_timestamp is not None
+                and quote_order < previous_processed_timestamp
+            ):
+                return
+            if quote_order is not None:
+                self._processed_quote_timestamp[sym] = max(
+                    previous_processed_timestamp or quote_order, quote_order
+                )
         if first_ws_push:
             log.info(
                 "Longbridge WebSocket first quote push: symbol=%s price=%s session=%s timestamp=%s",
@@ -1211,6 +1282,8 @@ class ScanController:
                         self._live_prices.pop(stale_symbol, None)
                         self._live_candles.pop(stale_symbol, None)
                         self._latest_quote_sequence.pop(stale_symbol, None)
+                        self._latest_quote_timestamp.pop(stale_symbol, None)
+                        self._processed_quote_timestamp.pop(stale_symbol, None)
                         self._ws_seen_symbols.discard(stale_symbol)
                         self._ws_last_log_at.pop(stale_symbol, None)
                         try:
@@ -1300,6 +1373,8 @@ class ScanController:
             self._live_prices.pop(clean, None)
             self._live_candles.pop(clean, None)
             self._latest_quote_sequence.pop(clean, None)
+            self._latest_quote_timestamp.pop(clean, None)
+            self._processed_quote_timestamp.pop(clean, None)
             self._ws_seen_symbols.discard(clean)
             self._ws_last_log_at.pop(clean, None)
             try:
