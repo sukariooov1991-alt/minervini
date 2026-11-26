@@ -392,11 +392,13 @@ class ScanController:
                     # Do not reuse a stale VCP pivot when the active path is
                     # Pullback. Until that path supplies its own anchor, levels
                     # remain explicitly unavailable rather than fabricated.
-                    active_pivot = pivot if vcp_passed else (
-                        pullback_anchor if pullback_passed else None
+                    use_vcp_entry = bool(vcp_passed and breakout_passed)
+                    use_pullback_entry = bool(pullback_passed and not use_vcp_entry)
+                    active_pivot = pivot if use_vcp_entry else (
+                        pullback_anchor if use_pullback_entry else None
                     )
-                    active_low = vcp_info.get("final_low") if vcp_passed else (
-                        pullback_low if pullback_passed else None
+                    active_low = vcp_info.get("final_low") if use_vcp_entry else (
+                        pullback_low if use_pullback_entry else None
                     )
                     plan = build_trade_levels(
                         symbol=sym,
@@ -711,8 +713,14 @@ class ScanController:
             historical_source = str(row.get("data_source") or "Stored daily data")
             price_source = f"{historical_source} (Daily Close)"
 
-        pivot_price = row.get("pivot_price") if vcp_passed else row.get("pullback_entry_price")
-        final_low = row.get("final_low") if vcp_passed else row.get("pullback_final_low")
+        use_vcp_entry = bool(vcp_passed and br)
+        use_pullback_entry = bool(pullback_passed and not use_vcp_entry)
+        pivot_price = row.get("pivot_price") if use_vcp_entry else (
+            row.get("pullback_entry_price") if use_pullback_entry else None
+        )
+        final_low = row.get("final_low") if use_vcp_entry else (
+            row.get("pullback_final_low") if use_pullback_entry else None
+        )
         plan = (
             build_trade_levels(
                 symbol=sym,
