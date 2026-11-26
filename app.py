@@ -727,7 +727,9 @@ class ScanController:
         # Preserve every price tick for the requested per-tick setup recalculation.
         # UI publication above never waits for this background work.
         with self._lock:
-            self._realtime_pending.append(dict(quote))
+            queued_quote = dict(quote)
+            queued_quote["_received_at"] = received_at
+            self._realtime_pending.append(queued_quote)
             self._realtime_event.set()
 
     def _realtime_worker_loop(self) -> None:
@@ -1019,7 +1021,7 @@ class ScanController:
                         "price_session": quote.get("trade_session") or "regular",
                         "price_timestamp": _quote_timestamp_iso(quote.get("timestamp")),
                         "price_tag": quote.get("tag"),
-                        "price_received_at": datetime.now(timezone.utc).isoformat(),
+                        "price_received_at": received_at,
                         "pivot_price": plan["pivot_price"],
                         "final_low": plan["final_low"],
                         "entry_zones": plan["entry_zones"],
