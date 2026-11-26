@@ -94,6 +94,26 @@ class PermanentDataCacheTests(unittest.TestCase):
         )
         self.assertEqual(value, 1.25)
 
+    def test_fundamentals_fetch_uses_60_day_fiscal_matching_for_eps_and_revenue(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        provider = DataProvider.__new__(DataProvider)
+        provider.symbol = "TEST"
+        provider.ticker = SimpleNamespace(quarterly_financials=pd.DataFrame(
+            {
+                pd.Timestamp("2026-09-30"): [2.0, 120.0],
+                pd.Timestamp("2025-08-02"): [1.0, 100.0],
+            },
+            index=["Diluted EPS", "Total Revenue"],
+        ))
+        with patch("data.data_provider._wait_for_yahoo_request_slot"):
+            frame = provider._fetch_fundamentals_dataframe()
+
+        self.assertEqual(len(frame), 1)
+        self.assertEqual(frame.iloc[0]["eps_year_ago"], 1.0)
+        self.assertEqual(frame.iloc[0]["revenue_year_ago"], 100.0)
+
     def test_prior_year_quarter_matching_never_uses_a_future_report(self):
         from data.data_provider import _find_nearest_prior_value
 
