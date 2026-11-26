@@ -102,7 +102,7 @@ def _find_nearest_prior_period(
     eps: pd.Series,
     revenue: pd.Series,
     target_date: pd.Timestamp,
-    max_window_days: int = 60,
+    max_window_days: int = 14,
 ) -> tuple[float, float]:
     """Return EPS and revenue from the same prior fiscal reporting period.
 
