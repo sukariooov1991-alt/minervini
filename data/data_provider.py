@@ -407,12 +407,15 @@ class DataProvider:
             and failure_age is not None
             and failure_age < 15 * 60
         ):
-            self.last_source = "SQLite daily cache" if len(cached) else None
+            self.last_source = "SQLite daily cache (stale; refresh failed)" if len(cached) else None
             log.warning(
-                "%s: retaining %s stored candles; retrying daily refresh after cooldown",
+                "%s: retaining %s stored candles, but reporting stale history to caller; "
+                "retrying daily refresh after cooldown",
                 self.symbol, len(cached),
             )
-            return 0
+            raise RuntimeError(
+                f"Daily history for {self.symbol} is stale; provider retry is in the 15-minute failure cooldown"
+            )
 
         # Seed missing/legacy data from the full history once. Thereafter fetch
         # only a short overlapping window so a missed session can be recovered.
@@ -431,16 +434,14 @@ class DataProvider:
                 expected_session is not None
                 and (latest_refreshed_date is None or latest_refreshed_date < expected_session)
             ):
-                self.storage.set_cache(
-                    failure_key,
-                    {"last_failed_attempt": datetime.now(timezone.utc).isoformat()},
-                )
-                log.info(
+                log.warning(
                     "%s: provider has not published completed session %s yet; "
-                    "keeping %s stored candles and retrying in 15 minutes",
+                    "keeping %s stored candles but reporting the refresh as failed",
                     self.symbol, expected_session, len(refreshed),
                 )
-                return 0
+                raise RuntimeError(
+                    f"Provider has not published completed session {expected_session} for {self.symbol}"
+                )
 
             self.storage.set_cache(failure_key, None)
             self.last_source = self.last_source or "SQLite daily cache"
@@ -459,8 +460,10 @@ class DataProvider:
                 self.symbol, len(cached), exc,
             )
             if len(cached):
-                self.last_source = "SQLite daily cache (last good history)"
-                return 0
+                self.last_source = "SQLite daily cache (stale; last good history preserved)"
+            # A preserved cache is not evidence of a successful refresh. Let
+            # the screener exclude this symbol from RS/breadth for this run,
+            # while leaving its durable candles and existing watchlist card intact.
             raise
 
     def get_ohlcv_dataframe(self) -> pd.DataFrame:
