@@ -104,6 +104,26 @@ class StorageManager:
         except (TypeError, ValueError):
             return None
 
+    def cache_age_seconds(self, cache_key: str) -> float | None:
+        """Return cache age in seconds, or None when the entry is absent/invalid."""
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT fetched_at FROM data_cache WHERE cache_key=?",
+                (str(cache_key),),
+            ).fetchone()
+        if row is None:
+            return None
+        try:
+            fetched = pd.Timestamp(row["fetched_at"])
+            if fetched.tzinfo is None:
+                fetched = fetched.tz_localize("UTC")
+            return max(
+                0.0,
+                (pd.Timestamp.now(tz="UTC") - fetched.tz_convert("UTC")).total_seconds(),
+            )
+        except Exception:
+            return None
+
     def set_cache(self, cache_key: str, payload: Any) -> None:
         """Persist JSON data and its UTC refresh timestamp."""
         encoded = json.dumps(payload, ensure_ascii=False, default=str, allow_nan=False)
