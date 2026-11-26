@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
-from app import ScanController, _stable_pullback_levels
+from app import ScanController, _quote_timestamp_order, _stable_pullback_levels
 
 
 class RealtimeCandleTests(unittest.TestCase):
@@ -15,6 +15,14 @@ class RealtimeCandleTests(unittest.TestCase):
         controller._lock = RLock()
         controller._live_candles = {}
         return controller
+
+    def test_sequence_less_quote_timestamps_are_orderable(self):
+        older = _quote_timestamp_order("2026-11-26T12:00:00Z")
+        newer = _quote_timestamp_order("2026-11-26T12:00:01Z")
+        self.assertIsNotNone(older)
+        self.assertIsNotNone(newer)
+        self.assertLess(older, newer)
+        self.assertIsNone(_quote_timestamp_order("not-a-timestamp"))
 
     def test_market_session_label_respects_holidays_and_early_closes(self):
         with patch.dict("os.environ", {"MARKET_SESSION_LABEL": ""}):
