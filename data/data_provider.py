@@ -174,7 +174,7 @@ class DataProvider:
             try:
                 _wait_for_yahoo_request_slot()
                 frame = _normalise_ohlcv(self.ticker.history(
-                    period=period, interval="1d", auto_adjust=True
+                    period=period, interval="1d", auto_adjust=False
                 ))
                 if not frame.empty:
                     return frame
@@ -307,7 +307,7 @@ class DataProvider:
         # Daily-history fallback order: Yahoo -> Stooq -> Nasdaq -> Alpha Vantage.
         # Longbridge is intentionally reserved for realtime WebSocket quotes only.
         providers = (
-            ("Yahoo Finance", self._fetch_yahoo),
+            ("Yahoo Finance (raw OHLC)", self._fetch_yahoo),
             ("Stooq", self._fetch_stooq),
             ("Nasdaq public data", self._fetch_nasdaq),
             ("Alpha Vantage", self._fetch_alpha_vantage),
@@ -413,7 +413,11 @@ class DataProvider:
         # The candle rows themselves are permanent SQLite history. Their age in
         # hours is irrelevant: only a newly completed exchange session can make
         # this cache stale. Weekends and holidays therefore cause no provider call.
-        if len(cached) > 0 and known_source and (
+        # Older Yahoo caches were dividend-adjusted while Longbridge live
+        # quotes and fallback providers use traded prices. Rebase those histories
+        # once to raw OHLC before allowing live quotes to share the same scale.
+        needs_price_basis_rebase = known_source == "Yahoo Finance"
+        if len(cached) > 0 and known_source and not needs_price_basis_rebase and (
             expected_session is None
             or (latest_bar_date is not None and latest_bar_date >= expected_session)
         ):
@@ -441,7 +445,7 @@ class DataProvider:
 
         # Seed missing/legacy data from the full history once. Thereafter fetch
         # only a short overlapping window so a missed session can be recovered.
-        period = "10d" if len(cached) > 0 and known_source else initial_period
+        period = "2y" if needs_price_basis_rebase else ("10d" if len(cached) > 0 and known_source else initial_period)
         try:
             count = self.fetch_and_store_daily_candles(period, append=True)
             refreshed = self.storage.get_candles_df(self.symbol)
