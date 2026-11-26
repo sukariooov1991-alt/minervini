@@ -189,9 +189,9 @@ class DailyScreener:
         scan_checkpoint_name = "daily_universe_update"
         completed_downloads: set[str] = set()
         if update:
-            # Successful downloads are checkpointed in SQLite after each symbol.
-            # If Render/Gunicorn restarts the worker, the next scan resumes at the
-            # first unfinished symbol instead of starting the 495-symbol universe over.
+            # Record per-symbol scan progress in SQLite for restart diagnostics.
+            # The durable candle cache independently decides whether a provider
+            # refresh is due, so completed symbols are still checked cheaply.
             completed_downloads = self.storage.get_scan_checkpoint(
                 scan_checkpoint_name, self.symbols
             )
