@@ -310,7 +310,6 @@ class DataProvider:
         # Do not call ticker.info here: Yahoo's quoteSummary endpoint frequently
         # returns HTTP 401 (Invalid Crumb / Unauthorized). ROE is supplementary;
         # EPS and revenue growth remain available from quarterly_financials.
-        info = {}
         if q is None or q.empty:
             return pd.DataFrame()
 
