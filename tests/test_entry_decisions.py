@@ -5,6 +5,7 @@ import pandas as pd
 from analysis.market_filter import check_market_regime
 from analysis.pullback import check_pullback
 from data.trade_levels import build_trade_levels
+from screener import DailyScreener
 
 
 class EntryDecisionTests(unittest.TestCase):
@@ -21,6 +22,21 @@ class EntryDecisionTests(unittest.TestCase):
         self.assertFalse(weak["market_favorable"])
         threshold = check_market_regime(index, breadth_pct=25.0)
         self.assertTrue(threshold["breadth_ok"])
+
+    def test_market_breadth_excludes_symbols_with_failed_downloads(self):
+        class FakeStorage:
+            def get_candles_df(self, symbol):
+                if symbol == "A":
+                    values = [100.0] * 50
+                else:
+                    values = [100.0] * 49 + [110.0]
+                return pd.DataFrame({"close": values})
+
+        scanner = DailyScreener.__new__(DailyScreener)
+        scanner.symbols = ["A", "B"]
+        scanner.storage = FakeStorage()
+        self.assertEqual(scanner.compute_market_breadth(), 50.0)
+        self.assertEqual(scanner.compute_market_breadth(exclude_symbols={"A"}), 100.0)
 
     def _pullback_frame(self, current_open, current_close):
         close = [100.0] * 74 + [99.5, 99.0, 98.7, 98.2, 98.0]
