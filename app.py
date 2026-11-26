@@ -174,6 +174,15 @@ class ScanController:
                     raise ValueError("last screener output has no valid results list")
                 if not isinstance(saved_market, dict):
                     saved_market = {}
+                if saved_market:
+                    # Restore the last completed scan's market context alongside
+                    # its cards; otherwise the dashboard reports UNKNOWN while
+                    # restored cards still carry a previous market decision.
+                    self._market_status = {
+                        **self._market_status,
+                        **saved_market,
+                        "snapshot_generated_at": saved.get("generated_at"),
+                    }
                 recovered = 0
                 for row in saved_rows:
                     if not isinstance(row, dict) or not row.get("watchlist_eligible"):
