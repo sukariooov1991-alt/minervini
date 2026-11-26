@@ -1230,12 +1230,14 @@ class ScanController:
                     watchlist_symbols, context="completed watchlist bulk sync"
                 )
             download_errors = sum(1 for failure in failures if failure.get("phase") == "download")
-            analysis_errors = sum(1 for failure in failures if failure.get("phase") == "analysis")
+            analysis_errors = sum(1 for failure in failures if failure.get("phase") == "analysis_error")
+            fundamentals_warnings = sum(1 for failure in failures if failure.get("phase") == "fundamentals")
             log.info(
-                "Scan finished: %s stocks passed Trend Template, %s download errors, %s analysis errors",
+                "Scan finished: %s result rows, %s download errors, %s analysis exceptions, %s fundamentals warnings",
                 0 if result_df is None else len(result_df),
                 download_errors,
                 analysis_errors,
+                fundamentals_warnings,
             )
         except Exception as exc:
             log.exception("Scan cycle failed")
