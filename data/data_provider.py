@@ -265,27 +265,41 @@ class DataProvider:
         # separators (for example BRK.B.US) rather than changing the ticker.
         lb_symbol = self.symbol if self.symbol.endswith(".US") else f"{self.symbol}.US"
         from longbridge.openapi import AdjustType, Period
-        candles = ctx.history_candlesticks_by_date(
-            lb_symbol,
-            Period.Day,
-            AdjustType.ForwardAdjust,
-            _period_start(period),
-            pd.Timestamp.now().date(),
-        )
-        if not candles:
-            raise RuntimeError("Longbridge returned no historical daily candles")
+        # Longbridge limits each history_candlesticks_by_date response to
+        # 100 candles. Split multi-year requests into 90-calendar-day windows
+        # so each request remains below that hard API limit.
+        from datetime import timedelta
 
+        start_date = _period_start(period)
+        end_date = pd.Timestamp.now().date()
+        cursor = start_date
         rows = []
-        for candle in candles:
-            rows.append({
-                "date": getattr(candle, "timestamp", None),
-                "open": getattr(candle, "open", None),
-                "high": getattr(candle, "high", None),
-                "low": getattr(candle, "low", None),
-                "close": getattr(candle, "close", None),
-                "volume": getattr(candle, "volume", None),
-            })
-        return _normalise_ohlcv(pd.DataFrame(rows))
+        while cursor <= end_date:
+            chunk_end = min(cursor + timedelta(days=89), end_date)
+            candles = ctx.history_candlesticks_by_date(
+                lb_symbol,
+                Period.Day,
+                AdjustType.ForwardAdjust,
+                cursor,
+                chunk_end,
+            )
+            for candle in candles or []:
+                rows.append({
+                    "date": getattr(candle, "timestamp", None),
+                    "open": getattr(candle, "open", None),
+                    "high": getattr(candle, "high", None),
+                    "low": getattr(candle, "low", None),
+                    "close": getattr(candle, "close", None),
+                    "volume": getattr(candle, "volume", None),
+                })
+            cursor = chunk_end + timedelta(days=1)
+
+        if not rows:
+            raise RuntimeError("Longbridge returned no historical daily candles")
+        frame = _normalise_ohlcv(pd.DataFrame(rows))
+        if frame.empty:
+            raise RuntimeError("Longbridge returned no valid historical daily candles")
+        return frame
 
     def _fetch_alpha_vantage(self, period: str) -> pd.DataFrame:
         if self.symbol.startswith("^"):
