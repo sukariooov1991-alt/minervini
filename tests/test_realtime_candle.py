@@ -1,6 +1,8 @@
 import unittest
-from datetime import date
+from datetime import date, datetime
 from threading import RLock
+from unittest.mock import patch
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
@@ -13,6 +15,24 @@ class RealtimeCandleTests(unittest.TestCase):
         controller._lock = RLock()
         controller._live_candles = {}
         return controller
+
+    def test_market_session_label_respects_holidays_and_early_closes(self):
+        with patch.dict("os.environ", {"MARKET_SESSION_LABEL": ""}):
+            with patch("app.datetime") as mocked_datetime:
+                mocked_datetime.now.return_value = datetime(
+                    2026, 11, 26, 12, 8, tzinfo=ZoneInfo("America/New_York")
+                )
+                self.assertEqual(ScanController._detect_market_session(), "مغلق")
+
+                mocked_datetime.now.return_value = datetime(
+                    2026, 11, 27, 14, 0, tzinfo=ZoneInfo("America/New_York")
+                )
+                self.assertEqual(ScanController._detect_market_session(), "بعد الإغلاق")
+
+                mocked_datetime.now.return_value = datetime(
+                    2026, 11, 30, 10, 0, tzinfo=ZoneInfo("America/New_York")
+                )
+                self.assertEqual(ScanController._detect_market_session(), "مفتوح")
 
     def test_live_candle_retains_open_high_low_and_volume_between_ticks(self):
         controller = self._controller()
