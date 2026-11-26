@@ -12,7 +12,6 @@ from enum import Enum
 from zoneinfo import ZoneInfo
 
 NEW_YORK = ZoneInfo("America/New_York")
-UTC = ZoneInfo("UTC")
 
 
 class MarketSession(str, Enum):
@@ -146,7 +145,6 @@ class MarketTime:
     PRE_MARKET_OPEN = time(4, 0)
     REGULAR_OPEN = time(9, 30)
     POST_MARKET_END = time(20, 0)
-    OVERNIGHT_END = time(4, 0)
 
     @staticmethod
     def now() -> datetime:
@@ -162,7 +160,7 @@ class MarketTime:
 
     @classmethod
     def state(cls, value: datetime | None = None) -> MarketTimeState:
-        now = cls.to_new_york(value)
+        now = cls.to_new_york(value if value is not None else cls.now())
         day = now.date()
         close_time = get_us_equity_market_close(day)
         trading = close_time is not None
