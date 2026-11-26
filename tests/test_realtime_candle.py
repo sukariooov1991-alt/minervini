@@ -116,6 +116,18 @@ class RealtimeCandleTests(unittest.TestCase):
         self.assertEqual((next_anchor, next_low), (100.0, 95.0))
         self.assertEqual(_stable_pullback_levels({}, {}, False), (None, None))
 
+    def test_pullback_anchor_resets_after_support_makes_a_new_low(self):
+        anchor, support = _stable_pullback_levels(
+            {
+                "pullback_entry_anchor": 100.0,
+                "pullback_support_low": 95.0,
+            },
+            {"entry_trigger_price": 97.0, "support_low": 93.0},
+            True,
+        )
+        self.assertEqual(anchor, 97.0)
+        self.assertEqual(support, 93.0)
+
     def test_previous_completed_close_is_a_safe_reference_when_session_open_is_unknown(self):
         controller = self._controller()
         session = date(2026, 11, 27)
