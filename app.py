@@ -172,66 +172,68 @@ class ScanController:
             "pullback_turning_up": bool(pullback.get("turning_up", False)),
         })
 
-        # Keep an already-confirmed VCP plan intact. Otherwise rebuild or clear
-        # the Pullback plan from the current stored candles, never from an old
-        # prior-high reclaim value persisted by the former implementation.
-        if not vcp_confirmed:
-            current_price = float(
-                self._live_prices.get(symbol)
-                or pd.to_numeric(history["close"], errors="coerce").dropna().iloc[-1]
-            )
-            pullback_anchor = pullback.get("entry_trigger_price") if pullback_passed else None
-            pullback_low = pullback.get("support_low") if pullback_passed else None
-            plan = build_trade_levels(
-                symbol=symbol,
-                current_price=current_price,
-                pivot_price=pullback_anchor,
-                candles_df=history,
-                final_low=pullback_low,
-            ).to_dict()
-            entry_confirmation = pullback_passed
-            market_favorable = bool(card.get("market_favorable", False))
-            entry_ready = bool(
-                entry_confirmation
-                and market_favorable
-                and plan.get("status") == "جاهز"
-                and plan.get("within_entry_range") is True
-            )
-            card.update({
-                "current_price": round(current_price, 4),
-                "price_source": (
-                    "Longbridge WebSocket"
-                    if symbol in self._live_prices
-                    else "Stored daily data (Daily Close)"
-                ),
-                "pivot_price": plan["pivot_price"],
-                "final_low": plan["final_low"],
-                "entry_zones": plan["entry_zones"],
-                "targets": plan["targets"],
-                "shared_stop_loss": plan["shared_stop_loss"],
-                "levels_status": plan["status"],
-                "within_entry_range": plan["within_entry_range"],
-                "notes": plan["notes"],
-                "setup_passed": setup_passed,
-                "entry_confirmation_passed": entry_confirmation,
-                "entry_ready": entry_ready,
-                "passed_all_filters": entry_ready,
-            })
-            if setup_passed and not entry_confirmation:
-                card["status"] = "النموذج قيد التأكيد — لا توجد إشارة دخول"
-                card["stage"] = "المرحلة 2: تأكيد نموذج الدخول"
-            elif setup_passed and not market_favorable:
-                card["status"] = "النموذج تحقق — السوق غير مناسب"
-                card["stage"] = "المرحلة 3: تقييم حالة السوق"
-            elif setup_passed and not entry_ready:
-                card["status"] = "تأكيد النموذج تحقق — مستويات الصفقة أو نطاق الدخول غير مكتمل"
-                card["stage"] = "المرحلة 3: التحقق من مستويات الدخول"
-            elif entry_ready:
-                card["status"] = "إشارة دخول مؤكدة — النموذج والسوق والمستويات مستوفاة"
-                card["stage"] = "المرحلة 4: إشارة دخول مؤكدة"
-            else:
-                card["status"] = "انتظار — مراقبة VCP أو Pullback"
-                card["stage"] = "المرحلة 1: سهم مؤهل للمراقبة"
+        current_price = float(
+            self._live_prices.get(symbol)
+            or pd.to_numeric(history["close"], errors="coerce").dropna().iloc[-1]
+        )
+        entry_confirmation = bool(vcp_confirmed or pullback_passed)
+        active_pivot = (
+            card.get("pivot_price") if vcp_confirmed
+            else (pullback.get("entry_trigger_price") if pullback_passed else None)
+        )
+        active_low = (
+            card.get("final_low") if vcp_confirmed
+            else (pullback.get("support_low") if pullback_passed else None)
+        )
+        plan = build_trade_levels(
+            symbol=symbol,
+            current_price=current_price,
+            pivot_price=active_pivot,
+            candles_df=history,
+            final_low=active_low,
+        ).to_dict()
+        market_favorable = bool(card.get("market_favorable", False))
+        entry_ready = bool(
+            entry_confirmation
+            and market_favorable
+            and plan.get("status") == "جاهز"
+            and plan.get("within_entry_range") is True
+        )
+        card.update({
+            "current_price": round(current_price, 4),
+            "price_source": (
+                "Longbridge WebSocket"
+                if symbol in self._live_prices
+                else "Stored daily data (Daily Close)"
+            ),
+            "pivot_price": plan["pivot_price"],
+            "final_low": plan["final_low"],
+            "entry_zones": plan["entry_zones"],
+            "targets": plan["targets"],
+            "shared_stop_loss": plan["shared_stop_loss"],
+            "levels_status": plan["status"],
+            "within_entry_range": plan["within_entry_range"],
+            "notes": plan["notes"],
+            "setup_passed": setup_passed,
+            "entry_confirmation_passed": entry_confirmation,
+            "entry_ready": entry_ready,
+            "passed_all_filters": entry_ready,
+        })
+        if setup_passed and not entry_confirmation:
+            card["status"] = "النموذج قيد التأكيد — لا توجد إشارة دخول"
+            card["stage"] = "المرحلة 2: تأكيد نموذج الدخول"
+        elif setup_passed and not market_favorable:
+            card["status"] = "النموذج تحقق — السوق غير مناسب"
+            card["stage"] = "المرحلة 3: تقييم حالة السوق"
+        elif setup_passed and not entry_ready:
+            card["status"] = "تأكيد النموذج تحقق — مستويات الصفقة أو نطاق الدخول غير مكتمل"
+            card["stage"] = "المرحلة 3: التحقق من مستويات الدخول"
+        elif entry_ready:
+            card["status"] = "إشارة دخول مؤكدة — النموذج والسوق والمستويات مستوفاة"
+            card["stage"] = "المرحلة 4: إشارة دخول مؤكدة"
+        else:
+            card["status"] = "انتظار — مراقبة VCP أو Pullback"
+            card["stage"] = "المرحلة 1: سهم مؤهل للمراقبة"
 
         for item in card.get("filters", []):
             name = item.get("name")
