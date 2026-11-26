@@ -13,7 +13,7 @@ import pandas as pd
 
 
 class StorageManager:
-    MAX_CANDLES = 600
+    MAX_CANDLES = 300
     MAX_EVENTS = 50
 
     def __init__(self, db_path: str = "stock_data.db"):
@@ -67,12 +67,54 @@ class StorageManager:
                 completed_json TEXT NOT NULL,
                 updated_at TEXT DEFAULT CURRENT_TIMESTAMP
             );
+            CREATE TABLE IF NOT EXISTS data_cache (
+                cache_key TEXT PRIMARY KEY,
+                payload TEXT NOT NULL,
+                fetched_at TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS watchlist_cards (
                 symbol TEXT PRIMARY KEY,
                 card_json TEXT NOT NULL,
                 updated_at TEXT DEFAULT CURRENT_TIMESTAMP
             );
             """)
+
+
+    def get_cache(self, cache_key: str, max_age_seconds: int | None = None) -> Any | None:
+        """Read a durable JSON cache entry, optionally enforcing its freshness."""
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT payload, fetched_at FROM data_cache WHERE cache_key=?",
+                (str(cache_key),),
+            ).fetchone()
+        if row is None:
+            return None
+        if max_age_seconds is not None:
+            try:
+                fetched = pd.Timestamp(row["fetched_at"])
+                if fetched.tzinfo is None:
+                    fetched = fetched.tz_localize("UTC")
+                age = (pd.Timestamp.now(tz="UTC") - fetched.tz_convert("UTC")).total_seconds()
+                if age > max_age_seconds:
+                    return None
+            except Exception:
+                return None
+        try:
+            return json.loads(row["payload"])
+        except (TypeError, ValueError):
+            return None
+
+    def set_cache(self, cache_key: str, payload: Any) -> None:
+        """Persist JSON data and its UTC refresh timestamp."""
+        encoded = json.dumps(payload, ensure_ascii=False, default=str, allow_nan=False)
+        with self._get_conn() as conn:
+            conn.execute(
+                """INSERT INTO data_cache(cache_key,payload,fetched_at)
+                   VALUES(?,?,?)
+                   ON CONFLICT(cache_key) DO UPDATE SET
+                     payload=excluded.payload, fetched_at=excluded.fetched_at""",
+                (str(cache_key), encoded, pd.Timestamp.now(tz="UTC").isoformat()),
+            )
 
     def save_watchlist_card(self, card: Dict[str, Any]) -> None:
         """Persist one complete watchlist card so it survives process restarts."""
