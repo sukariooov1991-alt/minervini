@@ -1,7 +1,7 @@
 # MINERVINI Platform (minervini_v2 Structure)
 
 ## Structure
-- `analysis/`: strategy modules (`trend_template.py`, `relative_strength.py`, `vcp.py`, `pullback.py`, `accumulation_distribution.py`, `earnings.py`, `market_filter.py`). `fundamental_analysis.py` is a legacy annual-statement compatibility helper; the active screener uses quarterly `earnings.py`.
+- `analysis/`: active strategy modules for Trend Template, relative strength, VCP, Pullback, accumulation/distribution, quarterly earnings, and market regime. Annual-statement screening code has been removed; the active earnings gate uses the latest quarterly EPS and revenue comparisons.
 - `data/`: Storage (`storage_manager.py`), multi-source daily market-data provider (`data_provider.py`), S&P 500 symbols (`sp500_symbols.py`), trade levels (`trade_levels.py`), Longbridge realtime client (`longbridge_stream.py`), and Telegram notifier (`telegram_notifier.py`).
 - `screener.py`: Daily SEPA candidate scanner.
 - `app.py` & `index.html`: Flask backend with `/api/stream` and dark mobile-first UI.
