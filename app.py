@@ -127,7 +127,7 @@ class ScanController:
         # receive path. Coalesce pending work per symbol and recalculate setups
         # on this independent worker so one slow VCP/SQLite pass cannot stall
         # the WebSocket stream for every other symbol.
-        self._realtime_pending: list[dict[str, Any]] = {}
+        self._realtime_pending: list[dict[str, Any]] = []
         self._realtime_event = threading.Event()
         self._realtime_worker = threading.Thread(
             target=self._realtime_worker_loop,
