@@ -92,6 +92,36 @@ class DailyScreener:
                 })
         return failures
 
+    def refresh_universe_research_data(self) -> dict[str, list[dict]]:
+        """Refresh cached quarterly fundamentals daily and news every four hours."""
+        failures: dict[str, list[dict]] = {"fundamentals": [], "news": []}
+        total = len(self.symbols)
+        for index, symbol in enumerate(self.symbols, 1):
+            provider = self._get_provider(symbol)
+            try:
+                fundamentals = provider.get_fundamentals_dataframe()
+                log.debug(
+                    "[research %s/%s] %s quarterly periods=%s",
+                    index, total, symbol, len(fundamentals),
+                )
+            except Exception as exc:
+                failures["fundamentals"].append({"symbol": symbol, "error": str(exc)})
+                log.warning("%s quarterly fundamentals refresh failed: %s", symbol, exc)
+            try:
+                news = provider.fetch_and_store_news()
+                log.debug(
+                    "[research %s/%s] %s news_items=%s",
+                    index, total, symbol, len(news),
+                )
+            except Exception as exc:
+                failures["news"].append({"symbol": symbol, "error": str(exc)})
+                log.warning("%s news refresh failed: %s", symbol, exc)
+        log.info(
+            "Background research refresh: symbols=%s fundamentals_failures=%s news_failures=%s",
+            total, len(failures["fundamentals"]), len(failures["news"]),
+        )
+        return failures
+
     def compute_rs_ratings(self, exclude_symbols: set[str] | None = None) -> tuple[dict, dict]:
         prices: dict[str, pd.Series] = {}
         frames: dict[str, pd.DataFrame] = {}
