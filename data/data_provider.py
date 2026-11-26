@@ -523,7 +523,27 @@ class DataProvider:
                 self._persist_earnings_events(frame)
                 return frame
 
-        frame = self._fetch_fundamentals_dataframe()
+        try:
+            frame = self._fetch_fundamentals_dataframe()
+        except Exception as exc:
+            if isinstance(cached, list) and cached:
+                # A transient provider failure must not overwrite the last
+                # good quarterly statements with an empty cache entry. Return
+                # the retained data as explicitly stale so screening treats
+                # eligibility as unknown until a successful refresh.
+                frame = pd.DataFrame(cached)
+                if "period" in frame.columns:
+                    frame["period"] = pd.to_datetime(frame["period"], errors="coerce")
+                frame = frame.sort_values("period", ascending=False).reset_index(drop=True) if not frame.empty else frame
+                frame.attrs["stale"] = True
+                self._persist_earnings_events(frame)
+                log.warning(
+                    "%s: quarterly fundamentals refresh failed; retaining stale cached statements: %s",
+                    self.symbol, exc,
+                )
+                return frame
+            raise
+
         records = frame.copy()
         if "period" in records.columns:
             records["period"] = records["period"].astype(str)
@@ -539,9 +559,11 @@ class DataProvider:
         try:
             _wait_for_yahoo_request_slot()
             q = self.ticker.quarterly_financials
-        except Exception:
+        except Exception as exc:
             log.exception("Quarterly fundamentals request failed for %s", self.symbol)
-            return pd.DataFrame()
+            raise RuntimeError(
+                f"Quarterly fundamentals request failed for {self.symbol}"
+            ) from exc
         # Do not call ticker.info here: Yahoo's quoteSummary endpoint frequently
         # returns HTTP 401 (Invalid Crumb / Unauthorized). ROE is supplementary;
         # EPS and revenue growth remain available from quarterly_financials.
