@@ -1186,7 +1186,7 @@ class ScanController:
             sections.append("القرار الحالي: مراقبة فقط، وليس توصية دخول. انتظر اكتمال النموذج ثم أعد تقييم السوق والمستويات.")
         if notes:
             sections.append("ملاحظات التحليل: " + " ".join(notes[:3]))
-        return "\\n\\n".join(sections)
+        return "\n\n".join(sections)
 
     def _build_filters_detail(self, row: dict[str, Any]) -> list[dict[str, Any]]:
         filters: list[dict[str, Any]] = []
