@@ -678,12 +678,25 @@ class ScanController:
             sections.append("التحليل الفني: سجل الشموع اليومية غير متاح حاليًا؛ لا يمكن تأكيد الدعم والمقاومة أو المتوسطات.")
 
         if card.get("setup_passed"):
-            setup = "VCP" if card.get("vcp_passed") else ("Pullback" if card.get("pullback_passed") else "نموذج دخول متحقق")
-            sections.append(f"النموذج الفني: تحقق {setup}. نقطة الارتكاز المعتمدة {fmt(pivot)}" if pivot else f"النموذج الفني: تحقق {setup} لكن لا توجد نقطة ارتكاز صالحة؛ لذلك لا تُعرض مناطق دخول أو أهداف أو وقف خسارة مصطنعة.")
+            if (
+                card.get("pullback_candidate")
+                and not card.get("pullback_passed")
+                and not card.get("vcp_passed")
+            ):
+                sections.append(
+                    "النموذج الفني: رُصد تراجع سعري مرشح لـPullback، لكن السعر لم يؤكد الانعطاف للأعلى بعد؛ لا توجد إشارة دخول."
+                )
+            else:
+                setup = "VCP" if card.get("vcp_passed") else "Pullback"
+                sections.append(
+                    f"النموذج الفني: تأكد {setup}. نقطة الارتكاز المعتمدة {fmt(pivot)}"
+                    if pivot else
+                    f"النموذج الفني: تأكد {setup} لكن لا توجد نقطة ارتكاز صالحة؛ لذلك لا تُعرض مناطق دخول أو أهداف أو وقف خسارة مصطنعة."
+                )
             if final_low:
                 sections.append(f"قاع النموذج: {fmt(final_low)}؛ كسره قد يبطل بنية النموذج بحسب شكل القاعدة.")
         else:
-            sections.append("النموذج الفني: السهم اجتاز شروط التأهل الأولية، لكنه ما زال بانتظار تأكيد VCP أو Pullback. لا توجد إشارة دخول مكتملة حتى الآن.")
+            sections.append("النموذج الفني: السهم اجتاز شروط التأهل الأولية، لكنه ما زال بانتظار ظهور VCP أو Pullback. لا توجد إشارة دخول مكتملة حتى الآن.")
 
         if entries:
             sections.append("خطة الدخول: المناطق الخمس المحسوبة " + "، ".join(fmt(x) for x in entries) + ".")
@@ -712,8 +725,10 @@ class ScanController:
         sections.append(f"السوق والقوة النسبية: {market_text} تصنيف RS={fmt(rs)}.")
         if card.get("entry_ready"):
             sections.append("القرار الحالي: النموذج والسوق اجتازا شروط الجاهزية؛ انتظر تنفيذًا منضبطًا مع الالتزام بوقف الخسارة.")
-        elif card.get("setup_passed"):
-            sections.append("القرار الحالي: النموذج تحقق لكن ظروف السوق غير مواتية؛ الأفضل عدم تفعيل دخول جديد حتى تتحسن البيئة العامة.")
+        elif card.get("setup_passed") and not card.get("entry_confirmation_passed"):
+            sections.append("القرار الحالي: توجد بنية مرشحة، لكن محفز الدخول لم يتأكد بعد؛ انتظر انعطاف السعر للأعلى.")
+        elif card.get("setup_passed") and not card.get("market_favorable"):
+            sections.append("القرار الحالي: تأكد النموذج لكن ظروف السوق غير مواتية؛ الأفضل عدم تفعيل دخول جديد حتى تتحسن البيئة العامة.")
         else:
             sections.append("القرار الحالي: مراقبة فقط، وليس توصية دخول. انتظر اكتمال النموذج ثم أعد تقييم السوق والمستويات.")
         if notes:
@@ -762,7 +777,8 @@ class ScanController:
 
         # Independent entry paths: VCP needs its Pivot breakout; Pullback
         # needs an observed turn-up after a recent decline.
-        setup_passed = bool(vcp_passed or pullback_passed)
+        pullback_candidate = bool(row.get("pullback_candidate", pullback_passed))
+        setup_passed = bool(vcp_passed or pullback_candidate)
         entry_confirmation_passed = bool(
             (vcp_passed and br) or pullback_passed
         )
