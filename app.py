@@ -126,7 +126,7 @@ class ScanController:
         self._scan_errors: list[dict[str, str]] = []
         self._scan_progress: dict[str, Any] = {"phase": "idle", "completed": 0, "total": 0, "percent": 0, "current_symbol": ""}
         if self._cards and self.lb_client.has_credentials():
-            self._subscribe_and_seed_quotes(list(self._cards), context="startup restore")
+            self._subscribe_watchlist_symbols(list(self._cards), context="startup restore")
         self._realtime_watchdog = threading.Thread(
             target=self._realtime_watchdog_loop,
             name="longbridge-realtime-watchdog",
@@ -151,28 +151,23 @@ class ScanController:
                         "Longbridge watchdog restored quote subscriptions: %s",
                         ",".join(restored),
                     )
-                quotes = self.lb_client.get_realtime_quotes(symbols)
-                received = 0
-                for quote in quotes:
-                    if quote.get("last_done") is None:
-                        continue
-                    self._on_realtime_quote({
-                        **quote,
-                        "source": "longbridge_quote_api",
-                    })
-                    received += 1
-                log.debug(
-                    "Longbridge watchdog quote refresh: %s/%s symbols",
-                    received, len(symbols),
-                )
+                # WebSocket is the sole live-price feed. The watchdog only
+                # retries symbols not yet accepted by the persistent context;
+                # it must not poll Quote API or create per-symbol requests.
+                restored = self.lb_client.ensure_subscriptions(symbols)
+                if restored:
+                    log.warning(
+                        "Longbridge watchdog subscribed missing symbols: %s",
+                        ",".join(restored),
+                    )
             except Exception:
                 log.exception("Longbridge realtime watchdog failed")
                 with self._state_cv:
                     self._ws_connected = False
                     self._notify_state_changed_locked()
 
-    def _subscribe_and_seed_quotes(self, symbols: list[str], context: str) -> None:
-        """Subscribe watchlist symbols and seed cards with the latest quote snapshot."""
+    def _subscribe_watchlist_symbols(self, symbols: list[str], context: str) -> None:
+        """Bulk-subscribe the watchlist; live card prices arrive only via WebSocket."""
         clean = sorted({str(s).upper().strip() for s in symbols if str(s).strip()})
         if not clean:
             return
@@ -192,22 +187,6 @@ class ScanController:
             log.exception("Longbridge WebSocket subscription failed (%s)", context)
             return
 
-        # A WebSocket only pushes when a quote event arrives. Fetch the latest
-        # quote snapshot as well, so cards do not stay on yesterday's close while
-        # waiting for the first stream event (or when the market is closed).
-        try:
-            quotes = self.lb_client.get_realtime_quotes(clean)
-            received = 0
-            for quote in quotes:
-                if quote.get("last_done") is not None:
-                    self._on_realtime_quote({**quote, "source": "longbridge_quote_api"})
-                    received += 1
-            log.info(
-                "Longbridge initial quote snapshot: %s/%s symbols returned (%s)",
-                received, len(clean), context,
-            )
-        except Exception:
-            log.exception("Longbridge initial quote snapshot failed (%s)", context)
 
     def _notify_state_changed_locked(self) -> None:
         self._state_version += 1
@@ -244,15 +223,14 @@ class ScanController:
         if not (price > 0 and math.isfinite(price)):
             return
 
-        if quote.get("source") != "longbridge_quote_api":
-            with self._lock:
-                first_ws_push = sym not in self._ws_seen_symbols
-                self._ws_seen_symbols.add(sym)
-            if first_ws_push:
-                log.info(
-                    "Longbridge WebSocket first quote push: symbol=%s price=%s session=%s timestamp=%s",
-                    sym, price, quote.get("trade_session"), quote.get("timestamp"),
-                )
+        with self._lock:
+            first_ws_push = sym not in self._ws_seen_symbols
+            self._ws_seen_symbols.add(sym)
+        if first_ws_push:
+            log.info(
+                "Longbridge WebSocket first quote push: symbol=%s price=%s session=%s timestamp=%s",
+                sym, price, quote.get("trade_session"), quote.get("timestamp"),
+            )
 
         with self._lock:
             symbol_lock = self._realtime_locks.setdefault(sym, threading.Lock())
@@ -313,8 +291,7 @@ class ScanController:
 
                 setup_passed = bool(vcp_passed or pullback_passed)
                 with self._state_cv:
-                    if quote.get("source") != "longbridge_quote_api":
-                        self._ws_connected = True
+                    self._ws_connected = True
                     self._live_prices[sym] = price
                     card = self._cards.get(sym)
                     if card is None:
@@ -348,9 +325,7 @@ class ScanController:
                     card.update({
                         "current_price": round(price, 4),
                         "price_source": (
-                            "Longbridge Quote API"
-                            if quote.get("source") == "longbridge_quote_api"
-                            else "Longbridge WebSocket"
+                            "Longbridge WebSocket"
                         ),
                         "price_session": quote.get("trade_session") or "regular",
                         "price_timestamp": quote.get("timestamp"),
@@ -407,16 +382,13 @@ class ScanController:
                 # a provider candle or calculation is malformed.
                 log.exception("Realtime setup recalculation failed for %s", sym)
                 with self._state_cv:
-                    if quote.get("source") != "longbridge_quote_api":
-                        self._ws_connected = True
+                    self._ws_connected = True
                     self._live_prices[sym] = price
                     card = self._cards.get(sym)
                     if card is not None:
                         card["current_price"] = round(price, 4)
                         card["price_source"] = (
-                            "Longbridge Quote API"
-                            if quote.get("source") == "longbridge_quote_api"
-                            else "Longbridge WebSocket"
+                            "Longbridge WebSocket"
                         )
                         card["price_session"] = quote.get("trade_session") or "regular"
                         card["price_timestamp"] = quote.get("timestamp")
@@ -734,10 +706,9 @@ class ScanController:
                         continue
                     try: self.notifier.send_stock_appearance_alert(card)
                     except Exception: log.exception("Telegram alert failed for %s", card.get("symbol"))
-                self._subscribe_and_seed_quotes(
-                    [card["symbol"] for card in qualified],
-                    context="new eligible batch",
-                )
+                # Do not subscribe per analysis batch. All newly eligible
+                # symbols are collected first, then sent in one bulk request
+                # after reconciliation below.
             result_df, failures, market_status = screener.run_screen(
                 update=update, progress_callback=self._update_scan_progress,
                 batch_callback=publish_batch, stop_callback=self._stop_event.is_set, batch_size=5,
@@ -803,6 +774,15 @@ class ScanController:
                     self.lb_client.unsubscribe(sorted(removed))
                 except Exception:
                     log.exception("Failed to unsubscribe reconciled stale watchlist symbols")
+            # One bulk subscription request for the complete current watchlist.
+            # Existing subscriptions are retained; only genuinely new symbols
+            # are sent to the already-running WebSocket context.
+            if self.lb_client.has_credentials():
+                with self._lock:
+                    watchlist_symbols = sorted(self._cards)
+                self._subscribe_watchlist_symbols(
+                    watchlist_symbols, context="completed watchlist bulk sync"
+                )
             download_errors = sum(1 for failure in failures if failure.get("phase") == "download")
             analysis_errors = sum(1 for failure in failures if failure.get("phase") == "analysis")
             log.info(
