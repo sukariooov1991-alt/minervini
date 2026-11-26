@@ -373,13 +373,21 @@ class ScanController:
                     item["pending"] = True
             return
 
+        # Recompute both setup paths from durable completed candles. Persisted
+        # flags may have come from a transient intraday candle before restart.
         pullback = check_pullback(history)
         pullback_passed = bool(pullback.get("passed", False))
         pullback_candidate = bool(pullback.get("candidate", False))
-        vcp_confirmed = bool(
-            card.get("vcp_passed", False) and card.get("breakout_passed", False)
+        completed_history = history.iloc[:-1].copy() if len(history) > 1 else history.iloc[0:0].copy()
+        vcp_info = check_vcp(completed_history)
+        vcp_passed = bool(vcp_info.get("passed", False))
+        vcp_pivot = vcp_info.get("pivot_price") if vcp_passed else None
+        breakout_passed = bool(
+            vcp_passed and vcp_pivot is not None
+            and check_breakout(history, pivot=vcp_pivot)
         )
-        setup_passed = bool(card.get("vcp_passed", False) or pullback_candidate)
+        vcp_confirmed = bool(vcp_passed and breakout_passed)
+        setup_passed = bool(vcp_passed or pullback_candidate)
 
         pullback_anchor, pullback_support = _stable_pullback_levels(
             card, pullback, pullback_passed and not vcp_confirmed
@@ -397,8 +405,8 @@ class ScanController:
             or pd.to_numeric(history["close"], errors="coerce").dropna().iloc[-1]
         )
         entry_confirmation = bool(vcp_confirmed or pullback_passed)
-        active_pivot = card.get("pivot_price") if vcp_confirmed else pullback_anchor
-        active_low = card.get("final_low") if vcp_confirmed else pullback_support
+        active_pivot = vcp_pivot if vcp_confirmed else pullback_anchor
+        active_low = vcp_info.get("final_low") if vcp_confirmed else pullback_support
         plan = build_trade_levels(
             symbol=symbol,
             current_price=current_price,
@@ -442,6 +450,8 @@ class ScanController:
             "levels_status": plan["status"],
             "within_entry_range": plan["within_entry_range"],
             "notes": plan["notes"],
+            "vcp_passed": vcp_passed,
+            "breakout_passed": breakout_passed,
             "setup_passed": setup_passed,
             "entry_confirmation_passed": entry_confirmation,
             "entry_ready": entry_ready,
