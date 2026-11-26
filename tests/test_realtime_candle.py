@@ -41,7 +41,7 @@ class RealtimeCandleTests(unittest.TestCase):
         controller._running = False
         controller._cards = {"ABBV": {"symbol": "ABBV"}}
         controller._last_ws_subscription_monotonic = time.monotonic() - 2000.0
-        controller._last_ws_reconnect_monotonic = 0.0
+        controller._last_ws_reconnect_monotonic = time.monotonic() - 1000.0
         controller._latest_quote_sequence = {}
         controller._latest_quote_timestamp = {}
         controller._processed_quote_timestamp = {}
