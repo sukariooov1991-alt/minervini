@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 
 from app import ScanController, _quote_timestamp_order, _stable_pullback_levels
+from data.trade_levels import compute_atr
 
 
 class RealtimeCandleTests(unittest.TestCase):
@@ -56,6 +57,23 @@ class RealtimeCandleTests(unittest.TestCase):
         self.assertEqual(third["low"], 99.0)
         self.assertEqual(third["close"], 99.0)
         self.assertEqual(third["volume"], 1200.0)
+
+    def test_smart_reading_uses_the_same_wilder_atr_as_trade_levels(self):
+        controller = ScanController.__new__(ScanController)
+        close = [100.0 + (i % 5) for i in range(40)]
+        frame = pd.DataFrame({
+            "high": [value + (2.0 if i == 20 else 1.0) for i, value in enumerate(close)],
+            "low": [value - 1.0 for value in close],
+            "close": close,
+        })
+        expected_atr = compute_atr(frame, period=14)
+
+        reading = controller._build_smart_reading_from_card(
+            {"symbol": "TEST", "market_regime": "UNKNOWN"}, frame
+        )
+
+        self.assertIsNotNone(expected_atr)
+        self.assertIn(f"ATR(14) يقارب {expected_atr:.2f}", reading)
 
     def test_startup_revalidation_clears_obsolete_pullback_entry_levels(self):
         controller = ScanController.__new__(ScanController)
