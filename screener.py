@@ -25,6 +25,23 @@ from data.sp500_symbols import SP500_SYMBOLS
 log = logging.getLogger("minervini_v2")
 
 
+FUNDAMENTAL_FIELDS = (
+    "eps_current", "eps_year_ago", "revenue_current", "revenue_year_ago",
+)
+
+
+def _missing_fundamental_fields(values: dict) -> list[str]:
+    """Return required quarterly fields that are absent, nonnumeric, or nonfinite."""
+    missing = []
+    for field in FUNDAMENTAL_FIELDS:
+        try:
+            if not math.isfinite(float(values.get(field))):
+                missing.append(field)
+        except (TypeError, ValueError):
+            missing.append(field)
+    return missing
+
+
 class DailyScreener:
     def __init__(
         self,
@@ -339,18 +356,7 @@ class DailyScreener:
                                     "error": "Fundamental data unavailable; eligibility cannot be confirmed",
                                     "phase": "analysis",
                                 })
-                            required_fields = (
-                                "eps_current", "eps_year_ago",
-                                "revenue_current", "revenue_year_ago",
-                            )
-                            missing_fields = []
-                            for field in required_fields:
-                                try:
-                                    value = float(latest.get(field))
-                                    if not math.isfinite(value):
-                                        missing_fields.append(field)
-                                except (TypeError, ValueError):
-                                    missing_fields.append(field)
+                            missing_fields = _missing_fundamental_fields(latest)
 
                             if fdf.empty or missing_fields:
                                 earnings = {"passed": False}
