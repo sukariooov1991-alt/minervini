@@ -16,7 +16,7 @@ import threading
 import pandas as pd
 
 from data.storage_manager import StorageManager
-from data.us_market_calendar import get_us_equity_market_close
+from data.market_time import MarketTime, get_us_equity_market_close
 
 log = logging.getLogger(__name__)
 
@@ -149,14 +149,13 @@ def _find_nearest_prior_period(
 
 def _latest_completed_session(now_et: datetime) -> date | None:
     """Return the newest US equity session whose daily bar should be complete."""
-    timezone_et = ZoneInfo("America/New_York")
-    local_now = now_et.astimezone(timezone_et)
+    local_now = MarketTime.to_new_york(now_et)
     candidate = local_now.date()
     for _ in range(14):
         market_close = get_us_equity_market_close(candidate)
         if market_close is not None:
             completed_at = datetime.combine(
-                candidate, market_close, tzinfo=timezone_et
+                candidate, market_close, tzinfo=local_now.tzinfo
             ) + timedelta(hours=1)
             if local_now >= completed_at:
                 return candidate
