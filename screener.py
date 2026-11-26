@@ -355,7 +355,7 @@ class DailyScreener:
                             if fdf.empty or missing_fields:
                                 earnings = {"passed": False}
                                 fundamental_status = "UNKNOWN"
-                                if missing_fields:
+                                if not fdf.empty and missing_fields:
                                     failures.append({
                                         "symbol": sym,
                                         "error": "Incomplete quarterly fundamentals; missing or invalid: "
