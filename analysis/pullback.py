@@ -1,4 +1,5 @@
 """Pullback filter: looks for support, volatility contraction, and a turn back up."""
+import numpy as np
 import pandas as pd
 
 
@@ -71,7 +72,12 @@ def check_pullback(
 
     recent_window = close.iloc[-5:-1]
     had_dip = bool((recent_window < recent_window.shift(1)).iloc[1:].any())
-    turn = bool(close.iloc[-1] > close.iloc[-2] and had_dip)
+    # Confirm a reclaim of the prior session high after the pullback.
+    previous_high = (
+        float(pd.to_numeric(x["high"].iloc[-2], errors="coerce"))
+        if "high" in x.columns and pd.notna(x["high"].iloc[-2]) else float("nan")
+    )
+    turn = bool(np.isfinite(previous_high) and price > previous_high and had_dip)
 
     vol_contracted = True
     atr_ratio = float("nan")
@@ -88,12 +94,19 @@ def check_pullback(
         else:
             vol_contracted = False
 
+    support_low = (
+        float(pd.to_numeric(x["low"].iloc[-5:], errors="coerce").min())
+        if "low" in x.columns and pd.to_numeric(x["low"].iloc[-5:], errors="coerce").notna().all()
+        else float("nan")
+    )
     out.update({
         "near_average": bool(near),
         "turning_up": turn,
         "volatility_contracted": vol_contracted,
         "moving_average": average,
         "last_close": price,
+        "entry_trigger_price": previous_high if np.isfinite(previous_high) else None,
+        "support_low": support_low if np.isfinite(support_low) and support_low > 0 else None,
         "atr_ratio": atr_ratio,
     })
     out["passed"] = bool(
