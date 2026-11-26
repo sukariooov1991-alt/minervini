@@ -16,6 +16,7 @@ from flask import Flask, Response, jsonify, render_template, request, stream_wit
 
 from data.longbridge_stream import LongbridgeRealtimeClient
 from data.storage_manager import StorageManager
+from data.us_market_calendar import get_us_equity_market_close
 from data.trade_levels import build_trade_levels, evaluate_entry_range
 from data.sp500_symbols import SP500_SYMBOLS
 from data.telegram_notifier import TelegramNotifier
@@ -30,7 +31,7 @@ log = logging.getLogger("minervini_v2_app")
 BASE_DIR = Path(__file__).resolve().parent
 app = Flask(__name__, template_folder=str(BASE_DIR))
 
-MARKET_STATES = ["مفتوح", "بعد الإغلاق", "تداول ليلي", "قبل الافتتاح"]
+MARKET_STATES = ["مفتوح", "بعد الإغلاق", "تداول ليلي", "قبل الافتتاح", "مغلق"]
 
 
 def _stable_pullback_levels(
@@ -386,14 +387,16 @@ class ScanController:
                 return override
             log.warning("Invalid MARKET_SESSION_LABEL=%r; falling back to NY session clock", override)
         now_ny = datetime.now(ZoneInfo("America/New_York"))
-        if now_ny.weekday() >= 5:
-            return "بعد الإغلاق"
+        regular_close = get_us_equity_market_close(now_ny.date())
+        if regular_close is None:
+            return "مغلق"
         minutes = now_ny.hour * 60 + now_ny.minute
+        close_minutes = regular_close.hour * 60 + regular_close.minute
         if 4 * 60 <= minutes < 9 * 60 + 30:
             return "قبل الافتتاح"
-        if 9 * 60 + 30 <= minutes < 16 * 60:
+        if 9 * 60 + 30 <= minutes < close_minutes:
             return "مفتوح"
-        if 16 * 60 <= minutes < 20 * 60:
+        if close_minutes <= minutes < 20 * 60:
             return "بعد الإغلاق"
         return "تداول ليلي"
 
