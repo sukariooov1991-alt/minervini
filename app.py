@@ -117,6 +117,7 @@ class ScanController:
         for symbol, card in list(self._cards.items()):
             try:
                 history = self.storage.get_candles_df(symbol)
+                self._refresh_restored_pullback(symbol, card, history)
                 card["smart_reading"] = self._build_smart_reading_from_card(card, history)
                 self.storage.save_watchlist_card(card)
             except Exception:
@@ -149,6 +150,95 @@ class ScanController:
             daemon=True,
         )
         self._realtime_watchdog.start()
+
+    def _refresh_restored_pullback(
+        self, symbol: str, card: dict[str, Any], history: pd.DataFrame
+    ) -> None:
+        """Re-evaluate saved Pullback cards so obsolete entry flags cannot survive restart."""
+        if history is None or history.empty:
+            return
+
+        pullback = check_pullback(history)
+        pullback_passed = bool(pullback.get("passed", False))
+        pullback_candidate = bool(pullback.get("candidate", False))
+        vcp_confirmed = bool(
+            card.get("vcp_passed", False) and card.get("breakout_passed", False)
+        )
+        setup_passed = bool(card.get("vcp_passed", False) or pullback_candidate)
+
+        card.update({
+            "pullback_passed": pullback_passed,
+            "pullback_candidate": pullback_candidate,
+            "pullback_turning_up": bool(pullback.get("turning_up", False)),
+        })
+
+        # Keep an already-confirmed VCP plan intact. Otherwise rebuild or clear
+        # the Pullback plan from the current stored candles, never from an old
+        # prior-high reclaim value persisted by the former implementation.
+        if not vcp_confirmed:
+            current_price = float(
+                self._live_prices.get(symbol)
+                or pd.to_numeric(history["close"], errors="coerce").dropna().iloc[-1]
+            )
+            pullback_anchor = pullback.get("entry_trigger_price") if pullback_passed else None
+            pullback_low = pullback.get("support_low") if pullback_passed else None
+            plan = build_trade_levels(
+                symbol=symbol,
+                current_price=current_price,
+                pivot_price=pullback_anchor,
+                candles_df=history,
+                final_low=pullback_low,
+            ).to_dict()
+            entry_confirmation = pullback_passed
+            market_favorable = bool(card.get("market_favorable", False))
+            entry_ready = bool(
+                entry_confirmation
+                and market_favorable
+                and plan.get("status") == "جاهز"
+                and plan.get("within_entry_range") is True
+            )
+            card.update({
+                "current_price": round(current_price, 4),
+                "price_source": (
+                    "Longbridge WebSocket"
+                    if symbol in self._live_prices
+                    else "Stored daily data (Daily Close)"
+                ),
+                "pivot_price": plan["pivot_price"],
+                "final_low": plan["final_low"],
+                "entry_zones": plan["entry_zones"],
+                "targets": plan["targets"],
+                "shared_stop_loss": plan["shared_stop_loss"],
+                "levels_status": plan["status"],
+                "within_entry_range": plan["within_entry_range"],
+                "notes": plan["notes"],
+                "setup_passed": setup_passed,
+                "entry_confirmation_passed": entry_confirmation,
+                "entry_ready": entry_ready,
+                "passed_all_filters": entry_ready,
+            })
+            if setup_passed and not entry_confirmation:
+                card["status"] = "النموذج قيد التأكيد — لا توجد إشارة دخول"
+                card["stage"] = "المرحلة 2: تأكيد نموذج الدخول"
+            elif setup_passed and not market_favorable:
+                card["status"] = "النموذج تحقق — السوق غير مناسب"
+                card["stage"] = "المرحلة 3: تقييم حالة السوق"
+            elif setup_passed and not entry_ready:
+                card["status"] = "تأكيد النموذج تحقق — مستويات الصفقة أو نطاق الدخول غير مكتمل"
+                card["stage"] = "المرحلة 3: التحقق من مستويات الدخول"
+            elif entry_ready:
+                card["status"] = "إشارة دخول مؤكدة — النموذج والسوق والمستويات مستوفاة"
+                card["stage"] = "المرحلة 4: إشارة دخول مؤكدة"
+            else:
+                card["status"] = "انتظار — مراقبة VCP أو Pullback"
+                card["stage"] = "المرحلة 1: سهم مؤهل للمراقبة"
+
+        for item in card.get("filters", []):
+            name = item.get("name")
+            if name == "Pullback Setup":
+                item["passed"] = pullback_candidate
+            elif name == "Pullback Entry Confirmation":
+                item["passed"] = pullback_passed
 
     def _realtime_watchdog_loop(self) -> None:
         """Retry only missing symbols; live prices are delivered by WebSocket pushes."""
