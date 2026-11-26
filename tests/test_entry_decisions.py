@@ -121,6 +121,7 @@ class EntryDecisionTests(unittest.TestCase):
         self.assertNotEqual(plan.status, "جاهز")
         self.assertEqual(plan.targets, [])
         self.assertIsNone(plan.shared_stop_loss)
+        self.assertTrue(any("ATR" in note for note in plan.notes))
 
     def test_trade_plan_without_anchor_is_never_complete(self):
         frame = pd.DataFrame({
