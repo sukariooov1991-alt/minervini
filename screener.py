@@ -74,7 +74,7 @@ class DailyScreener:
         total = len(self.symbols)
         for i, sym in enumerate(self.symbols, 1):
             try:
-                n = self._get_provider(sym).fetch_and_store_daily_candles(period)
+                n = self._get_provider(sym).ensure_daily_history(initial_period=period)
                 log.info("[%s/%s] %s: stored %s bars", i, total, sym, n)
             except Exception as exc:
                 failures.append({"symbol": sym, "error": str(exc)})
@@ -110,7 +110,7 @@ class DailyScreener:
     def _fetch_market_index(self, market_symbol: str, period: str) -> pd.DataFrame:
         try:
             dp = DataProvider(market_symbol, self.storage)
-            dp.fetch_and_store_daily_candles(period)
+            dp.ensure_daily_history(initial_period=period)
             return self.storage.get_candles_df(market_symbol)
         except Exception as exc:
             log.warning("Market index %s: %s", market_symbol, exc)
@@ -189,9 +189,9 @@ class DailyScreener:
         scan_checkpoint_name = "daily_universe_update"
         completed_downloads: set[str] = set()
         if update:
-            # Successful downloads are checkpointed in SQLite after each symbol.
-            # If Render/Gunicorn restarts the worker, the next scan resumes at the
-            # first unfinished symbol instead of starting the 495-symbol universe over.
+            # Record per-symbol scan progress in SQLite for restart diagnostics.
+            # The durable candle cache independently decides whether a provider
+            # refresh is due, so completed symbols are still checked cheaply.
             completed_downloads = self.storage.get_scan_checkpoint(
                 scan_checkpoint_name, self.symbols
             )
@@ -199,20 +199,11 @@ class DailyScreener:
                 if stop_callback and stop_callback():
                     stopped = True
                     break
-                if sym in completed_downloads:
-                    processed = i
-                    if progress_callback:
-                        progress_callback({
-                            "phase": "استئناف تحميل البيانات",
-                            "completed": processed,
-                            "total": progress_total,
-                            "batch": (i - 1) // batch_size + 1,
-                            "batch_total": (total + batch_size - 1) // batch_size,
-                            "current_symbol": sym,
-                        })
-                    continue
+                # Checkpoints preserve restart visibility, but the cache itself
+                # decides whether this symbol needs a provider refresh. Always
+                # run ensure_daily_history so a stale cache cannot be skipped.
                 try:
-                    n = self._get_provider(sym).fetch_and_store_daily_candles(period)
+                    n = self._get_provider(sym).ensure_daily_history(initial_period=period)
                     self.storage.mark_scan_symbol_completed(scan_checkpoint_name, sym)
                     completed_downloads.add(sym)
                     log.info("[%s/%s] %s: stored %s bars", i, total, sym, n)
@@ -441,6 +432,13 @@ class DailyScreener:
                             ),
                             "screen_date": datetime.now(timezone.utc).date().isoformat(),
                         }
+                        if row["watchlist_eligible"]:
+                            try:
+                                # News is strategy context, not a per-scan dependency.
+                                # DataProvider serves its durable six-hour cache.
+                                self._get_provider(sym).fetch_and_store_news()
+                            except Exception:
+                                log.exception("News refresh failed for eligible symbol %s", sym)
                         rows.append(row)
                         batch_rows.append(row)
                         # Missing fundamentals remain uncertain and therefore

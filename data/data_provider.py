@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone, date
+from zoneinfo import ZoneInfo
 from typing import Any
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -253,7 +254,7 @@ class DataProvider:
         frame = frame[frame.index >= pd.Timestamp(_period_start(period))]
         return _normalise_ohlcv(frame)
 
-    def fetch_and_store_daily_candles(self, period: str = "2y") -> int:
+    def fetch_and_store_daily_candles(self, period: str = "2y", append: bool = False) -> int:
         # Daily-history fallback order: Yahoo -> Stooq -> Nasdaq -> Alpha Vantage.
         # Longbridge is intentionally reserved for realtime WebSocket quotes only.
         providers = (
@@ -268,18 +269,27 @@ class DataProvider:
                 frame = _normalise_ohlcv(fetch())
                 if frame.empty:
                     raise RuntimeError("source returned no valid OHLCV candles")
-                # The Minervini trend template needs at least 252 daily bars.
-                # A short/partial response is not accepted as a successful source.
-                if len(frame) < 252:
+                # Initial history must satisfy the 252-session Trend Template
+                # requirement. Incremental refreshes need only a valid recent bar.
+                min_required = 1 if append else 252
+                if len(frame) < min_required:
                     raise RuntimeError(
-                        f"source returned only {len(frame)} daily candles; 252 are required"
+                        f"source returned only {len(frame)} daily candles; {min_required} are required"
                     )
+                # The current session's daily bar is incomplete until the
+                # regular US session closes and the provider publishes its final OHLCV.
+                now_et = datetime.now(ZoneInfo("America/New_York"))
+                if now_et.hour < 17:
+                    frame = frame[frame.index.date < now_et.date()]
+                if frame.empty:
+                    raise RuntimeError("source returned no completed daily candles")
                 rows = [
                     (idx.strftime("%Y-%m-%d"), float(row.open), float(row.high),
                      float(row.low), float(row.close), float(row.volume))
                     for idx, row in frame.iterrows()
                 ]
-                count = self.storage.replace_candles_bulk(self.symbol, rows)
+                count = (self.storage.upsert_candles_bulk(self.symbol, rows) if append
+                         else self.storage.replace_candles_bulk(self.symbol, rows))
                 if count <= 0:
                     raise RuntimeError("no valid candles remained after storage validation")
                 self.last_source = source
@@ -292,11 +302,65 @@ class DataProvider:
             f"No daily data for {self.symbol}; all 4 daily-data providers failed. " + " | ".join(errors)
         )
 
+    def ensure_daily_history(self, initial_period: str = "2y") -> int:
+        """Use the permanent 300-bar cache; refresh only after the completed US session."""
+        cached = self.storage.get_candles_df(self.symbol)
+        refresh_key = f"daily_refresh:{self.symbol}"
+        age = self.storage.cache_age_seconds(refresh_key)
+        now_et = datetime.now(ZoneInfo("America/New_York"))
+        # A successful refresh is reused for 20 hours. If the app was offline
+        # after yesterday's close, the next scan can still fill that missing bar.
+        if len(cached) >= 300 and age is not None and age < 20 * 3600:
+            self.last_source = "SQLite daily cache"
+            return 0
+        if len(cached) >= 252 and age is not None and age < 6 * 3600:
+            self.last_source = "SQLite daily cache"
+            return 0
+        period = "10d" if len(cached) >= 252 else initial_period
+        try:
+            count = self.fetch_and_store_daily_candles(period, append=True)
+            self.storage.set_cache(refresh_key, {"last_refresh": datetime.now(timezone.utc).isoformat()})
+            return count
+        except Exception:
+            # Keep the last good history and throttle retries rather than hammering
+            # providers on every scan when a source is temporarily unavailable.
+            self.storage.set_cache(refresh_key, {"last_failed_attempt": datetime.now(timezone.utc).isoformat()})
+            raise
+
     def get_ohlcv_dataframe(self) -> pd.DataFrame:
         return self.storage.get_candles_df(self.symbol)
 
     def get_fundamentals_dataframe(self) -> pd.DataFrame:
-        """Return quarterly fundamentals; absent fields remain NaN, never fabricated."""
+        """Return the durable quarterly cache, refreshing at most weekly."""
+        cached = self.storage.get_cache(f"fundamentals:{self.symbol}", max_age_seconds=7 * 24 * 3600)
+        if isinstance(cached, list):
+            frame = pd.DataFrame(cached)
+            if "period" in frame.columns:
+                frame["period"] = pd.to_datetime(frame["period"], errors="coerce")
+            return frame.sort_values("period", ascending=False).reset_index(drop=True) if not frame.empty else frame
+        frame = self._fetch_fundamentals_dataframe()
+        if not frame.empty:
+            records = frame.copy()
+            if "period" in records.columns:
+                records["period"] = records["period"].astype(str)
+            payload = records.astype(object).where(pd.notna(records), None).to_dict(orient="records")
+            self.storage.set_cache(f"fundamentals:{self.symbol}", payload)
+            for item in payload:
+                period = str(item.get("period") or "")
+                if period:
+                    self.storage.add_event(self.symbol, "earnings", period[:10], {
+                        "period": period,
+                        "eps_current": item.get("eps_current"),
+                        "eps_year_ago": item.get("eps_year_ago"),
+                        "revenue_current": item.get("revenue_current"),
+                        "revenue_year_ago": item.get("revenue_year_ago"),
+                        "source": "yahoo_finance_quarterly",
+                    })
+        return frame
+
+    def _fetch_fundamentals_dataframe(self) -> pd.DataFrame:
+        """Fetch quarterly fundamentals; absent fields remain NaN, never fabricated."""
+
         try:
             _wait_for_yahoo_request_slot()
             q = self.ticker.quarterly_financials
@@ -349,7 +413,10 @@ class DataProvider:
         return pd.DataFrame(rows).sort_values("period", ascending=False).reset_index(drop=True)
 
     def fetch_and_store_news(self) -> list[dict[str, Any]]:
-        """Fetch news from Yahoo Finance and store in SQLite events table."""
+        """Return durable news; refresh from Yahoo at most every six hours."""
+        cached = self.storage.get_cache(f"news:{self.symbol}", max_age_seconds=6 * 3600)
+        if isinstance(cached, list):
+            return cached
         try:
             _wait_for_yahoo_request_slot()
             raw_items = getattr(self.ticker, "news", None) or []
@@ -385,4 +452,6 @@ class DataProvider:
             }
             self.storage.add_event(self.symbol, "news", ts, payload)
             stored.append({"symbol": self.symbol, "timestamp": ts, **payload})
+        # Cache successful empty responses too, avoiding repeated provider calls.
+        self.storage.set_cache(f"news:{self.symbol}", stored)
         return stored
