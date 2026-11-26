@@ -4,14 +4,7 @@ import math
 import pandas as pd
 
 
-def _prepare_df(df: pd.DataFrame) -> pd.DataFrame:
-    if df is None:
-        return pd.DataFrame()
-    out = df.copy()
-    if isinstance(out.index, pd.DatetimeIndex) and not out.index.is_monotonic_increasing:
-        out = out.sort_index()
-    return out
-
+from analysis.frame_utils import ordered_frame
 
 def check_trend_template(df: pd.DataFrame, rs_rating: float) -> dict:
     required = {"close", "high", "low"}
@@ -29,7 +22,7 @@ def check_trend_template(df: pd.DataFrame, rs_rating: float) -> dict:
         result["failed"] = ["requires close, high and low columns"]
         return result
 
-    df_clean = _prepare_df(df)
+    df_clean = ordered_frame(df)
     for col in required:
         df_clean[col] = pd.to_numeric(df_clean[col], errors="coerce")
     df_clean = df_clean.dropna(subset=["close", "high", "low"]).reset_index(drop=True)
