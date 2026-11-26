@@ -23,6 +23,27 @@ class EntryDecisionTests(unittest.TestCase):
         threshold = check_market_regime(index, breadth_pct=25.0)
         self.assertTrue(threshold["breadth_ok"])
 
+    def test_incomplete_fundamentals_are_detected_as_unknown_inputs(self):
+        from screener import _missing_fundamental_fields
+
+        self.assertEqual(
+            _missing_fundamental_fields({
+                "eps_current": 2.0,
+                "eps_year_ago": 1.0,
+                "revenue_current": 100.0,
+            }),
+            ["revenue_year_ago"],
+        )
+        self.assertEqual(
+            _missing_fundamental_fields({
+                "eps_current": 2.0,
+                "eps_year_ago": 1.0,
+                "revenue_current": 100.0,
+                "revenue_year_ago": 80.0,
+            }),
+            [],
+        )
+
     def test_market_breadth_excludes_symbols_with_failed_downloads(self):
         class FakeStorage:
             def get_candles_df(self, symbol):
