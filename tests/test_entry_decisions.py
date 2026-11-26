@@ -78,6 +78,24 @@ class EntryDecisionTests(unittest.TestCase):
         self.assertEqual(scanner.compute_market_breadth(), 50.0)
         self.assertEqual(scanner.compute_market_breadth(exclude_symbols={"A"}), 100.0)
 
+    def test_relative_strength_excludes_symbols_with_failed_daily_refresh(self):
+        class FakeStorage:
+            def get_candles_df(self, symbol):
+                close = [100.0 + i * (0.1 if symbol == "A" else 0.2) for i in range(253)]
+                return pd.DataFrame({
+                    "date": pd.date_range("2025-01-01", periods=253, freq="B"),
+                    "close": close,
+                })
+
+        scanner = DailyScreener.__new__(DailyScreener)
+        scanner.symbols = ["A", "B"]
+        scanner.storage = FakeStorage()
+
+        ratings, frames = scanner.compute_rs_ratings(exclude_symbols={"A"})
+
+        self.assertEqual(set(ratings), {"B"})
+        self.assertEqual(set(frames), {"B"})
+
     def _pullback_frame(self, current_open, current_close):
         close = [100.0] * 74 + [99.5, 99.0, 98.7, 98.2, 98.0]
         low = [value - 0.5 for value in close]
