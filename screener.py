@@ -131,7 +131,8 @@ class DailyScreener:
             if sym.upper().strip() in excluded:
                 continue
             df = self.storage.get_candles_df(sym)
-            if len(df) >= 252:
+            # RS needs 253 closes to compare the latest close with the close 252 sessions earlier.
+            if len(df) >= 253:
                 frames[sym] = df
             if len(df) >= 253:
                 prices[sym] = df.set_index("date")["close"]
@@ -343,15 +344,17 @@ class DailyScreener:
                     df = frames.get(sym)
                     if df is None:
                         df = self.storage.get_candles_df(sym)
-                    if len(df) < 252:
+                    # A 252-session return requires 253 closing prices. Do not
+                    # treat a missing RS rating as a genuine Trend Template failure.
+                    if len(df) < 253:
                         available = len(df)
                         log.warning(
-                            "Skipping %s during analysis: insufficient daily candles (%s; need 252)",
+                            "Skipping %s during analysis: insufficient daily candles (%s; need 253)",
                             sym, available,
                         )
                         failures.append({
                             "symbol": sym,
-                            "error": f"Insufficient daily candles: {available}; 252 required",
+                            "error": f"Insufficient daily candles: {available}; 253 required for RS",
                             "phase": "history",
                         })
                         continue
