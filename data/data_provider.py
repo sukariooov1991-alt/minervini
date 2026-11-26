@@ -308,6 +308,19 @@ class DataProvider:
         refresh_key = f"daily_refresh:{self.symbol}"
         refresh_state = self.storage.get_cache(refresh_key)
         age = self.storage.cache_age_seconds(refresh_key)
+        now_et = datetime.now(ZoneInfo("America/New_York"))
+        today_et = now_et.date().isoformat()
+        latest_bar_date = (
+            cached["date"].iloc[-1].date().isoformat()
+            if not cached.empty and "date" in cached.columns else None
+        )
+        after_regular_close = now_et.weekday() < 5 and now_et.hour >= 17
+        needs_post_close_check = bool(
+            after_regular_close
+            and latest_bar_date != today_et
+            and (not isinstance(refresh_state, dict)
+                 or refresh_state.get("post_close_check_date") != today_et)
+        )
 
         # A failed refresh must never be recorded as a successful refresh. Keep
         # the last good candles, but throttle repeated provider calls for 15 min.
@@ -322,33 +335,44 @@ class DataProvider:
                 "retaining the last good SQLite candles and retrying after the cooldown."
             )
 
-        # Only a successful provider refresh starts the 20-hour freshness window.
+        # Reuse the successful cache, except for one explicit check after today's
+        # regular close: an intraday scan must not suppress today's completed bar.
         if (
             isinstance(refresh_state, dict)
             and refresh_state.get("last_refresh")
             and age is not None
             and age < 20 * 3600
-            and len(cached) >= 252
+            and not needs_post_close_check
         ):
             self.last_source = "SQLite daily cache"
             return 0
 
-        # A partial history (252-299 bars) must be topped up from the full
-        # initial window; requesting only 10 days would leave it permanently short.
+        # A partial history (<300) must be topped up from the full initial window.
         period = "10d" if len(cached) >= self.storage.MAX_CANDLES else initial_period
         try:
             count = self.fetch_and_store_daily_candles(period, append=True)
-            self.storage.set_cache(
-                refresh_key,
-                {"last_refresh": datetime.now(timezone.utc).isoformat()},
-            )
+            new_state = {
+                "last_refresh": datetime.now(timezone.utc).isoformat(),
+                "post_close_check_date": (
+                    today_et if after_regular_close
+                    else (refresh_state.get("post_close_check_date")
+                          if isinstance(refresh_state, dict) else None)
+                ),
+            }
+            self.storage.set_cache(refresh_key, new_state)
             return count
         except Exception:
             # Store failure state separately in the payload. Do not advance the
             # successful-refresh timestamp or disguise stale history as fresh.
             self.storage.set_cache(
                 refresh_key,
-                {"last_failed_attempt": datetime.now(timezone.utc).isoformat()},
+                {
+                    "last_failed_attempt": datetime.now(timezone.utc).isoformat(),
+                    "post_close_check_date": (
+                        refresh_state.get("post_close_check_date")
+                        if isinstance(refresh_state, dict) else None
+                    ),
+                },
             )
             raise
 
