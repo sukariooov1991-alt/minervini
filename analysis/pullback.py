@@ -62,22 +62,23 @@ def check_pullback(df: pd.DataFrame, **_unused) -> dict:
     else:
         turning_up = current_close > previous_close
 
+    valid_support = support_low > 0 and support_low < current_close
     result.update({
         "candidate": prior_decline,
         "pullback_detected": prior_decline,
         "turning_up": bool(turning_up),
-        "support_low": support_low if support_low > 0 else None,
+        "support_low": support_low if valid_support else None,
         "last_close": current_close,
         "entry_trigger_price": current_close if prior_decline and turning_up else None,
-        "passed": bool(prior_decline and turning_up and support_low > 0),
-        "entry_eligible": bool(prior_decline and turning_up and support_low > 0),
+        "passed": bool(prior_decline and turning_up and valid_support),
+        "entry_eligible": bool(prior_decline and turning_up and valid_support),
     })
     if not prior_decline:
         result["reason"] = "no recent pullback detected in the preceding five bars"
     elif not turning_up:
         result["reason"] = "pullback detected; waiting for price to turn upward"
-    elif support_low <= 0:
-        result["reason"] = "invalid pullback low; no trade levels can be anchored"
+    elif not valid_support:
+        result["reason"] = "pullback low is not below the turn-up price; no structural stop can be anchored"
     else:
         result["reason"] = (
             "pullback followed by a positive current candle; "
