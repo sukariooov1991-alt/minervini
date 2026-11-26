@@ -258,42 +258,74 @@ class DataProvider:
         # Daily-history fallback order: Yahoo -> Stooq -> Nasdaq -> Alpha Vantage.
         # Longbridge is intentionally reserved for realtime WebSocket quotes only.
         providers = (
-            ("Yahoo Finance", lambda: self._fetch_yahoo(period)),
-            ("Stooq", lambda: self._fetch_stooq(period)),
-            ("Nasdaq public data", lambda: self._fetch_nasdaq(period)),
-            ("Alpha Vantage", lambda: self._fetch_alpha_vantage(period)),
+            ("Yahoo Finance", self._fetch_yahoo),
+            ("Stooq", self._fetch_stooq),
+            ("Nasdaq public data", self._fetch_nasdaq),
+            ("Alpha Vantage", self._fetch_alpha_vantage),
         )
+        source_key = f"daily_source:{self.symbol}"
+        previous_source = self.storage.get_cache(source_key)
+        existing_count = len(self.storage.get_candles_df(self.symbol))
         errors = []
+
+        def completed_frame(raw_frame: pd.DataFrame) -> pd.DataFrame:
+            frame = _normalise_ohlcv(raw_frame)
+            if frame.empty:
+                raise RuntimeError("source returned no valid OHLCV candles")
+            # The current session's daily bar is incomplete until the regular
+            # US session closes and the provider publishes its final OHLCV.
+            now_et = datetime.now(ZoneInfo("America/New_York"))
+            if now_et.hour < 17:
+                frame = frame[frame.index.date < now_et.date()]
+            if frame.empty:
+                raise RuntimeError("source returned no completed daily candles")
+            return frame
+
         for source, fetch in providers:
             try:
-                frame = _normalise_ohlcv(fetch())
-                if frame.empty:
-                    raise RuntimeError("source returned no valid OHLCV candles")
-                # Initial history must satisfy the 252-session Trend Template
-                # requirement. Incremental refreshes need only a valid recent bar.
+                frame = completed_frame(fetch(period))
+                # Validate the number of COMPLETED bars, not the raw response:
+                # the current unfinished session may be removed above.
                 min_required = 1 if append else 252
                 if len(frame) < min_required:
                     raise RuntimeError(
-                        f"source returned only {len(frame)} daily candles; {min_required} are required"
+                        f"source returned only {len(frame)} completed daily candles; "
+                        f"{min_required} are required"
                     )
-                # The current session's daily bar is incomplete until the
-                # regular US session closes and the provider publishes its final OHLCV.
-                now_et = datetime.now(ZoneInfo("America/New_York"))
-                if now_et.hour < 17:
-                    frame = frame[frame.index.date < now_et.date()]
-                if frame.empty:
-                    raise RuntimeError("source returned no completed daily candles")
+
+                # Never merge adjusted prices from different vendors. When the
+                # source changes (or legacy cache has no source tag), fetch a
+                # full replacement from the new source before writing anything.
+                source_changed = bool(
+                    append
+                    and existing_count >= 252
+                    and (not previous_source or previous_source != source)
+                )
+                if source_changed:
+                    reason = "unknown legacy source" if not previous_source else (
+                        f"source changed from {previous_source} to {source}"
+                    )
+                    log.warning("%s: %s; rebasing the full daily history", self.symbol, reason)
+                    frame = completed_frame(fetch("2y"))
+                    if len(frame) < 252:
+                        raise RuntimeError(
+                            f"full source rebase returned only {len(frame)} completed candles; 252 are required"
+                        )
+
                 rows = [
                     (idx.strftime("%Y-%m-%d"), float(row.open), float(row.high),
                      float(row.low), float(row.close), float(row.volume))
                     for idx, row in frame.iterrows()
                 ]
-                count = (self.storage.upsert_candles_bulk(self.symbol, rows) if append
-                         else self.storage.replace_candles_bulk(self.symbol, rows))
+                if source_changed or not append:
+                    count = self.storage.replace_candles_bulk(self.symbol, rows)
+                else:
+                    count = self.storage.upsert_candles_bulk(self.symbol, rows)
                 if count <= 0:
                     raise RuntimeError("no valid candles remained after storage validation")
+                self.storage.set_cache(source_key, source)
                 self.last_source = source
-                log.info("%s: fetched %s daily candles from %s", self.symbol, count, source)
+                log.info("%s: fetched %s completed daily candles from %s", self.symbol, count, source)
                 return count
             except Exception as exc:
                 errors.append(f"{source}: {exc}")
