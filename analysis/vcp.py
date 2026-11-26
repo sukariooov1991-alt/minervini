@@ -3,12 +3,7 @@ import numpy as np
 import pandas as pd
 
 
-def _prepare_df(df: pd.DataFrame) -> pd.DataFrame:
-    out = df.copy()
-    if isinstance(out.index, pd.DatetimeIndex) and not out.index.is_monotonic_increasing:
-        out = out.sort_index()
-    return out.reset_index(drop=True)
-
+from analysis.frame_utils import ordered_frame
 
 def _find_swing_pivots(df: pd.DataFrame, order: int = 3) -> list[dict]:
     highs = pd.to_numeric(df["high"], errors="coerce").to_numpy(dtype=float)
@@ -100,7 +95,7 @@ def check_vcp(
         out["failed"] = ["requires high, low, close, volume and at least 50 bars"]
         return out
 
-    base = _prepare_df(df).tail(min(len(df), lookback_bars)).reset_index(drop=True)
+    base = ordered_frame(df, reset_index=True).tail(min(len(df), lookback_bars)).reset_index(drop=True)
     pivots = _find_swing_pivots(base, order=pivot_order)
     all_contractions = _extract_contractions(pivots)
 
@@ -195,7 +190,7 @@ def check_breakout(
     if len(df) < volume_average_period + 1:
         return False
 
-    x = _prepare_df(df)
+    x = ordered_frame(df, reset_index=True)
     if pivot is None or not np.isfinite(pivot):
         vcp_info = check_vcp(x.iloc[:-1])
         if require_vcp_structure and not vcp_info["passed"]:
