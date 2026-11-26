@@ -698,7 +698,7 @@ class ScanController:
             return None
 
         # Independent entry paths: VCP needs its Pivot breakout; Pullback
-        # needs its own reclaim trigger from check_pullback().
+        # needs an observed turn-up after a recent decline.
         setup_passed = bool(vcp_passed or pullback_passed)
         entry_confirmation_passed = bool(
             (vcp_passed and br) or pullback_passed
