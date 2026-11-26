@@ -466,6 +466,23 @@ class DataProvider:
     def get_ohlcv_dataframe(self) -> pd.DataFrame:
         return self.storage.get_candles_df(self.symbol)
 
+    def _persist_earnings_events(self, frame: pd.DataFrame) -> None:
+        """Idempotently backfill durable earnings events from cached statements."""
+        if frame is None or frame.empty or "period" not in frame.columns:
+            return
+        for item in frame.to_dict(orient="records"):
+            period = str(item.get("period") or "")
+            if not period or period.lower() == "nat":
+                continue
+            self.storage.add_event(self.symbol, "earnings", period[:10], {
+                "period": period,
+                "eps_current": item.get("eps_current"),
+                "eps_year_ago": item.get("eps_year_ago"),
+                "revenue_current": item.get("revenue_current"),
+                "revenue_year_ago": item.get("revenue_year_ago"),
+                "source": "yahoo_finance_quarterly",
+            })
+
     def get_fundamentals_dataframe(self) -> pd.DataFrame:
         """Return cached quarterly fundamentals; cache empty responses briefly to avoid request storms."""
         cache_key = f"fundamentals:{self.symbol}"
@@ -479,7 +496,12 @@ class DataProvider:
                 frame = pd.DataFrame(cached)
                 if "period" in frame.columns:
                     frame["period"] = pd.to_datetime(frame["period"], errors="coerce")
-                return frame.sort_values("period", ascending=False).reset_index(drop=True) if not frame.empty else frame
+                frame = frame.sort_values("period", ascending=False).reset_index(drop=True) if not frame.empty else frame
+                # The cache may have been committed immediately before a
+                # process restart interrupted event persistence. Replaying the
+                # idempotent upsert on cache hits repairs that partial write.
+                self._persist_earnings_events(frame)
+                return frame
 
         frame = self._fetch_fundamentals_dataframe()
         records = frame.copy()
@@ -488,17 +510,7 @@ class DataProvider:
         payload = records.astype(object).where(pd.notna(records), None).to_dict(orient="records")
         # Persist empty results too, with a shorter retry window above.
         self.storage.set_cache(cache_key, payload)
-        for item in payload:
-            period = str(item.get("period") or "")
-            if period:
-                self.storage.add_event(self.symbol, "earnings", period[:10], {
-                    "period": period,
-                    "eps_current": item.get("eps_current"),
-                    "eps_year_ago": item.get("eps_year_ago"),
-                    "revenue_current": item.get("revenue_current"),
-                    "revenue_year_ago": item.get("revenue_year_ago"),
-                    "source": "yahoo_finance_quarterly",
-                })
+        self._persist_earnings_events(frame)
         return frame
 
     def _fetch_fundamentals_dataframe(self) -> pd.DataFrame:
