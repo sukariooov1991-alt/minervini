@@ -347,7 +347,6 @@
         el.classList.toggle('is-open', openCards.has(c.symbol));
 
         el.querySelector('.symbol').textContent = c.symbol;
-        const priceSource = c.price_source || 'مصدر السعر غير محدد';
         const rawQuoteTime = c.price_timestamp;
         let quoteDate = null;
         if (rawQuoteTime !== null && rawQuoteTime !== undefined && rawQuoteTime !== '') {
@@ -364,7 +363,7 @@
         }
         const priceUpdated = quoteDate ? quoteDate.toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '';
         const priceSession = c.price_session ? ' — الجلسة: ' + c.price_session : '';
-        el.querySelector('.price-text').textContent = ` السعر: ${c.current_price} — ${priceSource}${priceSession}${priceUpdated ? ' (' + priceUpdated + ')' : ''}`;
+        el.querySelector('.price-text').textContent = ` السعر: ${c.current_price}${priceSession}${priceUpdated ? ' (' + priceUpdated + ')' : ''}`;
         el.querySelector('.status-stage-text').textContent = `${c.status} — ${c.stage}`;
         const levelsStatus = c.levels_status || 'غير متاح';
         const renderLevelValues = (selector, values, fallback) => {
