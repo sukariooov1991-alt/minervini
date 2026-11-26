@@ -135,7 +135,7 @@ class ScanController:
         self._realtime_watchdog.start()
 
     def _realtime_watchdog_loop(self) -> None:
-        """Periodically verify subscriptions and refresh quotes if pushes stall."""
+        """Retry only missing symbols; live prices are delivered by WebSocket pushes."""
         while True:
             time.sleep(30)
             if not self.lb_client.has_credentials():
@@ -148,16 +148,7 @@ class ScanController:
                 restored = self.lb_client.ensure_subscriptions(symbols)
                 if restored:
                     log.warning(
-                        "Longbridge watchdog restored quote subscriptions: %s",
-                        ",".join(restored),
-                    )
-                # WebSocket is the sole live-price feed. The watchdog only
-                # retries symbols not yet accepted by the persistent context;
-                # it must not poll Quote API or create per-symbol requests.
-                restored = self.lb_client.ensure_subscriptions(symbols)
-                if restored:
-                    log.warning(
-                        "Longbridge watchdog subscribed missing symbols: %s",
+                        "Longbridge watchdog bulk-subscribed missing symbols: %s",
                         ",".join(restored),
                     )
             except Exception:
