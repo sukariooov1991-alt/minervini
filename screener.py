@@ -74,7 +74,7 @@ class DailyScreener:
         total = len(self.symbols)
         for i, sym in enumerate(self.symbols, 1):
             try:
-                n = self._get_provider(sym).fetch_and_store_daily_candles(period)
+                n = self._get_provider(sym).ensure_daily_history(initial_period=period)
                 log.info("[%s/%s] %s: stored %s bars", i, total, sym, n)
             except Exception as exc:
                 failures.append({"symbol": sym, "error": str(exc)})
