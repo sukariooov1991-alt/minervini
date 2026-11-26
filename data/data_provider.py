@@ -22,9 +22,6 @@ _YAHOO_REQUEST_LOCK = threading.Lock()
 _YAHOO_NEXT_REQUEST_AT = 0.0
 _YAHOO_MIN_REQUEST_INTERVAL = 1.25
 
-_LONGBRIDGE_CONTEXT_LOCK = threading.Lock()
-_LONGBRIDGE_CONTEXT = None
-
 
 class YahooRateLimitError(RuntimeError):
     """Legacy compatibility exception; market-data failover now handles Yahoo failures."""
@@ -233,74 +230,6 @@ class DataProvider:
             frame = pd.read_csv(response)
         return _normalise_ohlcv(frame)
 
-    def _fetch_longbridge(self, period: str) -> pd.DataFrame:
-        """Fetch adjusted daily candles from the already-configured Longbridge account."""
-        app_key = os.getenv("LONGBRIDGE_APP_KEY", "").strip()
-        app_secret = os.getenv("LONGBRIDGE_APP_SECRET", "").strip()
-        access_token = os.getenv("LONGBRIDGE_ACCESS_TOKEN", "").strip()
-        if not (app_key and app_secret and access_token):
-            raise RuntimeError(
-                "Longbridge credentials are not configured "
-                "(LONGBRIDGE_APP_KEY, LONGBRIDGE_APP_SECRET, LONGBRIDGE_ACCESS_TOKEN)"
-            )
-
-        global _LONGBRIDGE_CONTEXT
-        with _LONGBRIDGE_CONTEXT_LOCK:
-            if _LONGBRIDGE_CONTEXT is None:
-                try:
-                    from longbridge.openapi import Config, QuoteContext
-                except ImportError as exc:
-                    raise RuntimeError("Longbridge SDK is not installed") from exc
-                # The SDK's Rust-backed Config must be created through
-                # its supported factory, not the unsupported direct constructor.
-                config = Config.from_apikey(
-                    app_key,
-                    app_secret,
-                    access_token,
-                )
-                _LONGBRIDGE_CONTEXT = QuoteContext(config)
-            ctx = _LONGBRIDGE_CONTEXT
-
-        # Longbridge US securities use the .US market suffix. Preserve class
-        # separators (for example BRK.B.US) rather than changing the ticker.
-        lb_symbol = self.symbol if self.symbol.endswith(".US") else f"{self.symbol}.US"
-        from longbridge.openapi import AdjustType, Period
-        # Longbridge limits each history_candlesticks_by_date response to
-        # 100 candles. Split multi-year requests into 90-calendar-day windows
-        # so each request remains below that hard API limit.
-        from datetime import timedelta
-
-        start_date = _period_start(period)
-        end_date = pd.Timestamp.now().date()
-        cursor = start_date
-        rows = []
-        while cursor <= end_date:
-            chunk_end = min(cursor + timedelta(days=89), end_date)
-            candles = ctx.history_candlesticks_by_date(
-                lb_symbol,
-                Period.Day,
-                AdjustType.ForwardAdjust,
-                cursor,
-                chunk_end,
-            )
-            for candle in candles or []:
-                rows.append({
-                    "date": getattr(candle, "timestamp", None),
-                    "open": getattr(candle, "open", None),
-                    "high": getattr(candle, "high", None),
-                    "low": getattr(candle, "low", None),
-                    "close": getattr(candle, "close", None),
-                    "volume": getattr(candle, "volume", None),
-                })
-            cursor = chunk_end + timedelta(days=1)
-
-        if not rows:
-            raise RuntimeError("Longbridge returned no historical daily candles")
-        frame = _normalise_ohlcv(pd.DataFrame(rows))
-        if frame.empty:
-            raise RuntimeError("Longbridge returned no valid historical daily candles")
-        return frame
-
     def _fetch_alpha_vantage(self, period: str) -> pd.DataFrame:
         if self.symbol.startswith("^"):
             raise RuntimeError("Alpha Vantage daily stock endpoint does not support index symbols")
@@ -329,12 +258,11 @@ class DataProvider:
         return _normalise_ohlcv(frame)
 
     def fetch_and_store_daily_candles(self, period: str = "2y") -> int:
-        # Daily-history fallback order: Yahoo -> Stooq -> Nasdaq -> Longbridge -> Alpha Vantage.
+        # Daily-history fallback order: Yahoo -> Stooq -> Nasdaq -> Alpha Vantage.\n        # Longbridge is intentionally reserved for realtime WebSocket quotes only.
         providers = (
             ("Yahoo Finance", lambda: self._fetch_yahoo(period)),
             ("Stooq", lambda: self._fetch_stooq(period)),
             ("Nasdaq public data", lambda: self._fetch_nasdaq(period)),
-            ("Longbridge", lambda: self._fetch_longbridge(period)),
             ("Alpha Vantage", lambda: self._fetch_alpha_vantage(period)),
         )
         errors = []
@@ -364,7 +292,7 @@ class DataProvider:
                 errors.append(f"{source}: {exc}")
                 log.warning("%s unavailable for %s; trying next provider: %s", source, self.symbol, exc)
         raise ValueError(
-            f"No daily data for {self.symbol}; all 5 providers failed. " + " | ".join(errors)
+            f"No daily data for {self.symbol}; all 4 daily-data providers failed. " + " | ".join(errors)
         )
 
     def get_ohlcv_dataframe(self) -> pd.DataFrame:
