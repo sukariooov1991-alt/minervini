@@ -625,12 +625,13 @@ class DailyScreener:
             self.storage.clear_scan_checkpoint(scan_checkpoint_name)
         log.info(
             "STEP=SCREENING_SUMMARY STATUS=%s symbols=%s rows=%s failures=%s "
-            "download_failures=%s analysis_failures=%s fundamentals_warnings=%s "
-            "history_warnings=%s stopped=%s",
+            "download_failures=%s analysis_failures=%s relative_strength_warnings=%s "
+            "fundamentals_warnings=%s history_warnings=%s stopped=%s",
             "STOPPED" if stopped else ("COMPLETED_WITH_WARNINGS" if failures else "SUCCESS"),
             total, len(result), len(failures),
             sum(1 for item in failures if item.get("phase") == "download"),
             sum(1 for item in failures if item.get("phase") == "analysis_error"),
+            sum(1 for item in failures if item.get("phase") == "relative_strength"),
             sum(1 for item in failures if item.get("phase") == "fundamentals"),
             sum(1 for item in failures if item.get("phase") == "history"),
             stopped,
