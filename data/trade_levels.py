@@ -1,9 +1,8 @@
-"""Independent module for entry zones, dynamic ATR targets, and shared stop loss.
+"""Trade-plan calculations: staged entries, risk-based target projections, and shared stop.
 
-Calculates automatically:
-- 5 entry zones distributed across the 5% range from pivot_price (max 5% range; no chasing above range).
-- 5 dynamic targets (one per entry zone) driven by ATR and daily stock movement.
-- 1 shared stop loss across all 5 entry zones anchored below the strategy base / final_low / pivot structure.
+The 2:1-to-3:1 reward/risk ladder and 10% maximum stop distance reflect Minervini's
+published risk framework. Five intermediate levels and the structural stop buffer
+are implementation choices, not individually prescribed Minervini rules.
 """
 from __future__ import annotations
 
@@ -15,6 +14,7 @@ import pandas as pd
 
 
 MAX_ENTRY_RANGE_PCT: float = 5.0
+MAX_INITIAL_STOP_LOSS_PCT: float = 10.0
 NUM_ZONES: int = 5
 
 
@@ -300,7 +300,7 @@ def build_trade_levels(
     stop_within_max_loss = bool(
         stop_risk_pct is not None
         and np.isfinite(stop_risk_pct)
-        and stop_risk_pct <= 10.0 + 1e-9
+        and stop_risk_pct <= MAX_INITIAL_STOP_LOSS_PCT + 1e-9
     )
     stop_valid = stop_beyond_entries and stop_within_max_loss
     has_complete_levels = entries_valid and targets_valid and stop_valid
@@ -316,7 +316,7 @@ def build_trade_levels(
     elif not stop_within_max_loss:
         notes.append(
             f"المخاطرة من أعلى منطقة دخول إلى الوقف تبلغ {stop_risk_pct:.2f}%؛ "
-            "تتجاوز الحد الأقصى 10% ولا تُعتمد الخطة."
+            f"تتجاوز الحد الأقصى {MAX_INITIAL_STOP_LOSS_PCT:.0f}% ولا تُعتمد الخطة."
         )
     status = "جاهز" if has_complete_levels else "غير مكتمل"
 
