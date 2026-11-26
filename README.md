@@ -25,4 +25,4 @@ Nasdaq's public endpoint does not require a key, but it is an undocumented publi
 
 ## Pullback entry path
 
-Pullback is evaluated independently from VCP. The screener looks for a recent decline and waits for the current candle to turn upward before exposing a Pullback entry. Because Minervini's published material does not define one universal numeric turn-up trigger or fixed stop, the current candle test is an explicit implementation proxy (close above its open and previous close), not a quoted Minervini formula. The pullback's recent low anchors the structural risk level.
+Pullback is evaluated independently from VCP. The screener keeps a recent-decline candidate visible, then waits for the current candle to turn upward before confirming a Pullback entry. Because Minervini's published material does not define one universal numeric turn-up trigger or fixed stop, the current candle test is an explicit implementation proxy (close above its open and previous close), not a quoted Minervini formula. The pullback's recent low anchors the structural risk level.
