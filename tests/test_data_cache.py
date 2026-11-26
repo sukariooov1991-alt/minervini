@@ -80,6 +80,31 @@ class PermanentDataCacheTests(unittest.TestCase):
         self.assertEqual(len(events), 2)
         self.assertEqual({item["payload"]["title"] for item in events}, {"Article A", "Article B"})
 
+    def test_yahoo_daily_history_uses_raw_ohlc_to_match_live_quote_basis(self):
+        provider = DataProvider.__new__(DataProvider)
+        provider.symbol = "BASIS"
+        captured = {}
+
+        class FakeTicker:
+            def history(self, **kwargs):
+                captured.update(kwargs)
+                day = pd.Timestamp("2026-11-25")
+                return pd.DataFrame({
+                    "Open": [100.0],
+                    "High": [102.0],
+                    "Low": [99.0],
+                    "Close": [101.0],
+                    "Adj Close": [100.5],
+                    "Volume": [1000.0],
+                }, index=[day])
+
+        provider.ticker = FakeTicker()
+        with patch("data.data_provider._wait_for_yahoo_request_slot"):
+            frame = provider._fetch_yahoo("10d")
+
+        self.assertFalse(captured["auto_adjust"])
+        self.assertEqual(frame.iloc[0]["close"], 101.0)
+
     def test_prior_year_quarter_matching_allows_53_week_fiscal_calendar(self):
         from data.data_provider import _find_nearest_prior_period
 
@@ -234,7 +259,7 @@ class PermanentDataCacheTests(unittest.TestCase):
             for day in initial_dates
         ]
         self.storage.upsert_candles_bulk("NVDA", initial_rows)
-        self.storage.set_cache("daily_source:NVDA", "Yahoo Finance")
+        self.storage.set_cache("daily_source:NVDA", "Yahoo Finance (raw OHLC)")
         new_dates = pd.bdate_range(initial_dates[-1] + pd.offsets.BDay(1), periods=10)
         recent = pd.DataFrame({
             "open": [11.0] * 10,
@@ -278,7 +303,7 @@ class PermanentDataCacheTests(unittest.TestCase):
         self.assertEqual(len(stored), 300)
         self.assertEqual(stored.iloc[0]["date"], pd.Timestamp(dates[201]))
         self.assertEqual(stored.iloc[-1]["date"], pd.Timestamp(dates[-1]))
-        self.assertEqual(self.storage.get_cache("daily_source:FIRST"), "Yahoo Finance")
+        self.assertEqual(self.storage.get_cache("daily_source:FIRST"), "Yahoo Finance (raw OHLC)")
 
     def test_provider_change_rebases_full_history_instead_of_mixing_prices(self):
         old_dates = pd.bdate_range("2024-01-01", periods=300)
@@ -327,7 +352,7 @@ class PermanentDataCacheTests(unittest.TestCase):
             for day in dates
         ]
         self.storage.upsert_candles_bulk("MSFT", rows)
-        self.storage.set_cache("daily_source:MSFT", "Yahoo Finance")
+        self.storage.set_cache("daily_source:MSFT", "Yahoo Finance (raw OHLC)")
         provider = DataProvider.__new__(DataProvider)
         provider.symbol = "MSFT"
         provider.storage = self.storage
@@ -375,7 +400,7 @@ class PermanentDataCacheTests(unittest.TestCase):
             for day in dates
         ]
         self.storage.upsert_candles_bulk("IPO", rows)
-        self.storage.set_cache("daily_source:IPO", "Yahoo Finance")
+        self.storage.set_cache("daily_source:IPO", "Yahoo Finance (raw OHLC)")
         provider = DataProvider.__new__(DataProvider)
         provider.symbol = "IPO"
         provider.storage = self.storage
