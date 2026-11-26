@@ -148,25 +148,27 @@ def default_targets(
     candles_df: pd.DataFrame | None = None,
     final_low: float | None = None,
 ) -> list[float]:
-    if (
-        not entry_zones
-        or atr_val is None
-        or not np.isfinite(atr_val)
-        or float(atr_val) <= 0
-    ):
+    if not entry_zones:
         return []
 
-    atr_f = float(atr_val)
-    # Target projections use ATR only. Using abs(daily_move) here made a
-    # sharp down day expand targets just as much as a strong up day.
-    move_factor = 1.0
+    # Minervini's risk framework targets at least 2:1 reward/risk and aims
+    # for 3:1. Build the five UI reference levels from the actual stop distance,
+    # rather than unrelated ATR multiples. These intermediate steps are a
+    # presentation ladder, not five separately prescribed Minervini targets.
+    stop_val = default_shared_stop_loss(
+        entry_zones, cur_p, piv_p, atr_val, daily_move, candles_df, final_low
+    )
+    if stop_val is None or not np.isfinite(stop_val) or stop_val <= 0:
+        return []
 
-    multipliers = (1.0, 1.5, 2.0, 2.75, 3.5)
+    reward_risk_multiples = (2.0, 2.25, 2.5, 2.75, 3.0)
     calculated_targets: list[float] = []
     for idx, zone_price in enumerate(entry_zones):
-        z_f = float(zone_price)
-        mult = multipliers[min(idx, len(multipliers) - 1)]
-        target_val = z_f + (atr_f * mult * move_factor)
+        entry = float(zone_price)
+        risk_per_share = entry - float(stop_val)
+        if not np.isfinite(risk_per_share) or risk_per_share <= 0:
+            return []
+        target_val = entry + risk_per_share * reward_risk_multiples[idx]
         calculated_targets.append(round(target_val, 4))
 
     return calculated_targets
@@ -284,13 +286,23 @@ def build_trade_levels(
         len(targets) == NUM_ZONES
         and all(np.isfinite(v) and v > entry for v, entry in zip(targets, entry_zones))
     ) if entries_valid else False
-    stop_valid = (
+    stop_beyond_entries = bool(
         shared_stop is not None
         and np.isfinite(shared_stop)
         and shared_stop > 0
         and entries_valid
         and shared_stop < entry_zones[0]
     )
+    stop_risk_pct = (
+        max((entry - shared_stop) / entry * 100.0 for entry in entry_zones)
+        if stop_beyond_entries else None
+    )
+    stop_within_max_loss = bool(
+        stop_risk_pct is not None
+        and np.isfinite(stop_risk_pct)
+        and stop_risk_pct <= 10.0 + 1e-9
+    )
+    stop_valid = stop_beyond_entries and stop_within_max_loss
     has_complete_levels = entries_valid and targets_valid and stop_valid
     if not entries_valid:
         notes.append("مستويات الدخول غير صالحة أو غير مرتبة.")
@@ -299,8 +311,13 @@ def build_trade_levels(
             notes.append("الأهداف غير متاحة لعدم توفر ATR صالح؛ لم يتم توليد أهداف تقديرية.")
         else:
             notes.append("يوجد هدف غير صالح أو لا يتجاوز منطقة دخوله.")
-    if not stop_valid:
+    if not stop_beyond_entries:
         notes.append("وقف الخسارة غير صالح أو ليس أسفل جميع مناطق الدخول.")
+    elif not stop_within_max_loss:
+        notes.append(
+            f"المخاطرة من أعلى منطقة دخول إلى الوقف تبلغ {stop_risk_pct:.2f}%؛ "
+            "تتجاوز الحد الأقصى 10% ولا تُعتمد الخطة."
+        )
     status = "جاهز" if has_complete_levels else "غير مكتمل"
 
     return TradeLevelsPlan(
