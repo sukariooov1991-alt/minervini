@@ -22,17 +22,17 @@ class EntryDecisionTests(unittest.TestCase):
         threshold = check_market_regime(index, breadth_pct=25.0)
         self.assertTrue(threshold["breadth_ok"])
 
-    def test_pullback_requires_reclaim_of_previous_high(self):
-        n = 80
-        close = [100.0] * (n - 6) + [99.0, 98.5, 98.0, 98.4, 98.7, 99.0]
-        high = [v + 0.4 for v in close]
-        low = [v - 0.4 for v in close]
-        frame = pd.DataFrame({"close": close, "high": high, "low": low, "volume": [100000.0] * n})
-        result = check_pullback(frame, require_volatility_contraction=False, proximity_pct=5.0)
+    def test_pullback_is_manual_review_only_without_source_defined_trigger(self):
+        frame = pd.DataFrame({
+            "close": [100.0, 99.0, 98.0],
+            "high": [101.0, 100.0, 99.0],
+            "low": [99.0, 98.0, 97.0],
+            "volume": [100000.0] * 3,
+        })
+        result = check_pullback(frame)
         self.assertFalse(result["passed"])
-        self.assertFalse(result["turning_up"])
-        self.assertIsNotNone(result["entry_trigger_price"])
-        self.assertIsNotNone(result["support_low"])
+        self.assertFalse(result["entry_eligible"])
+        self.assertIn("manual review", result["reason"].lower())
 
     def test_trade_plan_without_anchor_is_never_complete(self):
         frame = pd.DataFrame({
