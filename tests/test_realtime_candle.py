@@ -105,6 +105,10 @@ class RealtimeCandleTests(unittest.TestCase):
             "entry_zones": [115.0, 116.0, 117.0, 118.0, 119.0],
             "targets": [116.0, 117.0, 118.0, 119.0, 120.0],
             "shared_stop_loss": 110.0,
+            "price_source": "Longbridge WebSocket",
+            "price_session": "post-market",
+            "price_timestamp": "2026-11-25T23:59:00Z",
+            "price_received_at": "2026-11-25T23:59:01Z",
             "filters": [
                 {"name": "Pullback Setup", "passed": True},
                 {"name": "Pullback Entry Confirmation", "passed": True},
@@ -121,6 +125,10 @@ class RealtimeCandleTests(unittest.TestCase):
         self.assertEqual(card["entry_zones"], [])
         self.assertEqual(card["targets"], [])
         self.assertIsNone(card["shared_stop_loss"])
+        self.assertEqual(card["price_source"], "Stored daily data (Daily Close)")
+        self.assertEqual(card["price_session"], "daily-close")
+        self.assertIsNone(card["price_timestamp"])
+        self.assertIsNone(card["price_received_at"])
 
     def test_pullback_entry_anchor_is_frozen_across_price_ticks(self):
         first_anchor, first_low = _stable_pullback_levels(
