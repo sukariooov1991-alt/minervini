@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
-from app import ScanController, _quote_timestamp_order, _stable_pullback_levels
+from app import ScanController, _latest_realtime_activity, _quote_timestamp_order, _stable_pullback_levels
 from data.trade_levels import compute_atr
 
 
@@ -16,6 +16,12 @@ class RealtimeCandleTests(unittest.TestCase):
         controller._lock = RLock()
         controller._live_candles = {}
         return controller
+
+    def test_watchdog_uses_new_subscription_time_after_quiet_reconnect(self):
+        self.assertEqual(_latest_realtime_activity(100.0, 200.0), 200.0)
+        self.assertEqual(_latest_realtime_activity(250.0, 200.0), 250.0)
+        self.assertEqual(_latest_realtime_activity(None, 200.0), 200.0)
+        self.assertIsNone(_latest_realtime_activity(None, None))
 
     def test_sequence_less_quote_timestamps_are_orderable(self):
         older = _quote_timestamp_order("2026-11-26T12:00:00Z")
