@@ -284,10 +284,10 @@
         : '';
       if (p.batch_total) details += ' — إجمالي الدفعات: ' + p.batch_total;
       if (p.current_symbol) details += (details ? ' — ' : '') + 'السهم: ' + p.current_symbol;
-      if (p.error) details += (details ? '\\n' : '') + 'خطأ: ' + p.error;
+      if (p.error) details += (details ? '\n' : '') + 'خطأ: ' + p.error;
       document.getElementById('scanDetails').textContent = details;
       const errors = Array.isArray(data.scan_errors) ? data.scan_errors : [];
-      document.getElementById('scanErrors').textContent = errors.slice(-5).map(e => e.symbol + ' [' + e.phase + ']: ' + e.message).join('\\n');
+      document.getElementById('scanErrors').textContent = errors.slice(-5).map(e => e.symbol + ' [' + e.phase + ']: ' + e.message).join('\n');
     }
 
     async function deleteCard(event, sym) {
