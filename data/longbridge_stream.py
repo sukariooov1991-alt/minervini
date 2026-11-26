@@ -26,23 +26,6 @@ def _valid_price(value: Any) -> float | None:
     return price if math.isfinite(price) and price > 0 else None
 
 
-def _timestamp_order(value: Any) -> float:
-    if value is None:
-        return 0.0
-    if isinstance(value, datetime):
-        try:
-            return value.timestamp()
-        except (OverflowError, OSError, ValueError):
-            return 0.0
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        try:
-            return datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp()
-        except (TypeError, ValueError, OverflowError, OSError):
-            return 0.0
-
-
 def _session_label(value: Any) -> str | None:
     if value is None:
         return None
@@ -230,39 +213,6 @@ class LongbridgeRealtimeClient:
                 return
             self._ctx.unsubscribe(remove, [self._sub_type_quote])
             self._subscribed_symbols = sorted(active - set(remove))
-
-    @staticmethod
-    def _latest_session_quote(quote: Any) -> tuple[float | None, Any, str]:
-        # Longbridge returns separate US pre-market, post-market and overnight
-        # quotes. last_done alone is the regular-session last trade and can be
-        # stale while an extended session is actively trading.
-        candidates: list[tuple[float, int, float, Any, str]] = []
-        regular_price = _valid_price(_value(quote, "last_done"))
-        regular_ts = _value(quote, "timestamp")
-        regular_order = _timestamp_order(regular_ts)
-        if regular_price is not None:
-            candidates.append((regular_order, 0, regular_price, regular_ts, "regular"))
-
-        for field, label, priority in (
-            ("pre_market_quote", "pre-market", 1),
-            ("post_market_quote", "post-market", 2),
-            ("over_night_quote", "overnight", 3),
-            ("overnight_quote", "overnight", 3),
-        ):
-            session_quote = _value(quote, field)
-            if session_quote is None:
-                continue
-            price = _valid_price(_value(session_quote, "last_done"))
-            if price is None:
-                continue
-            timestamp = _value(session_quote, "timestamp")
-            order = _timestamp_order(timestamp)
-            candidates.append((order, priority, price, timestamp, label))
-
-        if not candidates:
-            return None, None, "unavailable"
-        _, _, price, timestamp, session = max(candidates, key=lambda item: (item[0], item[1]))
-        return price, timestamp, session
 
     def reconnect(self, symbols: list[str]) -> list[str]:
         """Recreate the QuoteContext and restore the complete active subscription set."""
