@@ -101,8 +101,9 @@ class DailyScreener:
             if sym.upper().strip() in excluded:
                 continue
             df = self.storage.get_candles_df(sym)
-            if len(df) >= 253:
+            if len(df) >= 252:
                 frames[sym] = df
+            if len(df) >= 253:
                 prices[sym] = df.set_index("date")["close"]
 
         if not prices:
@@ -310,8 +311,10 @@ class DailyScreener:
                     if update and sym in download_failed_symbols:
                         continue
                     df = frames.get(sym)
-                    if df is None or len(df) < 252:
-                        available = 0 if df is None else len(df)
+                    if df is None:
+                        df = self.storage.get_candles_df(sym)
+                    if len(df) < 252:
+                        available = len(df)
                         log.warning(
                             "Skipping %s during analysis: insufficient daily candles (%s; need 252)",
                             sym, available,
