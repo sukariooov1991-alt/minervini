@@ -834,6 +834,9 @@ class ScanController:
             return
         if not (price > 0 and math.isfinite(price)):
             return
+        received_at = str(
+            quote.get("_received_at") or datetime.now(timezone.utc).isoformat()
+        )
         sequence = quote.get("sequence")
         try:
             sequence = int(sequence) if sequence is not None else None
@@ -1114,8 +1117,9 @@ class ScanController:
                             "Longbridge WebSocket"
                         )
                         card["price_session"] = quote.get("trade_session") or "regular"
-                        card["price_timestamp"] = quote.get("timestamp")
-                        card["price_received_at"] = datetime.now(timezone.utc).isoformat()
+                        card["price_timestamp"] = _quote_timestamp_iso(quote.get("timestamp"))
+                        card["price_tag"] = quote.get("tag")
+                        card["price_received_at"] = received_at
                         card["updated_at"] = datetime.now(timezone.utc).isoformat()
                         within_range, range_note = evaluate_entry_range(price, card.get("pivot_price"))
                         card["within_entry_range"] = within_range
