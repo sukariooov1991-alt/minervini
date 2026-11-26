@@ -69,11 +69,18 @@ def compute_atr(df: pd.DataFrame, period: int = 14) -> float | None:
         axis=1,
     ).max(axis=1)
 
-    atr_series = tr.rolling(period, min_periods=period).mean().dropna()
-    if atr_series.empty:
+    tr = pd.to_numeric(tr, errors="coerce").replace([np.inf, -np.inf], np.nan).dropna()
+    if len(tr) < period:
         return None
-    val = float(atr_series.iloc[-1])
-    return val if np.isfinite(val) and val > 0 else None
+
+    # Wilder's ATR: seed with the first period's simple average, then apply
+    # the recursive 1/period smoothing used by the standard ATR definition.
+    values = tr.to_numpy(dtype=float)
+    atr_value = float(np.mean(values[:period]))
+    for true_range in values[period:]:
+        atr_value = ((atr_value * (period - 1)) + float(true_range)) / period
+
+    return atr_value if np.isfinite(atr_value) and atr_value > 0 else None
 
 
 def compute_daily_move_pct(df: pd.DataFrame) -> float | None:
@@ -150,8 +157,9 @@ def default_targets(
         return []
 
     atr_f = float(atr_val)
-    move_abs = abs(float(daily_move)) if (daily_move is not None and np.isfinite(daily_move)) else 0.0
-    move_factor = float(np.clip(1.0 + (move_abs / 10.0) - 0.15, 0.75, 1.50))
+    # Target projections use ATR only. Using abs(daily_move) here made a
+    # sharp down day expand targets just as much as a strong up day.
+    move_factor = 1.0
 
     multipliers = (1.0, 1.5, 2.0, 2.75, 3.5)
     calculated_targets: list[float] = []
