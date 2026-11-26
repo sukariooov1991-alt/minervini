@@ -101,7 +101,7 @@ class DailyScreener:
             if sym.upper().strip() in excluded:
                 continue
             df = self.storage.get_candles_df(sym)
-            if len(df) >= 252:
+            if len(df) >= 253:
                 frames[sym] = df
                 prices[sym] = df.set_index("date")["close"]
 
