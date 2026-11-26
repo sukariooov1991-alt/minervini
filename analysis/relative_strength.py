@@ -12,15 +12,16 @@ def relative_strength_score(close: pd.Series) -> float:
         else close
     )
     c = pd.to_numeric(s, errors="coerce").dropna().reset_index(drop=True)
-    if len(c) < 252:
+    # A 252-session return needs 253 closing prices: the current close plus
+    # the close exactly 252 trading intervals earlier.
+    if len(c) < 253:
         return float("nan")
 
     last_price = float(c.iloc[-1])
     if not np.isfinite(last_price) or last_price <= 0:
         return float("nan")
 
-    # Use up to (63, 126, 189, 252) trading days; if 252 bars are present and 253rd prior is missing,
-    # anchor the 252-day leg at index 0 so 252-bar series are never dropped unnecessarily.
+    # Weighted relative performance over 63, 126, 189, and 252 trading intervals.
     periods_and_weights = [
         (63, 0.40),
         (126, 0.20),
@@ -33,8 +34,6 @@ def relative_strength_score(close: pd.Series) -> float:
     n = len(c)
     for period, weight in periods_and_weights:
         idx = n - 1 - period
-        if idx < 0 and period == 252 and n >= 252:
-            idx = 0
         if idx >= 0:
             base_price = float(c.iloc[idx])
             if np.isfinite(base_price) and base_price > 0:
