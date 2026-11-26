@@ -241,7 +241,7 @@ class PermanentDataCacheTests(unittest.TestCase):
         eps = pd.Series([1.25], index=[pd.Timestamp("2025-08-02")])
         revenue = pd.Series([100.0], index=[pd.Timestamp("2025-08-30")])
         prior_eps, prior_revenue = _find_nearest_prior_period(
-            eps, revenue, pd.Timestamp("2025-09-30"), max_window_days=60
+            eps, revenue, pd.Timestamp("2025-09-30"), max_window_days=14
         )
         self.assertTrue(pd.isna(prior_eps))
         self.assertTrue(pd.isna(prior_revenue))
