@@ -98,11 +98,14 @@ class DailyScreener:
             log.warning("Market index %s: %s", market_symbol, exc)
             return pd.DataFrame()
 
-    def compute_market_breadth(self) -> float | None:
-        """Percent of scanned symbols whose latest close is above their 50-day SMA."""
+    def compute_market_breadth(self, exclude_symbols: set[str] | None = None) -> float | None:
+        """Percent above 50-day SMA, excluding symbols with failed current downloads."""
         participating = 0
         above = 0
+        excluded = {str(symbol).upper().strip() for symbol in (exclude_symbols or set())}
         for symbol in self.symbols:
+            if symbol.upper().strip() in excluded:
+                continue
             try:
                 frame = self.storage.get_candles_df(symbol)
                 if frame is None or len(frame) < 50 or "close" not in frame.columns:
@@ -229,7 +232,9 @@ class DailyScreener:
 
         # Breadth is computed after the universe refresh, so it reflects the
         # same stored dataset used by the cross-sectional stock analysis.
-        breadth_pct = self.compute_market_breadth()
+        breadth_pct = self.compute_market_breadth(
+            exclude_symbols=download_failed_symbols if update else None
+        )
         market_status = (
             {"market_favorable": True, "regime": "SKIPPED", "breadth_pct": breadth_pct,
              "reasons": ["market check disabled"]}
