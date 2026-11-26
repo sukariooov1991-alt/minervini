@@ -4,6 +4,7 @@ import pandas as pd
 
 from analysis.market_filter import check_market_regime
 from analysis.earnings import check_earnings
+from analysis.relative_strength import relative_strength_score
 from analysis.trend_template import check_trend_template
 from analysis.pullback import check_pullback
 from data.trade_levels import build_trade_levels, compute_atr
@@ -174,6 +175,10 @@ class EntryDecisionTests(unittest.TestCase):
         self.assertTrue(result["passed"])
         self.assertAlmostEqual(result["eps_growth_pct"], 20.0)
         self.assertAlmostEqual(result["revenue_growth_pct"], 10.0)
+
+    def test_252_session_relative_strength_requires_253_closes(self):
+        self.assertTrue(pd.isna(relative_strength_score(pd.Series(range(1, 253)))))
+        self.assertTrue(pd.notna(relative_strength_score(pd.Series(range(1, 254)))))
 
     def test_atr_uses_wilder_smoothing(self):
         frame = pd.DataFrame({
