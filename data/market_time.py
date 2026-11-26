@@ -186,6 +186,16 @@ class MarketTime:
             session = MarketSession.OVERNIGHT
             if overnight_before_midnight:
                 day += timedelta(days=1)
+                close_time = get_us_equity_market_close(day)
+                trading = close_time is not None
+                open_dt = (
+                    datetime.combine(day, cls.REGULAR_OPEN, tzinfo=NEW_YORK)
+                    if trading else None
+                )
+                close_dt = (
+                    datetime.combine(day, close_time, tzinfo=NEW_YORK)
+                    if trading else None
+                )
         elif not trading:
             session = MarketSession.CLOSED
         elif cls.PRE_MARKET_OPEN <= clock < cls.REGULAR_OPEN:
