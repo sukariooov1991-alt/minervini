@@ -104,6 +104,37 @@ class LongbridgeQuoteTests(unittest.TestCase):
         self.assertEqual(payload["sequence"], 987654321)
         self.assertEqual(payload["trade_session"], "pre-market")
 
+    def test_reconnect_recreates_context_and_restores_subscriptions(self):
+        client = LongbridgeRealtimeClient(
+            app_key="key", app_secret="secret", access_token="token"
+        )
+
+        class FakeContext:
+            def __init__(self):
+                self.closed = False
+                self.subscribed = []
+            def close(self):
+                self.closed = True
+            def subscribe(self, symbols, sub_types):
+                self.subscribed.extend(symbols)
+
+        old_context = FakeContext()
+        new_context = FakeContext()
+        client._ctx = old_context
+        client._subscribed_symbols = ["AAPL.US"]
+        client._sub_type_quote = object()
+
+        def connect():
+            client._ctx = new_context
+            client._sub_type_quote = object()
+            client._subscribed_symbols = []
+
+        client.connect = connect
+        restored = client.reconnect(["AAPL", "MSFT"])
+        self.assertTrue(old_context.closed)
+        self.assertEqual(restored, ["AAPL", "MSFT"])
+        self.assertEqual(new_context.subscribed, ["AAPL.US", "MSFT.US"])
+
     def test_websocket_push_without_last_done_is_not_a_price_tick(self):
         captured = {}
 
