@@ -13,6 +13,7 @@ class TelegramNotifierConcurrencyTests(unittest.TestCase):
         notifier.bot_token = "token"
         notifier.chat_id = "chat"
         notifier.timeout = 1
+        notifier.state_db_path = ":memory:"
         notifier._sent_symbols = set()
         notifier._send_lock = threading.Lock()
         calls = []
