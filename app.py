@@ -863,7 +863,9 @@ class ScanController:
         tt_passed = str(row.get("trend_template", "")).upper() == "PASS"
         vcp_passed = bool(row.get("vcp_passed", False))
         br = bool(row.get("breakout", False))
-        pullback_passed = bool(row.get("pullback_passed", False))
+        pullback_info = check_pullback(df)
+        pullback_passed = bool(pullback_info.get("passed", False))
+        pullback_candidate = bool(pullback_info.get("candidate", False))
         ad_acc = bool(row.get("accumulation", False))
         earn_passed = bool(row.get("earnings_passed", False))
 
@@ -873,7 +875,6 @@ class ScanController:
 
         # Independent entry paths: VCP needs its Pivot breakout; Pullback
         # needs an observed turn-up after a recent decline.
-        pullback_candidate = bool(row.get("pullback_candidate", pullback_passed))
         setup_passed = bool(vcp_passed or pullback_candidate)
         entry_confirmation_passed = bool(
             (vcp_passed and br) or pullback_passed
@@ -893,10 +894,10 @@ class ScanController:
         use_vcp_entry = bool(vcp_passed and br)
         use_pullback_entry = bool(pullback_passed and not use_vcp_entry)
         pivot_price = row.get("pivot_price") if use_vcp_entry else (
-            row.get("pullback_entry_price") if use_pullback_entry else None
+            pullback_info.get("entry_trigger_price") if use_pullback_entry else None
         )
         final_low = row.get("final_low") if use_vcp_entry else (
-            row.get("pullback_final_low") if use_pullback_entry else None
+            pullback_info.get("support_low") if use_pullback_entry else None
         )
         plan = (
             build_trade_levels(
@@ -956,15 +957,19 @@ class ScanController:
             "levels_status": plan["status"],
             "within_entry_range": plan["within_entry_range"],
             "notes": plan["notes"],
-            "filters": self._build_filters_detail(row),
+            "filters": self._build_filters_detail({
+                **row,
+                "pullback_passed": pullback_passed,
+                "pullback_candidate": pullback_candidate,
+            }),
             "watchlist_eligible": True,
             "setup_passed": setup_passed,
             "entry_confirmation_passed": entry_confirmation_passed,
             "breakout_passed": br,
             "vcp_passed": vcp_passed,
             "pullback_passed": pullback_passed,
-            "pullback_candidate": bool(row.get("pullback_candidate", pullback_passed)),
-            "pullback_turning_up": bool(row.get("pullback_turning_up", pullback_passed)),
+            "pullback_candidate": pullback_candidate,
+            "pullback_turning_up": bool(pullback_info.get("turning_up", False)),
             "market_favorable": bool(market_favorable),
             "entry_ready": entry_ready,
             "passed_all_filters": entry_ready,
