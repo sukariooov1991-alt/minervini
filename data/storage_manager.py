@@ -14,7 +14,6 @@ import pandas as pd
 
 class StorageManager:
     MAX_CANDLES = 300
-    MAX_EVENTS = 500
 
     def __init__(self, db_path: str = "stock_data.db"):
         self.db_path = str(db_path)
@@ -415,12 +414,6 @@ class StorageManager:
                    )""",
                 (symbol.upper(), event_type, timestamp, encoded,
                  symbol.upper(), event_type, timestamp, encoded),
-            )
-            conn.execute(
-                """DELETE FROM events WHERE symbol=? AND type=? AND id NOT IN (
-                   SELECT id FROM events WHERE symbol=? AND type=?
-                   ORDER BY timestamp DESC LIMIT ?)""",
-                (symbol.upper(), event_type, symbol.upper(), event_type, self.MAX_EVENTS),
             )
 
     def get_events(self, symbol: str, event_type: str, limit: int = 10) -> list[dict[str, Any]]:
