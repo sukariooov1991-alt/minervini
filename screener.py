@@ -98,9 +98,36 @@ class DailyScreener:
             log.warning("Market index %s: %s", market_symbol, exc)
             return pd.DataFrame()
 
-    def check_market(self, market_symbol: str = "^GSPC", period: str = "2y") -> dict:
+    def compute_market_breadth(self) -> float | None:
+        """Percent of scanned symbols whose latest close is above their 50-day SMA."""
+        participating = 0
+        above = 0
+        for symbol in self.symbols:
+            try:
+                frame = self.storage.get_candles_df(symbol)
+                if frame is None or len(frame) < 50 or "close" not in frame.columns:
+                    continue
+                close = pd.to_numeric(frame["close"], errors="coerce").dropna()
+                if len(close) < 50:
+                    continue
+                sma50 = float(close.tail(50).mean())
+                last = float(close.iloc[-1])
+                if not (pd.notna(sma50) and sma50 > 0 and pd.notna(last)):
+                    continue
+                participating += 1
+                above += int(last > sma50)
+            except Exception as exc:
+                log.debug("Breadth skipped %s: %s", symbol, exc)
+        return above / participating * 100.0 if participating else None
+
+    def check_market(
+        self, market_symbol: str = "^GSPC", period: str = "2y",
+        breadth_pct: float | None = None,
+    ) -> dict:
         index_df = self._fetch_market_index(market_symbol, period)
-        status = check_market_regime(index_df)
+        status = check_market_regime(index_df, breadth_pct=breadth_pct)
+        status["breadth_pct"] = breadth_pct
+        status["breadth_universe_count"] = len(self.symbols)
         log.info(
             "Market regime: %s | favorable=%s | distribution_days=%s",
             status.get("regime"), status.get("market_favorable"),
@@ -133,12 +160,6 @@ class DailyScreener:
                 "batch_total": (total + batch_size - 1) // batch_size,
                 "current_symbol": market_symbol,
             })
-
-        market_status = (
-            {"market_favorable": True, "regime": "SKIPPED", "reasons": ["market check disabled"]}
-            if skip_market_check else self.check_market(market_symbol, period)
-        )
-        market_favorable = bool(market_status.get("market_favorable", False))
 
         # Complete the download phase before calculating cross-sectional RS.
         # Otherwise early batches would be ranked against stale rows from symbols
@@ -205,6 +226,17 @@ class DailyScreener:
                     "total": progress_total,
                     "current_symbol": "",
                 })
+
+        # Breadth is computed after the universe refresh, so it reflects the
+        # same stored dataset used by the cross-sectional stock analysis.
+        breadth_pct = self.compute_market_breadth()
+        market_status = (
+            {"market_favorable": True, "regime": "SKIPPED", "breadth_pct": breadth_pct,
+             "reasons": ["market check disabled"]}
+            if skip_market_check
+            else self.check_market(market_symbol, period, breadth_pct=breadth_pct)
+        )
+        market_favorable = bool(market_status.get("market_favorable", False))
 
         # A stopped or failed download is never silently replaced by old stored
         # candles. Failed symbols are excluded from both RS ranking and analysis.
@@ -286,6 +318,10 @@ class DailyScreener:
                         pivot_val = vcp.get("pivot_price")
                         br = check_breakout(df, pivot=pivot_val) if vcp.get("passed") else False
                         pb = check_pullback(df)
+                        entry_confirmation_passed = bool(
+                            (vcp.get("passed", False) and br)
+                            or pb.get("passed", False)
+                        )
                         ad = accumulation_distribution_summary(df)
 
                         try:
@@ -341,7 +377,10 @@ class DailyScreener:
                             "breakout": bool(br),
                             "pullback_passed": bool(pb.get("passed", False)),
                             "pivot_price": pivot_val,
-                            "final_low": vcp.get("final_low"),
+                            "final_low": vcp.get("final_low") if vcp.get("passed") else pb.get("support_low"),
+                            "pullback_entry_price": pb.get("entry_trigger_price"),
+                            "pullback_final_low": pb.get("support_low"),
+                            "entry_confirmation_passed": entry_confirmation_passed,
                             "contraction_depths": vcp.get("contraction_depths", []),
                             "volume_dry_up": vcp.get("volume_dry_up", False),
                             "accumulation": ad.get("accumulation", False),
@@ -360,10 +399,7 @@ class DailyScreener:
                                 or pb.get("passed", False)
                             ),
                             "passed_all_filters": bool(
-                                (
-                                    vcp.get("passed", False)
-                                    or pb.get("passed", False)
-                                )
+                                entry_confirmation_passed
                                 and ad.get("accumulation", False)
                                 and earnings.get("passed", False)
                                 and market_favorable

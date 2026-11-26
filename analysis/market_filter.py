@@ -66,9 +66,12 @@ def check_market_regime(
     aligned = sma50 > sma200
     dist_days = count_distribution_days(clean_df, drop_threshold_pct=drop_threshold_pct)
 
-    breadth_ok = True
-    if breadth_pct is not None and pd.notna(breadth_pct):
-        breadth_ok = float(breadth_pct) >= min_breadth_pct
+    # Unknown breadth must not be silently treated as a healthy market.
+    breadth_ok = bool(
+        breadth_pct is not None
+        and pd.notna(breadth_pct)
+        and float(breadth_pct) >= min_breadth_pct
+    )
 
     if not above_200:
         out["reasons"].append("index is below 200-day SMA")
@@ -79,7 +82,10 @@ def check_market_regime(
     if dist_days > max_distribution_days:
         out["reasons"].append(f"high distribution days ({dist_days} > {max_distribution_days})")
     if not breadth_ok:
-        out["reasons"].append(f"weak market breadth ({breadth_pct:.1f}% < {min_breadth_pct}%)")
+        if breadth_pct is None or pd.isna(breadth_pct):
+            out["reasons"].append("market breadth unavailable; market entry filter cannot pass")
+        else:
+            out["reasons"].append(f"weak market breadth ({float(breadth_pct):.1f}% < {min_breadth_pct}%)")
 
     favorable = bool(
         above_200

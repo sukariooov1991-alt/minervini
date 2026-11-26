@@ -363,11 +363,16 @@ class ScanController:
                         pivot is not None and check_breakout(live_df, pivot=pivot)
                     )
                     pullback_passed = bool(pullback_info.get("passed", False))
+                    pullback_anchor = pullback_info.get("entry_trigger_price")
+                    pullback_low = pullback_info.get("support_low")
                 else:
                     vcp_passed = False
                     pullback_passed = False
                     breakout_passed = False
                     pivot = None
+                    pullback_anchor = None
+                    pullback_low = None
+                    pullback_info = {}
                     vcp_info = {}
 
                 setup_passed = bool(vcp_passed or pullback_passed)
@@ -387,8 +392,14 @@ class ScanController:
                     # Do not reuse a stale VCP pivot when the active path is
                     # Pullback. Until that path supplies its own anchor, levels
                     # remain explicitly unavailable rather than fabricated.
-                    active_pivot = pivot if vcp_passed else None
-                    active_low = vcp_info.get("final_low") if vcp_passed else None
+                    use_vcp_entry = bool(vcp_passed and breakout_passed)
+                    use_pullback_entry = bool(pullback_passed and not use_vcp_entry)
+                    active_pivot = pivot if use_vcp_entry else (
+                        pullback_anchor if use_pullback_entry else None
+                    )
+                    active_low = vcp_info.get("final_low") if use_vcp_entry else (
+                        pullback_low if use_pullback_entry else None
+                    )
                     plan = build_trade_levels(
                         symbol=sym,
                         current_price=price,
@@ -406,6 +417,15 @@ class ScanController:
                         "notes": ["السهم مؤهل؛ المراقبة مستمرة حتى تحقق VCP أو Pullback."],
                     }
 
+                    entry_confirmation_passed = bool(
+                        (vcp_passed and breakout_passed) or pullback_passed
+                    )
+                    entry_ready = bool(
+                        entry_confirmation_passed
+                        and market_favorable
+                        and plan.get("status") == "جاهز"
+                        and plan.get("within_entry_range") is True
+                    )
                     card.update({
                         "current_price": round(price, 4),
                         "price_source": (
@@ -424,17 +444,25 @@ class ScanController:
                         "setup_passed": setup_passed,
                         "vcp_passed": vcp_passed,
                         "pullback_passed": pullback_passed,
-                        "entry_ready": bool(setup_passed and market_favorable),
-                        "passed_all_filters": bool(setup_passed and market_favorable),
+                        "entry_confirmation_passed": entry_confirmation_passed,
+                        "breakout_passed": breakout_passed,
+                        "entry_ready": entry_ready,
+                        "passed_all_filters": entry_ready,
                         "market_favorable": market_favorable,
                         "updated_at": datetime.now(timezone.utc).isoformat(),
                     })
                     if setup_passed and not market_favorable:
                         card["status"] = "النموذج تحقق — السوق غير مناسب"
                         card["stage"] = "المرحلة 3: تقييم حالة السوق"
+                    elif setup_passed and not entry_confirmation_passed:
+                        card["status"] = "النموذج قيد التأكيد — لا توجد إشارة دخول"
+                        card["stage"] = "المرحلة 2: تأكيد نموذج الدخول"
+                    elif setup_passed and not entry_ready:
+                        card["status"] = "تأكيد النموذج تحقق — مستويات الصفقة أو نطاق الدخول غير مكتمل"
+                        card["stage"] = "المرحلة 3: التحقق من مستويات الدخول"
                     elif setup_passed:
-                        card["status"] = "إشارة مكتملة — النموذج والسوق مؤهلان"
-                        card["stage"] = "المرحلة 4: إشارة جاهزة للتقييم"
+                        card["status"] = "إشارة دخول مؤكدة — النموذج والسوق والمستويات مستوفاة"
+                        card["stage"] = "المرحلة 4: إشارة دخول مؤكدة"
                     else:
                         card["status"] = "انتظار — مراقبة VCP أو Pullback"
                         card["stage"] = "المرحلة 1: سهم مؤهل للمراقبة"
@@ -443,8 +471,10 @@ class ScanController:
                         name = item.get("name")
                         if name == "VCP Pattern":
                             item["passed"] = vcp_passed
-                        elif name == "Breakout Confirmation":
+                        elif name in ("Breakout Confirmation", "VCP Breakout Confirmation"):
                             item["passed"] = breakout_passed
+                        elif name == "Pullback Entry Confirmation":
+                            item["passed"] = pullback_passed
                         elif name == "Pullback Check":
                             item["passed"] = pullback_passed
                         elif name == "Market Regime Favorable":
@@ -634,8 +664,9 @@ class ScanController:
             })
         filters.extend([
             {"name": "VCP Pattern", "passed": bool(row.get("vcp_passed", False))},
-            {"name": "Breakout Confirmation", "passed": bool(row.get("breakout", False))},
-            {"name": "Pullback Check", "passed": bool(row.get("pullback_passed", False))},
+            {"name": "VCP Breakout Confirmation", "passed": bool(row.get("breakout", False))},
+            {"name": "Pullback Setup", "passed": bool(row.get("pullback_passed", False))},
+            {"name": "Pullback Entry Confirmation", "passed": bool(row.get("pullback_passed", False))},
             {"name": "Accumulation", "passed": bool(row.get("accumulation", False))},
             {"name": "Earnings Growth", "passed": bool(row.get("earnings_passed", False))},
             {
@@ -664,9 +695,12 @@ class ScanController:
         if not watchlist_eligible:
             return None
 
-        # VCP and Pullback are alternative setup paths, not cumulative gates.
+        # Independent entry paths: VCP needs its Pivot breakout; Pullback
+        # needs its own reclaim trigger from check_pullback().
         setup_passed = bool(vcp_passed or pullback_passed)
-        entry_ready = bool(setup_passed and market_favorable)
+        entry_confirmation_passed = bool(
+            (vcp_passed and br) or pullback_passed
+        )
 
         with self._lock:
             live_p = self._live_prices.get(sym)
@@ -679,8 +713,14 @@ class ScanController:
             historical_source = str(row.get("data_source") or "Stored daily data")
             price_source = f"{historical_source} (Daily Close)"
 
-        pivot_price = row.get("pivot_price")
-        final_low = row.get("final_low")
+        use_vcp_entry = bool(vcp_passed and br)
+        use_pullback_entry = bool(pullback_passed and not use_vcp_entry)
+        pivot_price = row.get("pivot_price") if use_vcp_entry else (
+            row.get("pullback_entry_price") if use_pullback_entry else None
+        )
+        final_low = row.get("final_low") if use_vcp_entry else (
+            row.get("pullback_final_low") if use_pullback_entry else None
+        )
         plan = (
             build_trade_levels(
                 symbol=sym,
@@ -701,15 +741,27 @@ class ScanController:
             }
         )
 
+        entry_ready = bool(
+            entry_confirmation_passed
+            and market_favorable
+            and plan.get("status") == "جاهز"
+            and plan.get("within_entry_range") is True
+        )
         if not setup_passed:
             card_status = "انتظار — مراقبة VCP أو Pullback"
             card_stage = "المرحلة 1: سهم مؤهل للمراقبة"
+        elif not entry_confirmation_passed:
+            card_status = "النموذج قيد التأكيد — لا توجد إشارة دخول"
+            card_stage = "المرحلة 2: تأكيد نموذج الدخول"
         elif not market_favorable:
             card_status = "النموذج تحقق — السوق غير مناسب"
             card_stage = "المرحلة 3: تقييم حالة السوق"
+        elif not entry_ready:
+            card_status = "تأكيد النموذج تحقق — مستويات الصفقة أو نطاق الدخول غير مكتمل"
+            card_stage = "المرحلة 3: التحقق من مستويات الدخول"
         else:
-            card_status = "إشارة مكتملة — النموذج والسوق مؤهلان"
-            card_stage = "المرحلة 4: إشارة جاهزة للتقييم"
+            card_status = "إشارة دخول مؤكدة — النموذج والسوق والمستويات مستوفاة"
+            card_stage = "المرحلة 4: إشارة دخول مؤكدة"
 
         card = {
             "symbol": sym,
@@ -730,6 +782,8 @@ class ScanController:
             "filters": self._build_filters_detail(row),
             "watchlist_eligible": True,
             "setup_passed": setup_passed,
+            "entry_confirmation_passed": entry_confirmation_passed,
+            "breakout_passed": br,
             "vcp_passed": vcp_passed,
             "pullback_passed": pullback_passed,
             "market_favorable": bool(market_favorable),
