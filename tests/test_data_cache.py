@@ -43,6 +43,7 @@ class PermanentDataCacheTests(unittest.TestCase):
             for day in initial_dates
         ]
         self.storage.upsert_candles_bulk("NVDA", initial_rows)
+        self.storage.set_cache("daily_source:NVDA", "Yahoo Finance")
         new_dates = pd.bdate_range(initial_dates[-1] + pd.offsets.BDay(1), periods=10)
         recent = pd.DataFrame({
             "open": [11.0] * 10,
@@ -61,6 +62,46 @@ class PermanentDataCacheTests(unittest.TestCase):
         self.assertEqual(len(stored), 300)
         self.assertEqual(stored.iloc[-1]["date"], pd.Timestamp(new_dates[-1]))
         self.assertEqual(stored.iloc[0]["date"], pd.Timestamp(initial_dates[10]))
+
+    def test_provider_change_rebases_full_history_instead_of_mixing_prices(self):
+        old_dates = pd.bdate_range("2024-01-01", periods=300)
+        old_rows = [
+            (day.strftime("%Y-%m-%d"), 10.0, 11.0, 9.0, 10.5, 1000.0)
+            for day in old_dates
+        ]
+        self.storage.upsert_candles_bulk("SWITCH", old_rows)
+        self.storage.set_cache("daily_source:SWITCH", "Yahoo Finance")
+
+        new_dates = pd.bdate_range(
+            end=pd.Timestamp.now().normalize() - pd.offsets.BDay(1),
+            periods=300,
+        )
+        full_new = pd.DataFrame({
+            "open": [20.0] * 300,
+            "high": [21.0] * 300,
+            "low": [19.0] * 300,
+            "close": [20.5] * 300,
+            "volume": [2000.0] * 300,
+        }, index=new_dates)
+        recent_new = full_new.tail(10)
+        provider = DataProvider.__new__(DataProvider)
+        provider.symbol = "SWITCH"
+        provider.storage = self.storage
+        provider.last_source = None
+        provider._fetch_yahoo = lambda period: (_ for _ in ()).throw(RuntimeError("Yahoo unavailable"))
+        requested = []
+        def stooq(period):
+            requested.append(period)
+            return full_new if period == "2y" else recent_new
+        provider._fetch_stooq = stooq
+
+        provider.fetch_and_store_daily_candles("10d", append=True)
+        stored = self.storage.get_candles_df("SWITCH")
+        self.assertEqual(requested, ["10d", "2y"])
+        self.assertEqual(len(stored), 300)
+        self.assertEqual(stored.iloc[0]["date"], pd.Timestamp(new_dates[0]))
+        self.assertEqual(stored.iloc[-1]["close"], 20.5)
+        self.assertEqual(self.storage.get_cache("daily_source:SWITCH"), "Stooq")
 
     def test_fresh_300_bar_cache_skips_historical_provider(self):
         dates = pd.bdate_range("2025-01-01", periods=300)
