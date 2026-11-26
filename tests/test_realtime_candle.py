@@ -199,6 +199,45 @@ class RealtimeCandleTests(unittest.TestCase):
         self.assertIsNone(card["price_timestamp"])
         self.assertIsNone(card["price_received_at"])
 
+    def test_startup_clears_stale_vcp_breakout_flags(self):
+        controller = ScanController.__new__(ScanController)
+        controller._live_prices = {}
+        closes = [100.0 + i * 0.2 for i in range(80)]
+        history = pd.DataFrame({
+            "date": pd.date_range("2026-01-01", periods=80, freq="B"),
+            "open": closes,
+            "high": [value + 1.0 for value in closes],
+            "low": [value - 1.0 for value in closes],
+            "close": closes,
+            "volume": [100000.0] * 80,
+        })
+        card = {
+            "symbol": "AAPL",
+            "vcp_passed": True,
+            "breakout_passed": True,
+            "pivot_price": 115.0,
+            "final_low": 105.0,
+            "market_favorable": True,
+            "filters": [
+                {"name": "VCP Pattern", "passed": True},
+                {"name": "VCP Breakout Confirmation", "passed": True},
+            ],
+        }
+
+        with (
+            patch("app.check_vcp", return_value={"passed": False}),
+            patch("app.check_breakout", return_value=False),
+        ):
+            controller._refresh_restored_pullback("AAPL", card, history)
+
+        self.assertFalse(card["vcp_passed"])
+        self.assertFalse(card["breakout_passed"])
+        self.assertFalse(card["entry_confirmation_passed"])
+        self.assertFalse(card["entry_ready"])
+        self.assertIsNone(card["pivot_price"])
+        self.assertFalse(card["filters"][0]["passed"])
+        self.assertFalse(card["filters"][1]["passed"])
+
     def test_pullback_entry_anchor_is_frozen_across_price_ticks(self):
         first_anchor, first_low = _stable_pullback_levels(
             {},
