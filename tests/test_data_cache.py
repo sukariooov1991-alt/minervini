@@ -193,10 +193,21 @@ class PermanentDataCacheTests(unittest.TestCase):
         provider.storage = self.storage
         provider.last_source = None
         requested = []
-        provider.fetch_and_store_daily_candles = lambda period, append=False: requested.append((period, append)) or 40
+        def full_refresh(period, append=False):
+            requested.append((period, append))
+            new_dates = pd.bdate_range(dates[-1] + pd.offsets.BDay(1), periods=40)
+            new_rows = [
+                (day.strftime("%Y-%m-%d"), 10.0, 11.0, 9.0, 10.5, 1000.0)
+                for day in new_dates
+            ]
+            self.storage.upsert_candles_bulk("PART", new_rows)
+            return 40
+        provider.fetch_and_store_daily_candles = full_refresh
 
-        self.assertEqual(provider.ensure_daily_history(initial_period="2y"), 40)
+        with patch("data.data_provider._latest_completed_session", return_value=dates[-1].date() + pd.Timedelta(days=1)):
+            self.assertEqual(provider.ensure_daily_history(initial_period="2y"), 40)
         self.assertEqual(requested, [("2y", True)])
+        self.assertEqual(len(self.storage.get_candles_df("PART")), 300)
 
     def test_young_stock_with_known_source_uses_incremental_window(self):
         dates = pd.bdate_range("2025-01-01", periods=200)
@@ -211,10 +222,21 @@ class PermanentDataCacheTests(unittest.TestCase):
         provider.storage = self.storage
         provider.last_source = None
         requested = []
-        provider.fetch_and_store_daily_candles = lambda period, append=False: requested.append(period) or 5
+        def incremental_refresh(period, append=False):
+            requested.append(period)
+            new_dates = pd.bdate_range(dates[-1] + pd.offsets.BDay(1), periods=5)
+            new_rows = [
+                (day.strftime("%Y-%m-%d"), 10.0, 11.0, 9.0, 10.5, 1000.0)
+                for day in new_dates
+            ]
+            self.storage.upsert_candles_bulk("IPO", new_rows)
+            return 5
+        provider.fetch_and_store_daily_candles = incremental_refresh
 
-        self.assertEqual(provider.ensure_daily_history(), 5)
+        with patch("data.data_provider._latest_completed_session", return_value=dates[-1].date() + pd.Timedelta(days=1)):
+            self.assertEqual(provider.ensure_daily_history(), 5)
         self.assertEqual(requested, ["10d"])
+        self.assertEqual(len(self.storage.get_candles_df("IPO")), 205)
 
     def test_recent_failed_refresh_is_not_mistaken_for_fresh_success(self):
         dates = pd.bdate_range("2025-01-01", periods=300)
@@ -234,7 +256,7 @@ class PermanentDataCacheTests(unittest.TestCase):
         with patch("data.data_provider._latest_completed_session", return_value=pd.Timestamp.now().date() + pd.Timedelta(days=1)):
             with patch.object(provider, "fetch_and_store_daily_candles", side_effect=AssertionError("must respect retry cooldown")):
                 self.assertEqual(provider.ensure_daily_history(), 0)
-        self.assertEqual(provider.last_source, "SQLite daily cache (last good history)")
+        self.assertEqual(provider.last_source, "SQLite daily cache")
 
     def test_empty_fundamentals_response_is_cached_briefly(self):
         provider = DataProvider.__new__(DataProvider)
