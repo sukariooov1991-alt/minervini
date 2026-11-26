@@ -72,6 +72,18 @@ class EntryDecisionTests(unittest.TestCase):
         self.assertFalse(result["passed"])
         self.assertIsNone(result["entry_trigger_price"])
 
+    def test_trade_plan_without_atr_does_not_fabricate_targets_or_stop(self):
+        frame = pd.DataFrame({
+            "high": [101.0 + i * 0.1 for i in range(10)],
+            "low": [99.0 + i * 0.1 for i in range(10)],
+            "close": [100.0 + i * 0.1 for i in range(10)],
+            "volume": [100000.0] * 10,
+        })
+        plan = build_trade_levels("TEST", 105.0, 105.0, frame, final_low=None)
+        self.assertNotEqual(plan.status, "جاهز")
+        self.assertEqual(plan.targets, [])
+        self.assertIsNone(plan.shared_stop_loss)
+
     def test_trade_plan_without_anchor_is_never_complete(self):
         frame = pd.DataFrame({
             "high": [101.0 + i * 0.1 for i in range(60)],
