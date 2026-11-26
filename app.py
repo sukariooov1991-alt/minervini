@@ -1486,7 +1486,13 @@ def api_stream():
 
 @app.route("/api/scan/start", methods=["POST"])
 def api_start_scan():
-    body = request.get_json(silent=True) or {}
+    body = request.get_json(silent=True)
+    if body is None:
+        if request.data:
+            return jsonify({"error": "request body must be valid JSON"}), 400
+        body = {}
+    if not isinstance(body, dict):
+        return jsonify({"error": "request body must be a JSON object"}), 400
     symbols = body.get("symbols")
     if isinstance(symbols, str):
         symbols = [symbols]
@@ -1496,7 +1502,7 @@ def api_start_scan():
         normalized = [str(sym).upper().strip() for sym in symbols]
         if (
             not normalized
-            or len(normalized) > len(SP500_SYMBOLS)
+            or len(normalized) > 500
             or any(not re.fullmatch(r"\\^?[A-Z0-9][A-Z0-9.\\-]{0,14}", sym) for sym in normalized)
         ):
             return jsonify({"error": "symbols must contain 1 to 500 valid ticker symbols"}), 400
