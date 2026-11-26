@@ -92,28 +92,43 @@ def _normalise_ohlcv(df: pd.DataFrame | None) -> pd.DataFrame:
 def _find_nearest_prior_value(
     series: pd.Series,
     target_date: pd.Timestamp,
-    max_window_days: int = 45,
+    max_window_days: int = 60,
 ) -> float:
+    """Find the closest reported value at/before a year-ago quarter date.
+
+    A 60-day tolerance accommodates 52/53-week fiscal calendars and small
+    differences between fiscal quarter-end dates. Future reports are never
+    used, so this cannot introduce look-ahead bias.
+    """
     if series is None or series.empty:
         return float("nan")
-    best_val = float("nan")
-    best_diff_days = max_window_days + 1
+    target = pd.Timestamp(target_date)
+    if target.tzinfo is not None:
+        target = target.tz_localize(None)
+
+    candidates = []
     for idx_val, raw_val in series.items():
         try:
-            idx_ts = pd.Timestamp(idx_val)
-            num_val = float(raw_val)
-        except (TypeError, ValueError):
+            report_date = pd.Timestamp(idx_val)
+            number = float(raw_val)
+            if report_date.tzinfo is not None:
+                report_date = report_date.tz_localize(None)
+        except (TypeError, ValueError, OverflowError):
             continue
-        if pd.isna(num_val):
+        if pd.isna(report_date) or not math.isfinite(number):
             continue
         # Only use a report dated on/before the year-ago target; never borrow future data.
-        if idx_ts > target_date:
+        if report_date > target:
             continue
-        diff_days = (target_date - idx_ts).days
-        if 0 <= diff_days <= max_window_days and diff_days < best_diff_days:
-            best_diff_days = diff_days
-            best_val = num_val
-    return best_val
+        diff_days = (target - report_date).days
+        if 0 <= diff_days <= max_window_days:
+            candidates.append((diff_days, report_date, number))
+
+    if not candidates:
+        return float("nan")
+    # Stable tie-break: prefer the more recent report date.
+    candidates.sort(key=lambda item: (item[0], -item[1].value))
+    return candidates[0][2]
 
 
 def _latest_completed_session(now_et: datetime) -> date | None:
