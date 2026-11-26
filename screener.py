@@ -110,7 +110,7 @@ class DailyScreener:
     def _fetch_market_index(self, market_symbol: str, period: str) -> pd.DataFrame:
         try:
             dp = DataProvider(market_symbol, self.storage)
-            dp.fetch_and_store_daily_candles(period)
+            dp.ensure_daily_history(initial_period=period)
             return self.storage.get_candles_df(market_symbol)
         except Exception as exc:
             log.warning("Market index %s: %s", market_symbol, exc)
