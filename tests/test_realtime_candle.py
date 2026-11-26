@@ -38,7 +38,7 @@ class RealtimeCandleTests(unittest.TestCase):
         controller._lock = RLock()
         controller._state_cv = Condition(controller._lock)
         controller._state_version = 0
-        controller._running = False
+        controller._running = True
         controller._cards = {"ABBV": {"symbol": "ABBV"}}
         controller._last_ws_subscription_monotonic = time.monotonic() - 2000.0
         controller._last_ws_reconnect_monotonic = time.monotonic() - 1000.0
