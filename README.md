@@ -53,7 +53,7 @@ The application distinguishes rules explicitly described by Mark Minervini from 
 
 ### Explicit project heuristics (not presented as Minervini's exact rules)
 
-- RS rating is a percentile rank calculated across this repository's current 493-symbol universe from a 40/20/20/20 weighted 63/126/189/252-session return score (253 closes are required for the full 252-session leg); it is not the proprietary IBD RS Rating or a published Minervini-specific RS calculation.
+- RS rating is a percentile rank calculated across this repository's current 493-symbol universe from a 40/20/20/20 weighted 63/126/189/252-session return score (253 closes are required for the full 252-session leg); it is not the proprietary IBD RS Rating or a published Minervini-specific RS calculation. To avoid inflating ranks or market breadth from a small surviving subset during provider outages, both calculations require at least 80% coverage of the eligible scan universe; below that level the metric is UNKNOWN and affected symbols are retained as uncertain rather than treated as failed setups.
 - VCP swing-pivot detection, the 0.75 maximum contraction ratio, 10% final-contraction cap, and 75%/55% volume-dry-up thresholds are mechanical screening proxies for the qualitative VCP footprint.
 - Breakout confirmation's 1.35x volume, 0.65 close-location, and 0.25% buffer are project thresholds for "expanding volume" and a confirmed pivot break.
 - Earnings growth minimums (20% EPS and 10% revenue), accumulation/distribution windows and ratios, market breadth minimum (25%), and five-distribution-day limit are project filters; they are not stated as universal fixed thresholds in the cited Minervini source material.
