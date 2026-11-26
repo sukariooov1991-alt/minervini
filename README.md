@@ -63,6 +63,8 @@ The application distinguishes rules explicitly described by Mark Minervini from 
 These distinctions are deliberate: preserve the source-defined concepts, keep necessary automation parameters visible, and avoid attributing implementation choices to the author. The built-in calendar covers recurring US equity holidays and common early closes; exceptional one-off exchange closures still require a calendar update.
 
 
-## Deployment security note
+## Dashboard access protection
 
-The current Flask deployment does not implement user authentication. The scan start/stop and watchlist-delete API routes are therefore publicly callable if the Render service URL is reachable. Do not treat an unlisted URL as access control. Before exposing this dashboard beyond a trusted private environment, configure an application-level access token or place it behind an authenticated reverse proxy. This requires a secret chosen and stored in the deployment environment, not committed to this repository.
+All HTTP dashboard routes, including the main page, state API, server-sent event stream, scan start/stop, and watchlist-card deletion, require HTTP Basic authentication. The password is read only from the `MINERVINI_ACCESS_KEY` environment variable; it is never stored in source code or sent in page JavaScript. The username is fixed as `admin`. Configure a long, unique secret for `MINERVINI_ACCESS_KEY` in the Render service environment before using the dashboard. If the variable is missing, the app fails closed with HTTP 503 rather than serving an unprotected dashboard. Browsers will show their native sign-in prompt and reuse the same-origin credentials for the dashboard APIs and event stream.
+
+This HTTP access check does not alter the outbound Longbridge WebSocket client, its subscriptions, quote processing, or realtime price updates. Keep the access key private and rotate it in Render if it is ever exposed.
