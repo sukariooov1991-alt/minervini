@@ -66,13 +66,27 @@ def _stable_pullback_levels(
         except (TypeError, ValueError):
             return None
 
+    current_trigger = positive(pullback_info.get("entry_trigger_price"))
+    current_support = positive(pullback_info.get("support_low"))
     anchor = positive(card.get("pullback_entry_anchor"))
-    if anchor is None:
-        anchor = positive(pullback_info.get("entry_trigger_price"))
-
     support = positive(card.get("pullback_support_low"))
-    if anchor is None or support is None or support >= anchor:
-        support = positive(pullback_info.get("support_low"))
+
+    # A new lower low invalidates the previously frozen support/trigger pair.
+    # If price has already turned up again, start a new confirmation from that
+    # lower structural low rather than keeping a stop above the new low.
+    if (
+        anchor is not None
+        and support is not None
+        and current_support is not None
+        and current_support < support
+    ):
+        anchor = current_trigger
+        support = current_support
+
+    if anchor is None:
+        anchor = current_trigger
+    if support is None or support >= anchor:
+        support = current_support
     if anchor is None or support is None or support >= anchor:
         return anchor, None
     return anchor, support
