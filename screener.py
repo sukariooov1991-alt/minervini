@@ -238,15 +238,25 @@ class DailyScreener:
                 try:
                     refreshed = self._get_provider(sym).ensure_daily_history(initial_period=period)
                     self.storage.mark_scan_symbol_completed(scan_checkpoint_name, sym)
-                    cached_count = len(self.storage.get_candles_df(sym))
+                    cached_df = self.storage.get_candles_df(sym)
+                    cached_count = len(cached_df)
+                    latest_date = (
+                        cached_df["date"].iloc[-1].date().isoformat()
+                        if cached_count and "date" in cached_df.columns else "UNKNOWN"
+                    )
+                    source = self._get_provider(sym).last_source or "UNKNOWN"
                     log.info(
-                        "[%s/%s] %s: refresh_rows=%s cache_bars=%s",
-                        i, total, sym, refreshed, cached_count,
+                        "STEP=DAILY_CANDLES STATUS=SUCCESS symbol=%s progress=%s/%s "
+                        "new_rows=%s stored_candles=%s latest_date=%s source=%s",
+                        sym, i, total, refreshed, cached_count, latest_date, source,
                     )
                 except Exception as exc:
                     download_failed_symbols.add(sym)
                     failures.append({"symbol": sym, "error": str(exc), "phase": "download"})
-                    log.warning("Data download failed for %s: %s", sym, exc)
+                    log.exception(
+                        "STEP=DAILY_CANDLES STATUS=FAILED symbol=%s progress=%s/%s reason=%s",
+                        sym, i, total, exc,
+                    )
                     if progress_callback:
                         progress_callback({
                             "phase": "خطأ أثناء تحميل البيانات",
@@ -363,6 +373,15 @@ class DailyScreener:
                             # A valid completed TT failure is a definitive
                             # ineligibility result and can safely reconcile a card.
                             evaluated_symbols.add(sym)
+                            failed_conditions = [
+                                name for name, passed in tt.get("conditions", {}).items()
+                                if not passed
+                            ]
+                            log.info(
+                                "STEP=STOCK_ANALYSIS STATUS=COMPLETED symbol=%s eligible=false "
+                                "reason=trend_template_failed failed_conditions=%s",
+                                sym, ",".join(failed_conditions) or "not_reported",
+                            )
                             continue
 
                         # Exclude the current candle from pattern construction;
@@ -488,6 +507,16 @@ class DailyScreener:
                                 log.exception("News refresh failed for eligible symbol %s", sym)
                         rows.append(row)
                         batch_rows.append(row)
+                        log.info(
+                            "STEP=STOCK_ANALYSIS STATUS=COMPLETED symbol=%s "
+                            "trend_template=PASS vcp=%s pullback=%s fundamentals=%s "
+                            "accumulation=%s watchlist_eligible=%s setup_passed=%s "
+                            "all_filters_passed=%s",
+                            sym, row["vcp_passed"], row["pullback_passed"],
+                            fundamental_status, row["accumulation"],
+                            row["watchlist_eligible"], row["setup_passed"],
+                            row["passed_all_filters"],
+                        )
                         # Missing fundamentals remain uncertain and therefore
                         # are deliberately excluded from destructive reconciliation.
                         if fundamental_status != "UNKNOWN":
@@ -561,6 +590,18 @@ class DailyScreener:
         # failed to download; otherwise the next run is a genuinely fresh scan.
         if update and not stopped and not download_failed_symbols:
             self.storage.clear_scan_checkpoint(scan_checkpoint_name)
+        log.info(
+            "STEP=SCREENING_SUMMARY STATUS=%s symbols=%s rows=%s failures=%s "
+            "download_failures=%s analysis_failures=%s fundamentals_warnings=%s "
+            "history_warnings=%s stopped=%s",
+            "STOPPED" if stopped else ("COMPLETED_WITH_WARNINGS" if failures else "SUCCESS"),
+            total, len(result), len(failures),
+            sum(1 for item in failures if item.get("phase") == "download"),
+            sum(1 for item in failures if item.get("phase") == "analysis_error"),
+            sum(1 for item in failures if item.get("phase") == "fundamentals"),
+            sum(1 for item in failures if item.get("phase") == "history"),
+            stopped,
+        )
         return result, failures, market_status
 
 
