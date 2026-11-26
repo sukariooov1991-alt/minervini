@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import math
 import os
 from datetime import datetime, timezone
 from pathlib import Path
@@ -338,16 +339,37 @@ class DailyScreener:
                                     "error": "Fundamental data unavailable; eligibility cannot be confirmed",
                                     "phase": "analysis",
                                 })
-                            earnings = check_earnings(
-                                latest.get("eps_current"),
-                                latest.get("eps_year_ago"),
-                                latest.get("revenue_current"),
-                                latest.get("revenue_year_ago"),
+                            required_fields = (
+                                "eps_current", "eps_year_ago",
+                                "revenue_current", "revenue_year_ago",
                             )
-                            fundamental_status = (
-                                "UNKNOWN" if fdf.empty
-                                else ("PASS" if earnings["passed"] else "FAIL")
-                            )
+                            missing_fields = []
+                            for field in required_fields:
+                                try:
+                                    value = float(latest.get(field))
+                                    if not math.isfinite(value):
+                                        missing_fields.append(field)
+                                except (TypeError, ValueError):
+                                    missing_fields.append(field)
+
+                            if fdf.empty or missing_fields:
+                                earnings = {"passed": False}
+                                fundamental_status = "UNKNOWN"
+                                if missing_fields:
+                                    failures.append({
+                                        "symbol": sym,
+                                        "error": "Incomplete quarterly fundamentals; missing or invalid: "
+                                                 + ", ".join(missing_fields),
+                                        "phase": "analysis",
+                                    })
+                            else:
+                                earnings = check_earnings(
+                                    latest.get("eps_current"),
+                                    latest.get("eps_year_ago"),
+                                    latest.get("revenue_current"),
+                                    latest.get("revenue_year_ago"),
+                                )
+                                fundamental_status = "PASS" if earnings["passed"] else "FAIL"
                         except Exception as exc:
                             log.exception("Fundamental data error for %s", sym)
                             if progress_callback:
