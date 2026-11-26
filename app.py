@@ -241,6 +241,8 @@ class ScanController:
                 item["passed"] = pullback_candidate
             elif name == "Pullback Entry Confirmation":
                 item["passed"] = pullback_passed
+            elif name == "Market Regime Favorable":
+                item["pending"] = not setup_passed
 
     def _realtime_watchdog_loop(self) -> None:
         """Retry only missing symbols; live prices are delivered by WebSocket pushes."""
@@ -401,6 +403,23 @@ class ScanController:
             cached = self._live_candles.get(symbol)
             if cached and cached.get("date") == date_key:
                 bar = dict(cached)
+                if stored_bar is not None:
+                    # If a refreshed daily candle arrives after the first
+                    # WebSocket tick, merge its official session OHLC too.
+                    stored_open = finite_or(stored_bar.get("open"), bar["open"])
+                    bar["open"] = stored_open
+                    bar["high"] = max(
+                        finite_or(bar.get("high"), price),
+                        finite_or(stored_bar.get("high"), price),
+                    )
+                    bar["low"] = min(
+                        finite_or(bar.get("low"), price),
+                        finite_or(stored_bar.get("low"), price),
+                    )
+                    bar["volume"] = max(
+                        finite_or(bar.get("volume"), 0.0),
+                        finite_or(stored_bar.get("volume"), 0.0),
+                    )
             elif stored_bar is not None:
                 bar = {
                     "date": date_key,
