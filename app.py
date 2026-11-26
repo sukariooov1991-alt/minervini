@@ -72,6 +72,14 @@ def _quote_timestamp_order(value: Any) -> float | None:
         return None
 
 
+def _latest_realtime_activity(
+    last_push: float | None, last_subscription: float | None
+) -> float | None:
+    """Use the newest known stream activity or subscription as the watchdog baseline."""
+    values = [value for value in (last_push, last_subscription) if value is not None]
+    return max(values) if values else None
+
+
 def _stable_pullback_levels(
     card: dict[str, Any], pullback_info: dict[str, Any], enabled: bool
 ) -> tuple[float | None, float | None]:
@@ -461,14 +469,14 @@ class ScanController:
             stale_after_seconds = 300 if session_label == "مفتوح" else 900
             now_mono = time.monotonic()
             with self._lock:
-                # New eligible cards are subscribed together once the scan
-                # completes; never let the watchdog fragment that bulk request.
-                if self._running:
-                    continue
+                # Keep the existing stream healthy during a long scan. If a
+                # reconnect is needed, restore the current card set in one call;
+                # defer ordinary missing-symbol sync until the completed bulk sync.
+                scan_running = self._running
                 symbols = sorted(self._cards)
                 last_push = self.lb_client.last_message_monotonic
                 last_subscription = self._last_ws_subscription_monotonic
-                stream_reference = last_push if last_push is not None else last_subscription
+                stream_reference = _latest_realtime_activity(last_push, last_subscription)
                 last_reconnect = self._last_ws_reconnect_monotonic
                 stale_stream = bool(
                     symbols
@@ -478,7 +486,7 @@ class ScanController:
                 )
                 if stale_stream:
                     self._last_ws_reconnect_monotonic = now_mono
-            if not symbols:
+            if not symbols or (scan_running and not stale_stream):
                 continue
             try:
                 if stale_stream:
