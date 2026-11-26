@@ -124,9 +124,8 @@ class ScanController:
         self._latest_quote_sequence: dict[str, int] = {}
         self._ws_last_log_at: dict[str, float] = {}
         # Quote callbacks must stay short: the SDK dispatches pushes on its
-        # receive path. Coalesce pending work per symbol and recalculate setups
-        # on this independent worker so one slow VCP/SQLite pass cannot stall
-        # the WebSocket stream for every other symbol.
+        # receive path. Recalculate setups on this independent worker so one
+        # slow VCP/SQLite pass cannot stall the WebSocket stream for other symbols.
         self._realtime_pending: list[dict[str, Any]] = []
         self._realtime_event = threading.Event()
         self._realtime_worker = threading.Thread(
