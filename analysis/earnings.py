@@ -40,8 +40,8 @@ def check_earnings(
         and pd.notna(rg)
         and math.isfinite(eg)
         and math.isfinite(rg)
-        and eg > min_eps_growth_pct
-        and rg > min_revenue_growth_pct
+        and eg >= min_eps_growth_pct
+        and rg >= min_revenue_growth_pct
         and accel_ok
     )
     return {
