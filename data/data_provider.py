@@ -346,6 +346,7 @@ class DataProvider:
         cached = self.storage.get_candles_df(self.symbol)
         refresh_key = f"daily_refresh:{self.symbol}"
         refresh_state = self.storage.get_cache(refresh_key)
+        known_source = self.storage.get_cache(f"daily_source:{self.symbol}")
         age = self.storage.cache_age_seconds(refresh_key)
         now_et = datetime.now(ZoneInfo("America/New_York"))
         today_et = now_et.date().isoformat()
@@ -389,12 +390,12 @@ class DataProvider:
             and age is not None
             and age < 20 * 3600
             and not needs_post_close_check
+            and len(cached) > 0
+            and bool(known_source)
         ):
             self.last_source = "SQLite daily cache"
             return 0
 
-        # A partial history (<300) must be topped up from the full initial window.
-        known_source = self.storage.get_cache(f"daily_source:{self.symbol}")
         # Once the full available history has been seeded from a known vendor,
         # even a young IPO with fewer than 300 bars needs only a recent delta.
         # Unknown/legacy caches are backfilled once from the full initial window.
