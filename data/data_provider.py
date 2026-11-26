@@ -370,6 +370,19 @@ class DataProvider:
                  or refresh_state.get("post_close_check_date") != today_et)
         )
 
+        # After-close checks are retried every 15 minutes until the provider
+        # actually publishes today's completed bar. A successful HTTP response
+        # containing only yesterday's data is not proof today's candle is ready.
+        if (
+            needs_post_close_check
+            and isinstance(refresh_state, dict)
+            and refresh_state.get("last_refresh")
+            and age is not None
+            and age < 15 * 60
+        ):
+            self.last_source = "SQLite daily cache"
+            return 0
+
         # A failed refresh must never be recorded as a successful refresh. Keep
         # the last good candles, but throttle repeated provider calls for 15 min.
         if (
@@ -403,12 +416,22 @@ class DataProvider:
         period = "10d" if len(cached) > 0 and known_source else initial_period
         try:
             count = self.fetch_and_store_daily_candles(period, append=True)
+            refreshed_candles = self.storage.get_candles_df(self.symbol)
+            latest_refreshed_date = (
+                refreshed_candles["date"].iloc[-1].date().isoformat()
+                if not refreshed_candles.empty and "date" in refreshed_candles.columns
+                else None
+            )
+            previous_post_close_date = (
+                refresh_state.get("post_close_check_date")
+                if isinstance(refresh_state, dict) else None
+            )
             new_state = {
                 "last_refresh": datetime.now(timezone.utc).isoformat(),
                 "post_close_check_date": (
-                    today_et if after_regular_close
-                    else (refresh_state.get("post_close_check_date")
-                          if isinstance(refresh_state, dict) else None)
+                    today_et
+                    if after_regular_close and latest_refreshed_date == today_et
+                    else previous_post_close_date
                 ),
             }
             self.storage.set_cache(refresh_key, new_state)
