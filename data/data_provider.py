@@ -70,8 +70,17 @@ def _normalise_ohlcv(df: pd.DataFrame | None) -> pd.DataFrame:
         frame = frame.set_index("datetime")
     if "timestamp" in frame.columns:
         frame = frame.set_index("timestamp")
-    rename = {"adj_close": "close", "vol": "volume"}
-    frame = frame.rename(columns=rename)
+    # Prefer traded OHLC when both Yahoo Close and Adj Close are present.
+    # Adj Close is dividend-adjusted and must not be mixed with raw Longbridge
+    # live prices; use it only for providers that expose no ordinary Close.
+    if "close" not in frame.columns and "adj_close" in frame.columns:
+        frame = frame.rename(columns={"adj_close": "close"})
+    else:
+        frame = frame.drop(columns=["adj_close"], errors="ignore")
+    if "volume" not in frame.columns and "vol" in frame.columns:
+        frame = frame.rename(columns={"vol": "volume"})
+    else:
+        frame = frame.drop(columns=["vol"], errors="ignore")
     required = ["open", "high", "low", "close", "volume"]
     if not set(required).issubset(frame.columns):
         return pd.DataFrame()
