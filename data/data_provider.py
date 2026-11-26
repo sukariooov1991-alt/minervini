@@ -269,11 +269,12 @@ class DataProvider:
                 frame = _normalise_ohlcv(fetch())
                 if frame.empty:
                     raise RuntimeError("source returned no valid OHLCV candles")
-                # The Minervini trend template needs at least 252 daily bars.
-                # A short/partial response is not accepted as a successful source.
-                if len(frame) < 252:
+                # Initial history must satisfy the 252-session Trend Template
+                # requirement. Incremental refreshes need only a valid recent bar.
+                min_required = 1 if append else 252
+                if len(frame) < min_required:
                     raise RuntimeError(
-                        f"source returned only {len(frame)} daily candles; 252 are required"
+                        f"source returned only {len(frame)} daily candles; {min_required} are required"
                     )
                 # The current session's daily bar is incomplete until the
                 # regular US session closes and the provider publishes its final OHLCV.
