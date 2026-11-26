@@ -9,6 +9,7 @@ import pandas as pd
 
 from app import ScanController, _latest_realtime_activity, _quote_timestamp_order, _stable_pullback_levels
 from data.trade_levels import compute_atr
+from data.market_time import MarketTime
 
 
 class RealtimeCandleTests(unittest.TestCase):
@@ -138,8 +139,8 @@ class RealtimeCandleTests(unittest.TestCase):
 
     def test_market_session_label_respects_holidays_and_early_closes(self):
         with patch.dict("os.environ", {"MARKET_SESSION_LABEL": ""}):
-            with patch("app.datetime") as mocked_datetime:
-                mocked_datetime.now.return_value = datetime(
+            with patch("data.market_time.MarketTime.now") as mocked_now:
+                mocked_now.return_value = datetime(
                     2026, 11, 26, 12, 8, tzinfo=ZoneInfo("America/New_York")
                 )
                 self.assertEqual(ScanController._detect_market_session(), "مغلق")
