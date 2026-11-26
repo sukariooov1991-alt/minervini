@@ -248,6 +248,9 @@ class ScanController:
         )
         setup_passed = bool(card.get("vcp_passed", False) or pullback_candidate)
 
+        pullback_anchor, pullback_support = _stable_pullback_levels(
+            card, pullback, pullback_passed and not vcp_confirmed
+        )
         card.update({
             "pullback_passed": pullback_passed,
             "pullback_candidate": pullback_candidate,
@@ -261,9 +264,6 @@ class ScanController:
             or pd.to_numeric(history["close"], errors="coerce").dropna().iloc[-1]
         )
         entry_confirmation = bool(vcp_confirmed or pullback_passed)
-        pullback_anchor, pullback_support = _stable_pullback_levels(
-            card, pullback, pullback_passed and not vcp_confirmed
-        )
         active_pivot = card.get("pivot_price") if vcp_confirmed else pullback_anchor
         active_low = card.get("final_low") if vcp_confirmed else pullback_support
         plan = build_trade_levels(
