@@ -1,7 +1,7 @@
 """Multi-source daily market-data adapter with automatic failover."""
 from __future__ import annotations
 
-from datetime import datetime, timezone, date
+from datetime import datetime, timezone, date, timedelta
 from zoneinfo import ZoneInfo
 from typing import Any
 from urllib.parse import urlencode
@@ -15,6 +15,7 @@ import threading
 import pandas as pd
 
 from data.storage_manager import StorageManager
+from data.us_market_calendar import get_us_equity_market_close
 
 log = logging.getLogger(__name__)
 
@@ -275,7 +276,12 @@ class DataProvider:
             # The current session's daily bar is incomplete until the regular
             # US session closes and the provider publishes its final OHLCV.
             now_et = datetime.now(ZoneInfo("America/New_York"))
-            if now_et.hour < 17:
+            regular_close = get_us_equity_market_close(now_et.date())
+            completed_after = (
+                datetime.combine(now_et.date(), regular_close) + timedelta(hours=1)
+                if regular_close is not None else None
+            )
+            if completed_after is None or now_et.time() < completed_after.time():
                 frame = frame[frame.index.date < now_et.date()]
             if frame.empty:
                 raise RuntimeError("source returned no completed daily candles")
@@ -346,7 +352,14 @@ class DataProvider:
             cached["date"].iloc[-1].date().isoformat()
             if not cached.empty and "date" in cached.columns else None
         )
-        after_regular_close = now_et.weekday() < 5 and now_et.hour >= 17
+        regular_close = get_us_equity_market_close(now_et.date())
+        completed_after = (
+            datetime.combine(now_et.date(), regular_close) + timedelta(hours=1)
+            if regular_close is not None else None
+        )
+        after_regular_close = bool(
+            completed_after is not None and now_et >= completed_after.replace(tzinfo=now_et.tzinfo)
+        )
         needs_post_close_check = bool(
             after_regular_close
             and latest_bar_date != today_et
