@@ -40,8 +40,10 @@ def check_earnings(
         and pd.notna(rg)
         and math.isfinite(eg)
         and math.isfinite(rg)
-        and eg >= min_eps_growth_pct
-        and rg >= min_revenue_growth_pct
+        # Floating-point division can represent an exact 20%/10% result
+        # a few ulps below its decimal threshold; allow a tiny numeric tolerance.
+        and eg >= (min_eps_growth_pct - 1e-9)
+        and rg >= (min_revenue_growth_pct - 1e-9)
         and accel_ok
     )
     return {
