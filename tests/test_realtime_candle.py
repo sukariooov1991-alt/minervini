@@ -70,6 +70,21 @@ class RealtimeCandleTests(unittest.TestCase):
         self.assertEqual(card["targets"], [])
         self.assertIsNone(card["shared_stop_loss"])
 
+    def test_previous_completed_close_is_a_safe_reference_when_session_open_is_unknown(self):
+        controller = self._controller()
+        session = date(2026, 11, 27)
+        previous_close_reference = {
+            "open": 100.0, "high": 100.0, "low": 100.0,
+            "close": 100.0, "volume": 0.0,
+        }
+        bar = controller._merge_live_candle(
+            "AAPL", previous_close_reference, 101.0, 500.0, session
+        )
+        self.assertEqual(bar["open"], 100.0)
+        self.assertEqual(bar["close"], 101.0)
+        self.assertEqual(bar["high"], 101.0)
+        self.assertEqual(bar["low"], 100.0)
+
     def test_stored_session_open_is_preserved_when_seeding_live_candle(self):
         controller = self._controller()
         session = date(2026, 11, 26)
