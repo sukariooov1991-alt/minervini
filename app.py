@@ -1517,20 +1517,21 @@ class ScanController:
                 )
             download_errors = sum(1 for failure in failures if failure.get("phase") == "download")
             analysis_errors = sum(1 for failure in failures if failure.get("phase") == "analysis_error")
+            relative_strength_errors = sum(1 for failure in failures if failure.get("phase") == "relative_strength")
             fundamentals_warnings = sum(1 for failure in failures if failure.get("phase") == "fundamentals")
             history_warnings = sum(1 for failure in failures if failure.get("phase") == "history")
             overall_status = (
                 "STOPPED" if self._stop_event.is_set()
-                else "COMPLETED_WITH_ERRORS" if (download_errors or analysis_errors)
+                else "COMPLETED_WITH_ERRORS" if (download_errors or analysis_errors or relative_strength_errors)
                 else "COMPLETED_WITH_WARNINGS" if (fundamentals_warnings or history_warnings)
                 else "SUCCESS"
             )
             log.info(
                 "STEP=FULL_SCAN STATUS=%s result_rows=%s download_errors=%s "
-                "analysis_errors=%s fundamentals_warnings=%s history_warnings=%s",
+                "analysis_errors=%s relative_strength_errors=%s fundamentals_warnings=%s history_warnings=%s",
                 overall_status,
                 0 if result_df is None else len(result_df),
-                download_errors, analysis_errors, fundamentals_warnings, history_warnings,
+                download_errors, analysis_errors, relative_strength_errors, fundamentals_warnings, history_warnings,
             )
             for failure in failures:
                 log.error(
