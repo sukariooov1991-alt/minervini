@@ -484,11 +484,16 @@ class ScanController:
 
         for item in card.get("filters", []):
             name = item.get("name")
-            if name == "Pullback Setup":
+            if name == "VCP Pattern":
+                item["passed"] = vcp_passed
+            elif name in {"VCP Breakout Confirmation", "Breakout Confirmation"}:
+                item["passed"] = breakout_passed
+            elif name == "Pullback Setup":
                 item["passed"] = pullback_candidate
-            elif name == "Pullback Entry Confirmation":
+            elif name in {"Pullback Entry Confirmation", "Pullback Check"}:
                 item["passed"] = pullback_passed
             elif name == "Market Regime Favorable":
+                item["passed"] = market_favorable
                 item["pending"] = not setup_passed
 
     def _realtime_watchdog_loop(self) -> None:
