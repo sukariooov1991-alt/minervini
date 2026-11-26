@@ -275,6 +275,13 @@ class DataProvider:
                     raise RuntimeError(
                         f"source returned only {len(frame)} daily candles; 252 are required"
                     )
+                # The current session's daily bar is incomplete until the
+                # regular US session closes and the provider publishes its final OHLCV.
+                now_et = datetime.now(ZoneInfo("America/New_York"))
+                if now_et.hour < 17:
+                    frame = frame[frame.index.date < now_et.date()]
+                if frame.empty:
+                    raise RuntimeError("source returned no completed daily candles")
                 rows = [
                     (idx.strftime("%Y-%m-%d"), float(row.open), float(row.high),
                      float(row.low), float(row.close), float(row.volume))
@@ -300,12 +307,11 @@ class DataProvider:
         refresh_key = f"daily_refresh:{self.symbol}"
         age = self.storage.cache_age_seconds(refresh_key)
         now_et = datetime.now(ZoneInfo("America/New_York"))
-        # Never fetch an in-progress daily candle. A full refresh is considered
-        # only after the US regular session has had time to publish its close.
-        session_complete = now_et.hour > 16 or (now_et.hour == 16 and now_et.minute >= 30)
-        if len(cached) >= 300 and (not session_complete or (age is not None and age < 20 * 3600)):
+        # A successful refresh is reused for 20 hours. If the app was offline
+        # after yesterday's close, the next scan can still fill that missing bar.
+        if len(cached) >= 300 and age is not None and age < 20 * 3600:
             return 0
-        if len(cached) >= 252 and not session_complete:
+        if len(cached) >= 252 and age is not None and age < 6 * 3600:
             return 0
         period = "10d" if len(cached) >= 252 else initial_period
         try:
@@ -334,7 +340,7 @@ class DataProvider:
             records = frame.copy()
             if "period" in records.columns:
                 records["period"] = records["period"].astype(str)
-            payload = records.where(pd.notna(records), None).to_dict(orient="records")
+            payload = records.astype(object).where(pd.notna(records), None).to_dict(orient="records")
             self.storage.set_cache(f"fundamentals:{self.symbol}", payload)
             for item in payload:
                 period = str(item.get("period") or "")
