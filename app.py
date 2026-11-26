@@ -174,6 +174,11 @@ class ScanController:
                 "status": "بيانات السعر غير متاحة — لا توجد إشارة دخول",
                 "stage": "المرحلة 1: انتظار بيانات صالحة",
             })
+            for item in card.get("filters", []):
+                if item.get("name") in {"Pullback Setup", "Pullback Entry Confirmation"}:
+                    item["passed"] = False
+                elif item.get("name") == "Market Regime Favorable":
+                    item["pending"] = True
             return
 
         valid_closes = pd.to_numeric(history["close"], errors="coerce").dropna()
@@ -196,6 +201,11 @@ class ScanController:
                 "status": "بيانات السعر غير صالحة — لا توجد إشارة دخول",
                 "stage": "المرحلة 1: انتظار بيانات صالحة",
             })
+            for item in card.get("filters", []):
+                if item.get("name") in {"Pullback Setup", "Pullback Entry Confirmation"}:
+                    item["passed"] = False
+                elif item.get("name") == "Market Regime Favorable":
+                    item["pending"] = True
             return
 
         pullback = check_pullback(history)
