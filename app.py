@@ -1161,6 +1161,9 @@ class ScanController:
                         self._cards.pop(stale_symbol, None)
                         self._live_prices.pop(stale_symbol, None)
                         self._live_candles.pop(stale_symbol, None)
+                        self._latest_quote_sequence.pop(stale_symbol, None)
+                        self._ws_seen_symbols.discard(stale_symbol)
+                        self._ws_last_log_at.pop(stale_symbol, None)
                         try:
                             self.storage.delete_watchlist_card(stale_symbol)
                         except Exception:
@@ -1243,7 +1246,11 @@ class ScanController:
         log.warning("Watchlist card manually deleted through API: %s", clean)
         with self._state_cv:
             self._cards.pop(clean, None)
+            self._live_prices.pop(clean, None)
             self._live_candles.pop(clean, None)
+            self._latest_quote_sequence.pop(clean, None)
+            self._ws_seen_symbols.discard(clean)
+            self._ws_last_log_at.pop(clean, None)
             try:
                 self.storage.delete_watchlist_card(clean)
             except Exception:
