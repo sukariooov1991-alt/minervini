@@ -2,12 +2,7 @@
 import pandas as pd
 
 
-def _prepare_df(df: pd.DataFrame) -> pd.DataFrame:
-    out = df.copy()
-    if isinstance(out.index, pd.DatetimeIndex) and not out.index.is_monotonic_increasing:
-        out = out.sort_index()
-    return out.reset_index(drop=True)
-
+from analysis.frame_utils import ordered_frame
 
 def count_distribution_days(
     index_df: pd.DataFrame,
@@ -19,7 +14,7 @@ def count_distribution_days(
     if len(index_df) < lookback + 1:
         return 0
 
-    recent = _prepare_df(index_df).tail(lookback + 1).copy()
+    recent = ordered_frame(index_df, reset_index=True).tail(lookback + 1).copy()
     close = pd.to_numeric(recent["close"], errors="coerce")
     volume = pd.to_numeric(recent["volume"], errors="coerce")
 
@@ -51,7 +46,7 @@ def check_market_regime(
         out["reasons"].append("requires at least 200 bars of index close and volume")
         return out
 
-    clean_df = _prepare_df(index_df)
+    clean_df = ordered_frame(index_df, reset_index=True)
     close = pd.to_numeric(clean_df["close"], errors="coerce").dropna().reset_index(drop=True)
     if len(close) < 200:
         out["reasons"].append("insufficient valid close values")
