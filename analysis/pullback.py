@@ -22,7 +22,7 @@ def _ordered_frame(df: pd.DataFrame) -> pd.DataFrame:
     return out.reset_index(drop=True)
 
 
-def check_pullback(df: pd.DataFrame, **_unused) -> dict:
+def check_pullback(df: pd.DataFrame) -> dict:
     """Detect a recent pullback and a simple current-candle turn-up.
 
     This is an operational interpretation of Minervini's qualitative guidance,
@@ -90,8 +90,8 @@ def check_pullback(df: pd.DataFrame, **_unused) -> dict:
     return result
 
 
-def filter_pullbacks(prices: dict, **kwargs) -> list:
+def filter_pullbacks(prices: dict) -> list:
     return [
         symbol for symbol, frame in prices.items()
-        if check_pullback(frame, **kwargs)["passed"]
+        if check_pullback(frame)["passed"]
     ]
