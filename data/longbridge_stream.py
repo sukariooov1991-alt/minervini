@@ -5,6 +5,7 @@ import os
 import math
 import logging
 import threading
+import time
 from datetime import datetime
 from typing import Any, Callable
 
@@ -82,9 +83,14 @@ class LongbridgeRealtimeClient:
         self._ctx: Any = None
         self._subscribed_symbols: list[str] = []
         self._sub_type_quote: Any = None
+        self._last_message_monotonic: float | None = None
 
     def has_credentials(self) -> bool:
         return bool(self.app_key and self.app_secret and self.access_token)
+
+    @property
+    def last_message_monotonic(self) -> float | None:
+        return self._last_message_monotonic
 
     def _normalize_symbol(self, symbol: str) -> str:
         s = str(symbol).upper().strip()
@@ -121,6 +127,9 @@ class LongbridgeRealtimeClient:
             ctx = QuoteContext(config)
 
             def _handle_quote(symbol: str, event: Any) -> None:
+                # Count every received PushQuote as stream activity, including
+                # volume-only updates that are not valid price ticks.
+                self._last_message_monotonic = time.monotonic()
                 if self.on_quote is None:
                     return
 
@@ -248,6 +257,7 @@ class LongbridgeRealtimeClient:
             self._ctx = None
             self._subscribed_symbols = []
             self._sub_type_quote = None
+            self._last_message_monotonic = None
             if ctx is not None and hasattr(ctx, "close"):
                 try:
                     ctx.close()
