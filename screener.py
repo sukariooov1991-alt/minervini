@@ -353,7 +353,7 @@ class DailyScreener:
                                 failures.append({
                                     "symbol": sym,
                                     "error": "Fundamental data unavailable; eligibility cannot be confirmed",
-                                    "phase": "analysis",
+                                    "phase": "fundamentals",
                                 })
                             missing_fields = _missing_fundamental_fields(latest)
 
@@ -365,7 +365,7 @@ class DailyScreener:
                                         "symbol": sym,
                                         "error": "Incomplete quarterly fundamentals; missing or invalid: "
                                                  + ", ".join(missing_fields),
-                                        "phase": "analysis",
+                                        "phase": "fundamentals",
                                     })
                             else:
                                 earnings = check_earnings(
@@ -392,7 +392,7 @@ class DailyScreener:
                             failures.append({
                                 "symbol": sym,
                                 "error": f"Fundamental data error: {exc}",
-                                "phase": "analysis",
+                                "phase": "analysis_error",
                             })
 
                         provider_source = (
@@ -458,7 +458,7 @@ class DailyScreener:
                         failures.append({
                             "symbol": sym,
                             "error": str(exc),
-                            "phase": "analysis",
+                            "phase": "analysis_error",
                         })
                         if progress_callback:
                             progress_callback({
