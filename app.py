@@ -354,8 +354,10 @@ class ScanController:
             time.sleep(30)
             if not self.lb_client.has_credentials():
                 continue
-            if self._detect_market_session() == "مغلق":
+            session_label = self._detect_market_session()
+            if session_label == "مغلق":
                 continue
+            stale_after_seconds = 300 if session_label == "مفتوح" else 900
             now_mono = time.monotonic()
             with self._lock:
                 # New eligible cards are subscribed together once the scan
@@ -368,7 +370,7 @@ class ScanController:
                 stale_stream = bool(
                     symbols
                     and last_push is not None
-                    and now_mono - last_push > 300
+                    and now_mono - last_push > stale_after_seconds
                     and now_mono - last_reconnect > 120
                 )
                 if stale_stream:
@@ -378,8 +380,8 @@ class ScanController:
             try:
                 if stale_stream:
                     log.warning(
-                        "Longbridge WebSocket has had no quote pushes for 5 minutes; reconnecting %s symbols",
-                        len(symbols),
+                        "Longbridge WebSocket has had no quote pushes for %s seconds; reconnecting %s symbols",
+                        stale_after_seconds, len(symbols),
                     )
                     self.lb_client.reconnect(symbols)
                     with self._state_cv:
