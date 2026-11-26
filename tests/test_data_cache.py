@@ -358,14 +358,20 @@ class PermanentDataCacheTests(unittest.TestCase):
             "fresh cached fundamentals must not trigger a provider request"
         )
 
-        with patch.object(self.storage, "cache_age_seconds", return_value=60):
+        with (
+            patch.object(self.storage, "cache_age_seconds", return_value=60),
+            patch.object(self.storage, "add_event", wraps=self.storage.add_event) as add_event,
+        ):
             frame = provider.get_fundamentals_dataframe()
+            provider.get_fundamentals_dataframe()
 
         self.assertEqual(len(frame), 1)
         events = self.storage.get_events("CACHE", "earnings", limit=10)
         self.assertEqual(len(events), 1)
         self.assertEqual(events[0]["timestamp"], period)
         self.assertEqual(events[0]["payload"]["eps_current"], 2.0)
+        # The second cache hit repairs nothing and must not rewrite unchanged rows.
+        add_event.assert_called_once()
 
 
 if __name__ == "__main__":
