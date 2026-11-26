@@ -2,8 +2,10 @@ import unittest
 from unittest.mock import patch
 
 import pandas as pd
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
-from data.data_provider import DataProvider
+from data.data_provider import DataProvider, _latest_completed_session
 from data.storage_manager import StorageManager
 
 
@@ -22,6 +24,27 @@ class PermanentDataCacheTests(unittest.TestCase):
         self.assertEqual(len(frame), 300)
         self.assertEqual(frame.iloc[0]["date"], pd.Timestamp(dates[5]))
         self.assertEqual(frame.iloc[-1]["date"], pd.Timestamp(dates[-1]))
+
+    def test_latest_completed_session_respects_one_hour_after_close_buffer(self):
+        ny = ZoneInfo("America/New_York")
+        before_buffer = datetime(2026, 11, 25, 16, 45, tzinfo=ny)
+        after_buffer = datetime(2026, 11, 25, 17, 5, tzinfo=ny)
+        self.assertEqual(
+            _latest_completed_session(before_buffer),
+            pd.Timestamp("2026-11-24").date(),
+        )
+        self.assertEqual(
+            _latest_completed_session(after_buffer),
+            pd.Timestamp("2026-11-25").date(),
+        )
+
+    def test_market_holiday_uses_previous_completed_session(self):
+        ny = ZoneInfo("America/New_York")
+        thanksgiving = datetime(2026, 11, 26, 18, 0, tzinfo=ny)
+        self.assertEqual(
+            _latest_completed_session(thanksgiving),
+            pd.Timestamp("2026-11-25").date(),
+        )
 
     def test_cache_entries_survive_new_storage_manager_instance(self):
         self.storage.set_cache("fundamentals:AAPL", [{"eps_current": 2.5}])
