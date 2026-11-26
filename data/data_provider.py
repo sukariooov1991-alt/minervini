@@ -90,46 +90,52 @@ def _normalise_ohlcv(df: pd.DataFrame | None) -> pd.DataFrame:
     return frame[~frame.index.duplicated(keep="last")].sort_index()
 
 
-def _find_nearest_prior_value(
-    series: pd.Series,
+def _find_nearest_prior_period(
+    eps: pd.Series,
+    revenue: pd.Series,
     target_date: pd.Timestamp,
     max_window_days: int = 60,
-) -> float:
-    """Find the closest reported value at/before a year-ago quarter date.
+) -> tuple[float, float]:
+    """Return EPS and revenue from the same prior fiscal reporting period.
 
-    A 60-day tolerance accommodates 52/53-week fiscal calendars and small
-    differences between fiscal quarter-end dates. Future reports are never
-    used, so this cannot introduce look-ahead bias.
+    Match a common reported period at/before the year-ago target. This supports
+    52/53-week fiscal calendars without combining EPS from one quarter with
+    revenue from another or introducing future-report look-ahead.
     """
-    if series is None or series.empty:
-        return float("nan")
+    def values_by_period(series: pd.Series) -> dict[pd.Timestamp, float]:
+        result: dict[pd.Timestamp, float] = {}
+        if series is None or series.empty:
+            return result
+        for raw_date, raw_value in series.items():
+            try:
+                period = pd.Timestamp(raw_date)
+                value = float(raw_value)
+                if period.tzinfo is not None:
+                    period = period.tz_localize(None)
+            except (TypeError, ValueError, OverflowError):
+                continue
+            if not pd.isna(period) and math.isfinite(value):
+                result[period] = value
+        return result
+
+    eps_values = values_by_period(eps)
+    revenue_values = values_by_period(revenue)
     target = pd.Timestamp(target_date)
     if target.tzinfo is not None:
         target = target.tz_localize(None)
 
-    candidates = []
-    for idx_val, raw_val in series.items():
-        try:
-            report_date = pd.Timestamp(idx_val)
-            number = float(raw_val)
-            if report_date.tzinfo is not None:
-                report_date = report_date.tz_localize(None)
-        except (TypeError, ValueError, OverflowError):
-            continue
-        if pd.isna(report_date) or not math.isfinite(number):
-            continue
-        # Only use a report dated on/before the year-ago target; never borrow future data.
-        if report_date > target:
-            continue
-        diff_days = (target - report_date).days
-        if 0 <= diff_days <= max_window_days:
-            candidates.append((diff_days, report_date, number))
+    common_periods = []
+    for period in eps_values.keys() & revenue_values.keys():
+        if period <= target:
+            distance = (target - period).days
+            if 0 <= distance <= max_window_days:
+                common_periods.append((distance, period))
 
-    if not candidates:
-        return float("nan")
-    # Stable tie-break: prefer the more recent report date.
-    candidates.sort(key=lambda item: (item[0], -item[1].value))
-    return candidates[0][2]
+    if not common_periods:
+        return float("nan"), float("nan")
+
+    _, matched_period = min(common_periods, key=lambda item: (item[0], -item[1].value))
+    return eps_values[matched_period], revenue_values[matched_period]
 
 
 def _latest_completed_session(now_et: datetime) -> date | None:
@@ -602,8 +608,9 @@ class DataProvider:
             r = pd.to_numeric(rev.get(d, float("nan")), errors="coerce")
 
             prior_target = d_ts - pd.DateOffset(months=12)
-            prior_e = _find_nearest_prior_value(eps, prior_target, max_window_days=60)
-            prior_r = _find_nearest_prior_value(rev, prior_target, max_window_days=60)
+            prior_e, prior_r = _find_nearest_prior_period(
+                eps, rev, prior_target, max_window_days=60
+            )
 
             def growth(cur, prior):
                 try:
