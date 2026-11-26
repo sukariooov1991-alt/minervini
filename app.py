@@ -353,6 +353,8 @@ class ScanController:
                         "within_entry_range": plan["within_entry_range"],
                         "notes": plan["notes"],
                         "setup_passed": setup_passed,
+                        "vcp_passed": vcp_passed,
+                        "pullback_passed": pullback_passed,
                         "entry_ready": bool(setup_passed and market_favorable),
                         "passed_all_filters": bool(setup_passed and market_favorable),
                         "market_favorable": market_favorable,
@@ -413,7 +415,7 @@ class ScanController:
                         card["within_entry_range"] = within_range
                         if range_note and range_note not in card.get("notes", []):
                             card["notes"] = [range_note] + list(card.get("notes") or [])
-                        card["smart_reading"] = self._build_smart_reading_from_card(card, df)
+                        card["smart_reading"] = self._build_smart_reading_from_card(card)
                         try:
                             self.storage.save_watchlist_card(card)
                         except Exception:
@@ -659,13 +661,15 @@ class ScanController:
             "filters": self._build_filters_detail(row),
             "watchlist_eligible": True,
             "setup_passed": setup_passed,
+            "vcp_passed": vcp_passed,
+            "pullback_passed": pullback_passed,
             "market_favorable": bool(market_favorable),
             "entry_ready": entry_ready,
             "passed_all_filters": entry_ready,
             "shown_on_main_page": True,
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
-        card["smart_reading"] = self._build_smart_reading_from_card(card)
+        card["smart_reading"] = self._build_smart_reading_from_card(card, df)
         return card
 
     def _update_scan_progress(self, progress: dict[str, Any]) -> None:
