@@ -21,7 +21,6 @@ from data.sp500_symbols import SP500_SYMBOLS
 from data.telegram_notifier import TelegramNotifier
 from screener import DailyScreener
 from analysis.vcp import check_vcp, check_breakout
-from analysis.pullback import check_pullback
 import pandas as pd
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -389,7 +388,6 @@ class ScanController:
                     # material gives no mechanical entry trigger or stop.
                     completed_df = live_df.iloc[:-1].copy()
                     vcp_info = check_vcp(completed_df)
-                    pullback_info = check_pullback(live_df)
                     vcp_passed = bool(vcp_info.get("passed", False))
                     pivot = vcp_info.get("pivot_price") if vcp_passed else None
                     breakout_passed = bool(
@@ -401,7 +399,6 @@ class ScanController:
                     pullback_passed = False
                     breakout_passed = False
                     pivot = None
-                    pullback_info = {}
                     vcp_info = {}
 
                 setup_passed = bool(vcp_passed)
