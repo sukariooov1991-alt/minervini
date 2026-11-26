@@ -214,6 +214,60 @@ class ScanController:
             daemon=True,
         )
         self._realtime_watchdog.start()
+        # Independent daily data maintenance: this worker refreshes only the
+        # permanent OHLCV cache after the completed US session. It never runs a
+        # stock scan, changes cards, or depends on a user pressing the Scan button.
+        self._daily_history_stop = threading.Event()
+        self._daily_history_scheduler = threading.Thread(
+            target=self._daily_history_scheduler_loop,
+            name="daily-history-refresh-scheduler",
+            daemon=True,
+        )
+        self._daily_history_scheduler.start()
+
+    def _daily_history_scheduler_loop(self) -> None:
+        """Refresh the rolling 300-bar universe cache after each completed US session."""
+        timezone_et = ZoneInfo("America/New_York")
+        while not self._daily_history_stop.is_set():
+            try:
+                now_et = datetime.now(timezone_et)
+                market_close = get_us_equity_market_close(now_et.date())
+                if market_close is None:
+                    self._daily_history_stop.wait(300)
+                    continue
+
+                refresh_at = datetime.combine(
+                    now_et.date(), market_close, tzinfo=timezone_et
+                ) + pd.Timedelta(hours=1).to_pytimedelta()
+                if now_et < refresh_at:
+                    wait_seconds = min(300, max(30, (refresh_at - now_et).total_seconds()))
+                    self._daily_history_stop.wait(wait_seconds)
+                    continue
+
+                # ensure_daily_history() is date-based, not TTL-based. Repeated
+                # passes are cheap for symbols already current and retry providers
+                # that have not yet published today's completed candle.
+                screener = DailyScreener(
+                    db_path=self.db_path,
+                    output_path=self.output_path,
+                    symbols=SP500_SYMBOLS,
+                )
+                failures = screener.update_universe_data(period="2y")
+                log.info(
+                    "Background daily history refresh completed: date=%s symbols=%s failures=%s",
+                    now_et.date().isoformat(), len(SP500_SYMBOLS), len(failures),
+                )
+                if failures:
+                    log.warning(
+                        "Background daily history refresh failures: %s",
+                        ", ".join(item.get("symbol", "?") for item in failures[:30]),
+                    )
+                # Retry the same completed session in 15 minutes. Symbols already
+                # updated will read SQLite only; stale symbols get another attempt.
+                self._daily_history_stop.wait(15 * 60)
+            except Exception:
+                log.exception("Background daily history scheduler failed")
+                self._daily_history_stop.wait(60)
 
     def _refresh_restored_pullback(
         self, symbol: str, card: dict[str, Any], history: pd.DataFrame
