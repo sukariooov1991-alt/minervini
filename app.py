@@ -55,6 +55,9 @@ class ScanController:
         self._cards: dict[str, dict[str, Any]] = {}
         # Candidate reconstruction during startup reads the live-price cache.
         self._live_prices: dict[str, float] = {}
+        # Preserve the evolving session OHLC between WebSocket pushes. Daily
+        # history in SQLite is not rewritten on every quote tick.
+        self._live_candles: dict[str, dict[str, Any]] = {}
         try:
             # Restore cards before Flask can serve the first /api/state or SSE snapshot.
             self._cards = {
@@ -284,6 +287,60 @@ class ScanController:
                         "Queued realtime processing failed for %s", quote.get("symbol")
                     )
 
+    def _merge_live_candle(
+        self,
+        symbol: str,
+        stored_bar: dict[str, Any] | None,
+        price: float,
+        quote_volume: float | None,
+        session_date,
+    ) -> dict[str, Any]:
+        """Merge a WebSocket tick into the in-memory OHLC for the current session."""
+        date_key = session_date.isoformat() if hasattr(session_date, "isoformat") else str(session_date)
+
+        def finite_or(value, fallback):
+            try:
+                number = float(value)
+                return number if math.isfinite(number) else fallback
+            except (TypeError, ValueError):
+                return fallback
+
+        with self._lock:
+            cached = self._live_candles.get(symbol)
+            if cached and cached.get("date") == date_key:
+                bar = dict(cached)
+            elif stored_bar is not None:
+                bar = {
+                    "date": date_key,
+                    "open": finite_or(stored_bar.get("open"), price),
+                    "high": finite_or(stored_bar.get("high"), price),
+                    "low": finite_or(stored_bar.get("low"), price),
+                    "close": finite_or(stored_bar.get("close"), price),
+                    "volume": max(0.0, finite_or(stored_bar.get("volume"), 0.0)),
+                }
+            else:
+                # PushQuote does not carry the session open. When no daily
+                # candle exists yet, the first observed tick seeds the bar.
+                bar = {
+                    "date": date_key,
+                    "open": price,
+                    "high": price,
+                    "low": price,
+                    "close": price,
+                    "volume": 0.0,
+                }
+
+            bar["high"] = max(finite_or(bar.get("high"), price), price)
+            bar["low"] = min(finite_or(bar.get("low"), price), price)
+            bar["close"] = price
+            if quote_volume is not None and math.isfinite(quote_volume) and quote_volume >= 0:
+                bar["volume"] = max(
+                    finite_or(bar.get("volume"), 0.0), float(quote_volume)
+                )
+            bar["date"] = date_key
+            self._live_candles[symbol] = dict(bar)
+            return dict(bar)
+
     def _process_realtime_quote(self, quote: dict[str, Any]) -> None:
         sym = str(quote.get("symbol", "")).upper().strip()
         raw_price = quote.get("last_done")
@@ -334,22 +391,25 @@ class ScanController:
                     except (TypeError, ValueError):
                         quote_volume = None
 
+                    stored_bar = (
+                        live_df.loc[today_mask].iloc[-1].to_dict()
+                        if bool(today_mask.any()) else None
+                    )
+                    live_bar = self._merge_live_candle(
+                        sym, stored_bar, price, quote_volume, today
+                    )
                     if bool(today_mask.any()):
                         idx = live_df.index[today_mask][-1]
-                        live_df.at[idx, "high"] = max(float(live_df.at[idx, "high"]), price)
-                        live_df.at[idx, "low"] = min(float(live_df.at[idx, "low"]), price)
-                        live_df.at[idx, "close"] = price
-                        if quote_volume is not None:
-                            live_df.at[idx, "volume"] = max(float(live_df.at[idx, "volume"]), quote_volume)
+                        for field in ("open", "high", "low", "close", "volume"):
+                            live_df.at[idx, field] = live_bar[field]
                     else:
-                        live_df = pd.concat([live_df, pd.DataFrame([{
-                            "date": pd.Timestamp(today),
-                            "open": price,
-                            "high": price,
-                            "low": price,
-                            "close": price,
-                            "volume": quote_volume if quote_volume is not None else 0.0,
-                        }])], ignore_index=True)
+                        live_df = pd.concat(
+                            [live_df, pd.DataFrame([{
+                                **live_bar,
+                                "date": pd.Timestamp(today),
+                            }])],
+                            ignore_index=True,
+                        )
                     live_df = live_df.sort_values("date").reset_index(drop=True)
 
                     # VCP structure uses completed daily bars; the evolving
@@ -991,6 +1051,7 @@ class ScanController:
         log.warning("Watchlist card manually deleted through API: %s", clean)
         with self._state_cv:
             self._cards.pop(clean, None)
+            self._live_candles.pop(clean, None)
             try:
                 self.storage.delete_watchlist_card(clean)
             except Exception:
