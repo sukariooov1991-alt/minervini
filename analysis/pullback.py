@@ -69,7 +69,7 @@ def check_pullback(df: pd.DataFrame, **_unused) -> dict:
         "turning_up": bool(turning_up),
         "support_low": support_low if valid_support else None,
         "last_close": current_close,
-        "entry_trigger_price": current_close if prior_decline and turning_up else None,
+        "entry_trigger_price": current_close if prior_decline and turning_up and valid_support else None,
         "passed": bool(prior_decline and turning_up and valid_support),
         "entry_eligible": bool(prior_decline and turning_up and valid_support),
     })
