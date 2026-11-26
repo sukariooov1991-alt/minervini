@@ -61,3 +61,8 @@ The application distinguishes rules explicitly described by Mark Minervini from 
 - The 5% maximum entry range, five entry tranches, intermediate 2R-to-3R target steps, and the 0.5% structural-low buffer are application trade-planning outputs. They are not represented as Minervini's prescribed five-target or fixed stop-placement method. Wilder ATR is used as a fallback when no structural low is available.
 
 These distinctions are deliberate: preserve the source-defined concepts, keep necessary automation parameters visible, and avoid attributing implementation choices to the author. The built-in calendar covers recurring US equity holidays and common early closes; exceptional one-off exchange closures still require a calendar update.
+
+
+## Deployment security note
+
+The current Flask deployment does not implement user authentication. The scan start/stop and watchlist-delete API routes are therefore publicly callable if the Render service URL is reachable. Do not treat an unlisted URL as access control. Before exposing this dashboard beyond a trusted private environment, configure an application-level access token or place it behind an authenticated reverse proxy. This requires a secret chosen and stored in the deployment environment, not committed to this repository.
