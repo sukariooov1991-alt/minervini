@@ -121,6 +121,19 @@ class ScanController:
 
         self._realtime_locks: dict[str, threading.Lock] = {}
         self._ws_seen_symbols: set[str] = set()
+        self._latest_quote_sequence: dict[str, int] = {}
+        # Quote callbacks must stay short: the SDK dispatches pushes on its
+        # receive path. Coalesce pending work per symbol and recalculate setups
+        # on this independent worker so one slow VCP/SQLite pass cannot stall
+        # the WebSocket stream for every other symbol.
+        self._realtime_pending: dict[str, dict[str, Any]] = {}
+        self._realtime_event = threading.Event()
+        self._realtime_worker = threading.Thread(
+            target=self._realtime_worker_loop,
+            name="longbridge-quote-processor",
+            daemon=True,
+        )
+        self._realtime_worker.start()
         self._ws_connected: bool = False
         self._last_error: str | None = None
         self._scan_errors: list[dict[str, str]] = []
@@ -207,6 +220,62 @@ class ScanController:
         return "تداول ليلي"
 
     def _on_realtime_quote(self, quote: dict[str, Any]) -> None:
+        """Publish each tick immediately, then queue technical work off the SDK thread."""
+        sym = str(quote.get("symbol", "")).upper().strip()
+        try:
+            price = float(quote.get("last_done"))
+        except (TypeError, ValueError):
+            return
+        if not sym or not (price > 0 and math.isfinite(price)):
+            return
+
+        sequence = quote.get("sequence")
+        try:
+            sequence = int(sequence) if sequence is not None else None
+        except (TypeError, ValueError, OverflowError):
+            sequence = None
+
+        with self._state_cv:
+            previous_sequence = self._latest_quote_sequence.get(sym)
+            if sequence is not None and previous_sequence is not None and sequence <= previous_sequence:
+                return
+            if sequence is not None:
+                self._latest_quote_sequence[sym] = sequence
+            self._ws_connected = True
+            self._live_prices[sym] = price
+            card = self._cards.get(sym)
+            if card is not None:
+                card.update({
+                    "current_price": round(price, 4),
+                    "price_source": "Longbridge WebSocket",
+                    "price_session": quote.get("trade_session") or "regular",
+                    "price_timestamp": quote.get("timestamp"),
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                })
+            self._notify_state_changed_locked()
+
+        # Keep only the newest not-yet-processed tick for each symbol. This
+        # bounds backlog during fast markets without dropping the UI price.
+        with self._lock:
+            self._realtime_pending[sym] = dict(quote)
+            self._realtime_event.set()
+
+    def _realtime_worker_loop(self) -> None:
+        while True:
+            self._realtime_event.wait()
+            self._realtime_event.clear()
+            with self._lock:
+                pending = list(self._realtime_pending.values())
+                self._realtime_pending.clear()
+            for quote in pending:
+                try:
+                    self._process_realtime_quote(quote)
+                except Exception:
+                    log.exception(
+                        "Queued realtime processing failed for %s", quote.get("symbol")
+                    )
+
+    def _process_realtime_quote(self, quote: dict[str, Any]) -> None:
         sym = str(quote.get("symbol", "")).upper().strip()
         raw_price = quote.get("last_done")
         if not sym or raw_price is None:
@@ -302,7 +371,15 @@ class ScanController:
                     vcp_info = {}
 
                 setup_passed = bool(vcp_passed or pullback_passed)
+                sequence = quote.get("sequence")
+                try:
+                    sequence = int(sequence) if sequence is not None else None
+                except (TypeError, ValueError, OverflowError):
+                    sequence = None
                 with self._state_cv:
+                    latest_sequence = self._latest_quote_sequence.get(sym)
+                    if sequence is not None and latest_sequence is not None and sequence < latest_sequence:
+                        return
                     self._ws_connected = True
                     self._live_prices[sym] = price
                     card = self._cards.get(sym)
