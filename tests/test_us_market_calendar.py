@@ -40,6 +40,22 @@ class MarketTimeTests(unittest.TestCase):
         for day in us_equity_early_closes(2026):
             self.assertTrue(is_trading_day(day))
 
+    def test_early_close_after_hours_ends_at_5pm(self):
+        ny = ZoneInfo("America/New_York")
+        self.assertEqual(MarketTime.state(datetime(2026, 11, 27, 16, 59, tzinfo=ny)).session, MarketSession.POST_MARKET)
+        self.assertEqual(MarketTime.state(datetime(2026, 11, 27, 17, 0, tzinfo=ny)).session, MarketSession.CLOSED)
+
+    def test_overnight_session_belongs_to_next_trading_date(self):
+        ny = ZoneInfo("America/New_York")
+        sunday = MarketTime.state(datetime(2026, 11, 29, 20, 30, tzinfo=ny))
+        monday = MarketTime.state(datetime(2026, 11, 30, 2, 30, tzinfo=ny))
+        friday_night = MarketTime.state(datetime(2026, 11, 27, 20, 30, tzinfo=ny))
+        self.assertEqual(sunday.session, MarketSession.OVERNIGHT)
+        self.assertEqual(sunday.trading_date, date(2026, 11, 30))
+        self.assertEqual(monday.session, MarketSession.OVERNIGHT)
+        self.assertEqual(monday.trading_date, date(2026, 11, 30))
+        self.assertEqual(friday_night.session, MarketSession.CLOSED)
+
 
 if __name__ == "__main__":
     unittest.main()
