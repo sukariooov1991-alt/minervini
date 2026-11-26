@@ -554,10 +554,22 @@ class ScanController:
                     except (TypeError, ValueError):
                         quote_volume = None
 
-                    stored_bar = (
-                        live_df.loc[today_mask].iloc[-1].to_dict()
-                        if bool(today_mask.any()) else None
-                    )
+                    if bool(today_mask.any()):
+                        stored_bar = live_df.loc[today_mask].iloc[-1].to_dict()
+                    else:
+                        # PushQuote does not expose the official session open.
+                        # Seed the evolving candle from the previous completed
+                        # close instead of treating an arbitrary first tick as
+                        # the market open; Pullback's turn-up proxy then compares
+                        # the live price against a known completed reference.
+                        previous_close = float(live_df["close"].iloc[-1])
+                        stored_bar = {
+                            "open": previous_close,
+                            "high": previous_close,
+                            "low": previous_close,
+                            "close": previous_close,
+                            "volume": 0.0,
+                        }
                     live_bar = self._merge_live_candle(
                         sym, stored_bar, price, quote_volume, today
                     )
