@@ -310,8 +310,10 @@ class DataProvider:
         # A successful refresh is reused for 20 hours. If the app was offline
         # after yesterday's close, the next scan can still fill that missing bar.
         if len(cached) >= 300 and age is not None and age < 20 * 3600:
+            self.last_source = "SQLite daily cache"
             return 0
         if len(cached) >= 252 and age is not None and age < 6 * 3600:
+            self.last_source = "SQLite daily cache"
             return 0
         period = "10d" if len(cached) >= 252 else initial_period
         try:
