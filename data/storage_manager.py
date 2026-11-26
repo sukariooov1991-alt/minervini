@@ -32,7 +32,14 @@ class StorageManager:
 
     @contextmanager
     def _get_conn(self):
-        conn = sqlite3.connect(self._memory_uri, uri=True) if self._memory_uri else sqlite3.connect(self.db_path)
+        conn = (
+            sqlite3.connect(self._memory_uri, uri=True, timeout=30)
+            if self._memory_uri
+            else sqlite3.connect(self.db_path, timeout=30)
+        )
+        conn.execute("PRAGMA busy_timeout=30000")
+        if self._memory_uri is None:
+            conn.execute("PRAGMA synchronous=NORMAL")
         conn.row_factory = sqlite3.Row
         try:
             yield conn
@@ -45,6 +52,10 @@ class StorageManager:
 
     def _init_db(self):
         with self._get_conn() as conn:
+            # WAL lets scan, realtime-card, and SSE-backed readers coexist with
+            # short writes on Render's persistent SQLite database.
+            if self._memory_uri is None:
+                conn.execute("PRAGMA journal_mode=WAL")
             conn.executescript("""
             CREATE TABLE IF NOT EXISTS candles (
                 symbol TEXT NOT NULL, date TEXT NOT NULL,
