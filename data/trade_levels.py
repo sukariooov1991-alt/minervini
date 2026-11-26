@@ -287,7 +287,10 @@ def build_trade_levels(
     if not entries_valid:
         notes.append("مستويات الدخول غير صالحة أو غير مرتبة.")
     if entries_valid and not targets_valid:
-        notes.append("يوجد هدف غير صالح أو لا يتجاوز منطقة دخوله.")
+        if atr_val is None or not np.isfinite(atr_val) or float(atr_val) <= 0:
+            notes.append("الأهداف غير متاحة لعدم توفر ATR صالح؛ لم يتم توليد أهداف تقديرية.")
+        else:
+            notes.append("يوجد هدف غير صالح أو لا يتجاوز منطقة دخوله.")
     if not stop_valid:
         notes.append("وقف الخسارة غير صالح أو ليس أسفل جميع مناطق الدخول.")
     status = "جاهز" if has_complete_levels else "غير مكتمل"
