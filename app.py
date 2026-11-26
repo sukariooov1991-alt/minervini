@@ -155,7 +155,47 @@ class ScanController:
         self, symbol: str, card: dict[str, Any], history: pd.DataFrame
     ) -> None:
         """Re-evaluate saved Pullback cards so obsolete entry flags cannot survive restart."""
-        if history is None or history.empty:
+        if history is None or history.empty or "close" not in history.columns:
+            card.update({
+                "pullback_passed": False,
+                "pullback_candidate": False,
+                "pullback_turning_up": False,
+                "setup_passed": False,
+                "entry_confirmation_passed": False,
+                "entry_ready": False,
+                "passed_all_filters": False,
+                "pivot_price": None,
+                "final_low": None,
+                "entry_zones": [],
+                "targets": [],
+                "shared_stop_loss": None,
+                "levels_status": "غير مكتمل — سجل الشموع غير متوفر",
+                "within_entry_range": None,
+                "status": "بيانات السعر غير متاحة — لا توجد إشارة دخول",
+                "stage": "المرحلة 1: انتظار بيانات صالحة",
+            })
+            return
+
+        valid_closes = pd.to_numeric(history["close"], errors="coerce").dropna()
+        if valid_closes.empty:
+            card.update({
+                "pullback_passed": False,
+                "pullback_candidate": False,
+                "pullback_turning_up": False,
+                "setup_passed": False,
+                "entry_confirmation_passed": False,
+                "entry_ready": False,
+                "passed_all_filters": False,
+                "pivot_price": None,
+                "final_low": None,
+                "entry_zones": [],
+                "targets": [],
+                "shared_stop_loss": None,
+                "levels_status": "غير مكتمل — أسعار الإغلاق غير صالحة",
+                "within_entry_range": None,
+                "status": "بيانات السعر غير صالحة — لا توجد إشارة دخول",
+                "stage": "المرحلة 1: انتظار بيانات صالحة",
+            })
             return
 
         pullback = check_pullback(history)
