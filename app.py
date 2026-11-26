@@ -1366,7 +1366,10 @@ class ScanController:
             and plan.get("status") == "جاهز"
             and plan.get("within_entry_range") is True
         )
-        if not setup_passed:
+        if not watchlist_eligible:
+            card_status = "شروط الاتجاه أو الأساسيات لم تعد مستوفاة — بانتظار الفحص"
+            card_stage = "المرحلة 1: إعادة تقييم أهلية السهم"
+        elif not setup_passed:
             card_status = "انتظار — مراقبة VCP أو Pullback"
             card_stage = "المرحلة 1: سهم مؤهل للمراقبة"
         elif not entry_confirmation_passed:
