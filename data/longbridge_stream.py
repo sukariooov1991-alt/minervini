@@ -153,8 +153,13 @@ class LongbridgeRealtimeClient:
             self._subscribed_symbols = []
 
     def ensure_subscriptions(self, symbols: list[str]) -> list[str]:
+        """Idempotently subscribe new symbols through the single persistent context.
+
+        The local set is authoritative for this QuoteContext lifetime. Calling
+        QuoteContext.subscriptions() for every scan batch caused repeated control
+        requests and fragmented subscriptions into one-symbol operations.
+        """
         with self._context_lock:
-            """Verify server-side subscriptions and restore missing quote subscriptions."""
             desired = sorted({
                 self._normalize_symbol(s) for s in symbols if s and str(s).strip()
             })
@@ -163,32 +168,22 @@ class LongbridgeRealtimeClient:
             if self._ctx is None:
                 self.connect()
 
-            active: set[str] = set()
-            try:
-                for item in self._ctx.subscriptions():
-                    symbol = self._normalize_symbol(_value(item, "symbol", ""))
-                    sub_types = _value(item, "sub_types", []) or []
-                    if self._sub_type_quote in sub_types:
-                        active.add(symbol)
-            except Exception:
-                # A failed subscription query indicates that this context can no
-                # longer be trusted. Recreate it, then rebuild the full desired set.
-                log.exception("Longbridge subscription verification failed; reconnecting QuoteContext")
-                self.close()
-                self.connect()
-                active = set()
-
+            active = set(self._subscribed_symbols)
             missing = [symbol for symbol in desired if symbol not in active]
-            if missing:
-                self._ctx.subscribe(missing, [self._sub_type_quote])
-                log.warning("Longbridge restored %s missing quote subscriptions", len(missing))
+            if not missing:
+                return []
 
-            self._subscribed_symbols = sorted(active | set(desired))
+            # Submit all new symbols in one SDK subscribe call. Only record them
+            # after the SDK accepts the request, so the watchdog can retry errors.
+            self._ctx.subscribe(missing, [self._sub_type_quote])
+            self._subscribed_symbols = sorted(active | set(missing))
+            log.info(
+                "Longbridge WebSocket bulk subscribe accepted: new=%s total=%s",
+                len(missing), len(self._subscribed_symbols),
+            )
             return [self._denormalize_symbol(symbol) for symbol in missing]
 
     def subscribe(self, symbols: list[str]) -> list[str]:
-        # Idempotent and server-verified: repeated eligible batches do not
-        # duplicate subscriptions, while missing subscriptions are restored.
         return self.ensure_subscriptions(symbols)
 
     def unsubscribe(self, symbols: list[str]) -> None:
@@ -237,29 +232,6 @@ class LongbridgeRealtimeClient:
             return None, None, "unavailable"
         _, price, timestamp, session = max(candidates, key=lambda item: item[0])
         return price, timestamp, session
-
-    def get_realtime_quotes(self, symbols: list[str]) -> list[dict[str, Any]]:
-        with self._context_lock:
-            cleaned = sorted({
-                self._normalize_symbol(s) for s in symbols if s and str(s).strip()
-            })
-            if not cleaned:
-                return []
-            if self._ctx is None:
-                self.connect()
-            response = self._ctx.quote(cleaned)
-            items: list[dict[str, Any]] = []
-            for quote in response:
-                price, timestamp, session = self._latest_session_quote(quote)
-                items.append({
-                    "symbol": self._denormalize_symbol(_value(quote, "symbol", "")),
-                    "last_done": price,
-                    "timestamp": timestamp,
-                    "trade_session": session,
-                    "prev_close": _value(quote, "prev_close"),
-                    "source": "longbridge_quote_api",
-                })
-            return items
 
     def close(self) -> None:
         with self._context_lock:
