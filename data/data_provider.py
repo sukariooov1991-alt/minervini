@@ -472,9 +472,9 @@ class DataProvider:
         cached = self.storage.get_cache(cache_key)
         cache_age = self.storage.cache_age_seconds(cache_key)
         if isinstance(cached, list):
-            # Valid reported data is reused for seven days. Empty/error responses
-            # are retried after six hours rather than hammering Yahoo on every scan.
-            max_age = 7 * 24 * 3600 if cached else 6 * 3600
+            # Quarterly statements are checked daily so newly reported results
+            # enter the screener promptly. Empty/error responses retry after six hours.
+            max_age = 24 * 3600 if cached else 6 * 3600
             if cache_age is not None and cache_age < max_age:
                 frame = pd.DataFrame(cached)
                 if "period" in frame.columns:
@@ -556,14 +556,14 @@ class DataProvider:
         return pd.DataFrame(rows).sort_values("period", ascending=False).reset_index(drop=True)
 
     def fetch_and_store_news(self) -> list[dict[str, Any]]:
-        """Return durable news; refresh from Yahoo at most every six hours."""
+        """Return durable news; refresh from Yahoo at most every four hours."""
         cache_key = f"news:{self.symbol}"
         cached = self.storage.get_cache(cache_key)
         cache_age = self.storage.cache_age_seconds(cache_key)
         if isinstance(cached, list):
-            # Non-empty news is refreshed every six hours; an empty/error
-            # response is retried hourly instead of on every screening pass.
-            max_age = 6 * 3600 if cached else 3600
+            # Non-empty news is refreshed every four hours; empty/error
+            # responses retry hourly instead of hammering the provider.
+            max_age = 4 * 3600 if cached else 3600
             if cache_age is not None and cache_age < max_age:
                 return cached
         try:
