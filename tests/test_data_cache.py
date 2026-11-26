@@ -288,7 +288,7 @@ class PermanentDataCacheTests(unittest.TestCase):
         self.assertEqual(requested, ["10d"])
         self.assertEqual(len(self.storage.get_candles_df("IPO")), 205)
 
-    def test_recent_failed_refresh_is_not_mistaken_for_fresh_success(self):
+    def test_recent_failed_refresh_reports_stale_history_without_deleting_it(self):
         dates = pd.bdate_range("2025-01-01", periods=300)
         rows = [
             (day.strftime("%Y-%m-%d"), 10.0, 11.0, 9.0, 10.5, 1000.0)
@@ -305,8 +305,31 @@ class PermanentDataCacheTests(unittest.TestCase):
         provider.last_source = None
         with patch("data.data_provider._latest_completed_session", return_value=pd.Timestamp.now().date() + pd.Timedelta(days=1)):
             with patch.object(provider, "fetch_and_store_daily_candles", side_effect=AssertionError("must respect retry cooldown")):
-                self.assertEqual(provider.ensure_daily_history(), 0)
-        self.assertEqual(provider.last_source, "SQLite daily cache")
+                with self.assertRaisesRegex(RuntimeError, "stale"):
+                    provider.ensure_daily_history()
+        self.assertEqual(provider.last_source, "SQLite daily cache (stale; refresh failed)")
+        stored = self.storage.get_candles_df("FAIL")
+        self.assertEqual(len(stored), 300)
+        self.assertEqual(stored.iloc[-1]["date"], pd.Timestamp(dates[-1]))
+
+    def test_provider_failure_reports_stale_cache_and_preserves_last_good_candles(self):
+        dates = pd.bdate_range("2025-01-01", periods=300)
+        rows = [
+            (day.strftime("%Y-%m-%d"), 10.0, 11.0, 9.0, 10.5, 1000.0)
+            for day in dates
+        ]
+        self.storage.upsert_candles_bulk("PRESERVE", rows)
+        self.storage.set_cache("daily_source:PRESERVE", "Yahoo Finance")
+        provider = DataProvider.__new__(DataProvider)
+        provider.symbol = "PRESERVE"
+        provider.storage = self.storage
+        provider.last_source = None
+        with patch("data.data_provider._latest_completed_session", return_value=pd.Timestamp.now().date() + pd.Timedelta(days=1)):
+            with patch.object(provider, "fetch_and_store_daily_candles", side_effect=ValueError("all providers failed")):
+                with self.assertRaisesRegex(ValueError, "all providers failed"):
+                    provider.ensure_daily_history()
+        self.assertEqual(provider.last_source, "SQLite daily cache (stale; last good history preserved)")
+        self.assertEqual(len(self.storage.get_candles_df("PRESERVE")), 300)
 
     def test_empty_fundamentals_response_is_cached_briefly(self):
         provider = DataProvider.__new__(DataProvider)
