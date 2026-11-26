@@ -44,7 +44,7 @@ def check_market_regime(
         "above_sma50": False,
         "sma50_above_sma200": False,
         "distribution_days": 0,
-        "breadth_ok": True,
+        "breadth_ok": False,
         "reasons": [],
     }
     if index_df is None or not {"close", "volume"}.issubset(index_df.columns) or len(index_df) < 200:
