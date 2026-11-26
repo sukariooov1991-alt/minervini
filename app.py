@@ -969,6 +969,7 @@ class ScanController:
                         )
                         self._cards.pop(stale_symbol, None)
                         self._live_prices.pop(stale_symbol, None)
+                        self._live_candles.pop(stale_symbol, None)
                         try:
                             self.storage.delete_watchlist_card(stale_symbol)
                         except Exception:
