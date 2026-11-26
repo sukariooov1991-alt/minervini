@@ -304,18 +304,19 @@ class DataProvider:
                 # full replacement from the new source before writing anything.
                 source_changed = bool(
                     append
-                    and existing_count >= 252
+                    and existing_count > 0
                     and (not previous_source or previous_source != source)
                 )
-                if source_changed:
+                if source_changed and str(period).lower() != "2y":
                     reason = "unknown legacy source" if not previous_source else (
                         f"source changed from {previous_source} to {source}"
                     )
                     log.warning("%s: %s; rebasing the full daily history", self.symbol, reason)
                     frame = completed_frame(fetch("2y"))
-                    if len(frame) < 252:
+                    if len(frame) < existing_count:
                         raise RuntimeError(
-                            f"full source rebase returned only {len(frame)} completed candles; 252 are required"
+                            f"full source rebase returned only {len(frame)} completed candles; "
+                            f"{existing_count} are required to preserve existing history"
                         )
 
                 rows = [
@@ -393,7 +394,11 @@ class DataProvider:
             return 0
 
         # A partial history (<300) must be topped up from the full initial window.
-        period = "10d" if len(cached) >= self.storage.MAX_CANDLES else initial_period
+        known_source = self.storage.get_cache(f"daily_source:{self.symbol}")
+        # Once the full available history has been seeded from a known vendor,
+        # even a young IPO with fewer than 300 bars needs only a recent delta.
+        # Unknown/legacy caches are backfilled once from the full initial window.
+        period = "10d" if len(cached) > 0 and known_source else initial_period
         try:
             count = self.fetch_and_store_daily_candles(period, append=True)
             new_state = {
