@@ -141,6 +141,10 @@ class ScanController:
             if not self.lb_client.has_credentials():
                 continue
             with self._lock:
+                # New eligible cards are subscribed together once the scan
+                # completes; never let the watchdog fragment that bulk request.
+                if self._running:
+                    continue
                 symbols = sorted(self._cards)
             if not symbols:
                 continue
