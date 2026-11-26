@@ -435,7 +435,7 @@ class ScanController:
                     pullback_info = {}
                     vcp_info = {}
 
-                setup_passed = bool(vcp_passed or pullback_passed)
+                setup_passed = bool(vcp_passed or pullback_info.get("candidate", False))
                 with self._state_cv:
                     latest_sequence = self._latest_quote_sequence.get(sym)
                     if sequence is not None and latest_sequence is not None and sequence < latest_sequence:
@@ -513,12 +513,12 @@ class ScanController:
                         "market_favorable": market_favorable,
                         "updated_at": datetime.now(timezone.utc).isoformat(),
                     })
-                    if setup_passed and not market_favorable:
-                        card["status"] = "النموذج تحقق — السوق غير مناسب"
-                        card["stage"] = "المرحلة 3: تقييم حالة السوق"
-                    elif setup_passed and not entry_confirmation_passed:
+                    if setup_passed and not entry_confirmation_passed:
                         card["status"] = "النموذج قيد التأكيد — لا توجد إشارة دخول"
                         card["stage"] = "المرحلة 2: تأكيد نموذج الدخول"
+                    elif setup_passed and not market_favorable:
+                        card["status"] = "النموذج تحقق — السوق غير مناسب"
+                        card["stage"] = "المرحلة 3: تقييم حالة السوق"
                     elif setup_passed and not entry_ready:
                         card["status"] = "تأكيد النموذج تحقق — مستويات الصفقة أو نطاق الدخول غير مكتمل"
                         card["stage"] = "المرحلة 3: التحقق من مستويات الدخول"
@@ -535,6 +535,8 @@ class ScanController:
                             item["passed"] = vcp_passed
                         elif name in ("Breakout Confirmation", "VCP Breakout Confirmation"):
                             item["passed"] = breakout_passed
+                        elif name == "Pullback Setup":
+                            item["passed"] = bool(pullback_info.get("candidate", False))
                         elif name == "Pullback Entry Confirmation":
                             item["passed"] = pullback_passed
                         elif name == "Pullback Check":
@@ -703,6 +705,7 @@ class ScanController:
         market_text = {
             "CORRECTION_OR_DOWNTREND": "السوق العام في تصحيح أو اتجاه هابط، ما يرفع مخاطر نجاح الاختراقات.",
             "UPTREND": "السوق العام في اتجاه صاعد، وهو عامل داعم لكنه لا يغني عن تأكيد السهم.",
+            "CONFIRMED_UPTREND": "السوق العام في اتجاه صاعد مؤكد، وهو عامل داعم لكنه لا يغني عن تأكيد السهم.",
             "UPTREND_UNDER_PRESSURE": "الاتجاه العام صاعد لكنه تحت ضغط؛ يلزم تشدد أكبر في تأكيد الدخول.",
             "UNKNOWN": "حالة السوق العام غير محسومة من البيانات المتاحة.",
         }.get(regime.upper(), f"حالة السوق العام: {regime}.")
@@ -727,14 +730,14 @@ class ScanController:
         filters.extend([
             {"name": "VCP Pattern", "passed": bool(row.get("vcp_passed", False))},
             {"name": "VCP Breakout Confirmation", "passed": bool(row.get("breakout", False))},
-            {"name": "Pullback Setup", "passed": bool(row.get("pullback_passed", False))},
+            {"name": "Pullback Setup", "passed": bool(row.get("pullback_candidate", row.get("pullback_passed", False)))},
             {"name": "Pullback Entry Confirmation", "passed": bool(row.get("pullback_passed", False))},
             {"name": "Accumulation", "passed": bool(row.get("accumulation", False))},
             {"name": "Earnings Growth", "passed": bool(row.get("earnings_passed", False))},
             {
                 "name": "Market Regime Favorable",
                 "passed": bool(row.get("market_favorable", False)),
-                "pending": not bool(row.get("vcp_passed", False) or row.get("pullback_passed", False)),
+                "pending": not bool(row.get("vcp_passed", False) or row.get("pullback_candidate", row.get("pullback_passed", False))),
             },
         ])
         return filters
