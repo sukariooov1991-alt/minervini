@@ -90,7 +90,7 @@ class PermanentDataCacheTests(unittest.TestCase):
             index=[pd.Timestamp("2025-08-02"), pd.Timestamp("2025-10-01")],
         )
         value = _find_nearest_prior_value(
-            series, pd.Timestamp("2025-09-30"), max_window_days=60
+            series, pd.Timestamp("2025-09-30")
         )
         self.assertEqual(value, 1.25)
 
