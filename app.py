@@ -142,6 +142,7 @@ class ScanController:
         self._cards: dict[str, dict[str, Any]] = {}
         # Candidate reconstruction during startup reads the live-price cache.
         self._live_prices: dict[str, float] = {}
+        self._live_quote_metadata: dict[str, dict[str, Any]] = {}
         # Preserve the evolving session OHLC between WebSocket pushes. Daily
         # history in SQLite is not rewritten on every quote tick.
         self._live_candles: dict[str, dict[str, Any]] = {}
@@ -422,13 +423,16 @@ class ScanController:
             # A restored card's persisted WebSocket timestamp is historical,
             # not proof that a live quote is still arriving after restart.
             "price_session": (
-                card.get("price_session") if symbol in self._live_prices else "daily-close"
+                getattr(self, "_live_quote_metadata", {}).get(symbol, {}).get("price_session", "regular")
+                if symbol in self._live_prices else "daily-close"
             ),
             "price_timestamp": (
-                card.get("price_timestamp") if symbol in self._live_prices else None
+                getattr(self, "_live_quote_metadata", {}).get(symbol, {}).get("price_timestamp")
+                if symbol in self._live_prices else None
             ),
             "price_received_at": (
-                card.get("price_received_at") if symbol in self._live_prices else None
+                getattr(self, "_live_quote_metadata", {}).get(symbol, {}).get("price_received_at")
+                if symbol in self._live_prices else None
             ),
             "pivot_price": plan["pivot_price"],
             "final_low": plan["final_low"],
@@ -602,6 +606,12 @@ class ScanController:
 
         now_mono = time.monotonic()
         quote_order = _quote_timestamp_order(quote.get("timestamp"))
+        received_at = datetime.now(timezone.utc).isoformat()
+        quote_metadata = {
+            "price_session": quote.get("trade_session") or "regular",
+            "price_timestamp": quote.get("timestamp"),
+            "price_received_at": received_at,
+        }
         with self._state_cv:
             previous_sequence = self._latest_quote_sequence.get(sym)
             previous_timestamp = self._latest_quote_timestamp.get(sym)
@@ -621,15 +631,14 @@ class ScanController:
                 self._latest_quote_timestamp[sym] = max(previous_timestamp or quote_order, quote_order)
             self._ws_connected = True
             self._live_prices[sym] = price
+            self._live_quote_metadata[sym] = quote_metadata
             card = self._cards.get(sym)
             if card is not None:
                 card.update({
                     "current_price": round(price, 4),
                     "price_source": "Longbridge WebSocket",
-                    "price_session": quote.get("trade_session") or "regular",
-                    "price_timestamp": quote.get("timestamp"),
-                    "price_received_at": datetime.now(timezone.utc).isoformat(),
-                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                    **quote_metadata,
+                    "updated_at": received_at,
                 })
             should_log = now_mono - self._ws_last_log_at.get(sym, 0.0) >= 15.0
             if should_log:
@@ -1210,6 +1219,7 @@ class ScanController:
 
         with self._lock:
             live_p = self._live_prices.get(sym)
+            live_quote_metadata = dict(getattr(self, "_live_quote_metadata", {}).get(sym, {}))
 
         if live_p is not None:
             current_price = float(live_p)
@@ -1272,6 +1282,9 @@ class ScanController:
             "symbol": sym,
             "current_price": round(current_price, 4),
             "price_source": price_source,
+            "price_session": live_quote_metadata.get("price_session", "regular") if live_p is not None else "daily-close",
+            "price_timestamp": live_quote_metadata.get("price_timestamp") if live_p is not None else None,
+            "price_received_at": live_quote_metadata.get("price_received_at") if live_p is not None else None,
             "pivot_price": plan["pivot_price"],
             "final_low": plan["final_low"],
             "rs_rating": rs_val,
@@ -1418,6 +1431,7 @@ class ScanController:
                         )
                         self._cards.pop(stale_symbol, None)
                         self._live_prices.pop(stale_symbol, None)
+                        self._live_quote_metadata.pop(stale_symbol, None)
                         self._live_candles.pop(stale_symbol, None)
                         self._latest_quote_sequence.pop(stale_symbol, None)
                         self._latest_quote_timestamp.pop(stale_symbol, None)
@@ -1523,6 +1537,7 @@ class ScanController:
         with self._state_cv:
             self._cards.pop(clean, None)
             self._live_prices.pop(clean, None)
+            self._live_quote_metadata.pop(clean, None)
             self._live_candles.pop(clean, None)
             self._latest_quote_sequence.pop(clean, None)
             self._latest_quote_timestamp.pop(clean, None)
