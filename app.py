@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hmac
+from collections import deque
 import json
 import logging
 import math
@@ -232,7 +233,7 @@ class ScanController:
         # Quote callbacks must stay short: the SDK dispatches pushes on its
         # receive path. Recalculate setups on this independent worker so one
         # slow VCP/SQLite pass cannot stall the WebSocket stream for other symbols.
-        self._realtime_pending: list[dict[str, Any]] = []
+        self._realtime_pending: deque[dict[str, Any]] = deque()
         self._realtime_event = threading.Event()
         # One worker cannot keep up with concurrent pushes from a 493-symbol
         # watchlist. Multiple consumers process different symbols in parallel;
@@ -707,7 +708,7 @@ class ScanController:
                 # Take one item at a time so several workers can drain the
                 # shared queue concurrently instead of one worker stealing a
                 # whole batch while the others remain idle.
-                quote = self._realtime_pending.pop(0)
+                quote = self._realtime_pending.popleft()
                 if not self._realtime_pending:
                     self._realtime_event.clear()
             try:
