@@ -119,6 +119,25 @@ class PermanentDataCacheTests(unittest.TestCase):
         self.assertEqual(frame.iloc[0]["eps_year_ago"], 1.0)
         self.assertEqual(frame.iloc[0]["revenue_year_ago"], 100.0)
 
+    def test_latest_partial_fundamental_period_is_not_replaced_by_older_complete_period(self):
+        from types import SimpleNamespace
+
+        provider = DataProvider.__new__(DataProvider)
+        provider.symbol = "PARTIAL"
+        provider.ticker = SimpleNamespace(quarterly_financials=pd.DataFrame(
+            {
+                pd.Timestamp("2026-09-30"): [2.0, float("nan")],
+                pd.Timestamp("2025-09-30"): [1.0, 100.0],
+            },
+            index=["Diluted EPS", "Total Revenue"],
+        ))
+        with patch("data.data_provider._wait_for_yahoo_request_slot"):
+            frame = provider._fetch_fundamentals_dataframe()
+
+        self.assertEqual(frame.iloc[0]["period"], pd.Timestamp("2026-09-30"))
+        self.assertEqual(frame.iloc[0]["eps_current"], 2.0)
+        self.assertTrue(pd.isna(frame.iloc[0]["revenue_current"]))
+
     def test_prior_year_quarter_matching_never_uses_a_future_report(self):
         from data.data_provider import _find_nearest_prior_period
 
