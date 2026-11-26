@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
-from app import ScanController, _latest_realtime_activity, _quote_timestamp_order, _stable_pullback_levels
+from app import ScanController, _latest_realtime_activity, _quote_timestamp_iso, _quote_timestamp_order, _stable_pullback_levels
 from data.trade_levels import compute_atr
 from data.market_time import MarketTime
 
@@ -77,6 +77,7 @@ class RealtimeCandleTests(unittest.TestCase):
             "sequence": 10,
             "timestamp": "2026-11-26T20:00:00Z",
             "trade_session": "post-market",
+            "tag": 1,
         })
 
         card = controller._cards["ABBV"]
@@ -85,7 +86,8 @@ class RealtimeCandleTests(unittest.TestCase):
         self.assertEqual(card["price_session"], "post-market")
         self.assertIsNotNone(card["price_received_at"])
         self.assertEqual(controller._live_prices["ABBV"], 294.48)
-        self.assertEqual(controller._live_quote_metadata["ABBV"]["price_timestamp"], "2026-11-26T20:00:00Z")
+        self.assertEqual(controller._live_quote_metadata["ABBV"]["price_timestamp"], "2026-11-26T20:00:00+00:00")
+        self.assertEqual(controller._live_quote_metadata["ABBV"]["price_tag"], 1)
         self.assertEqual(len(controller._realtime_pending), 1)
 
     def test_scan_card_publication_preserves_latest_fractional_websocket_price(self):
@@ -136,6 +138,10 @@ class RealtimeCandleTests(unittest.TestCase):
         self.assertIsNotNone(newer)
         self.assertLess(older, newer)
         self.assertIsNone(_quote_timestamp_order("not-a-timestamp"))
+        self.assertEqual(
+            _quote_timestamp_iso("2026-11-26 00:59:30"),
+            "2026-11-26T00:59:30+00:00",
+        )
 
     def test_market_session_label_respects_holidays_and_early_closes(self):
         with patch.dict("os.environ", {"MARKET_SESSION_LABEL": ""}):
