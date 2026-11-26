@@ -39,7 +39,7 @@ jobs:
           import analysis
           from data.data_provider import DataProvider
           from data.storage_manager import StorageManager
-          assert hasattr(DataProvider, "_fetch_longbridge")
+          assert hasattr(DataProvider, "_fetch_alpha_vantage")
           assert hasattr(StorageManager, "replace_candles_bulk")
           assert hasattr(StorageManager, "get_scan_checkpoint")
           assert hasattr(StorageManager, "mark_scan_symbol_completed")
@@ -77,16 +77,15 @@ jobs:
           provider._fetch_yahoo = fail("Yahoo Finance")
           provider._fetch_stooq = fail("Stooq")
           provider._fetch_nasdaq = fail("Nasdaq public data")
-          def longbridge_success(period):
-              attempted.append("Longbridge")
+          def alpha_vantage_success(period):
+              attempted.append("Alpha Vantage")
               return frame
-          provider._fetch_longbridge = longbridge_success
-          provider._fetch_alpha_vantage = fail("Alpha Vantage")
+          provider._fetch_alpha_vantage = alpha_vantage_success
 
           count = provider.fetch_and_store_daily_candles("2y")
-          assert attempted == ["Yahoo Finance", "Stooq", "Nasdaq public data", "Longbridge"], attempted
+          assert attempted == ["Yahoo Finance", "Stooq", "Nasdaq public data", "Alpha Vantage"], attempted
           assert count == 252, count
-          assert provider.last_source == "Longbridge", provider.last_source
+          assert provider.last_source == "Alpha Vantage", provider.last_source
           stored = storage.get_candles_df("AAPL")
           assert len(stored) == 252, len(stored)
           checkpoint_symbols = ["AAPL", "MSFT", "NVDA"]
