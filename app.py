@@ -143,6 +143,7 @@ class ScanController:
         # Candidate reconstruction during startup reads the live-price cache.
         self._live_prices: dict[str, float] = {}
         self._live_quote_metadata: dict[str, dict[str, Any]] = {}
+        self._latest_quote_payloads: dict[str, dict[str, Any]] = {}
         # Preserve the evolving session OHLC between WebSocket pushes. Daily
         # history in SQLite is not rewritten on every quote tick.
         self._live_candles: dict[str, dict[str, Any]] = {}
@@ -650,6 +651,7 @@ class ScanController:
             self._ws_connected = True
             self._live_prices[sym] = price
             self._live_quote_metadata[sym] = quote_metadata
+            self._latest_quote_payloads[sym] = dict(quote)
             card = self._cards.get(sym)
             if card is not None:
                 card.update({
@@ -1380,6 +1382,25 @@ class ScanController:
                 with self._state_cv:
                     for card in qualified:
                         symbol = str(card["symbol"]).upper()
+                        # A WebSocket tick can arrive while this batch is being
+                        # analysed. Do not let the older daily-close snapshot
+                        # overwrite that newer tick when publishing the card.
+                        latest_quote = self._latest_quote_payloads.get(symbol)
+                        if latest_quote is not None:
+                            latest_price = self._live_prices.get(symbol)
+                            latest_meta = self._live_quote_metadata.get(symbol, {})
+                            if latest_price is not None:
+                                card.update({
+                                    "current_price": round(float(latest_price), 4),
+                                    "price_source": "Longbridge WebSocket",
+                                    **latest_meta,
+                                })
+                                # The quote worker may already have consumed
+                                # this tick before the card existed. Requeue the
+                                # latest tick so setup/levels are recalculated
+                                # against the newly published card.
+                                self._realtime_pending.append(dict(latest_quote))
+                                self._realtime_event.set()
                         self._cards[symbol] = card
                         try:
                             self.storage.save_watchlist_card(card)
@@ -1450,6 +1471,7 @@ class ScanController:
                         self._cards.pop(stale_symbol, None)
                         self._live_prices.pop(stale_symbol, None)
                         self._live_quote_metadata.pop(stale_symbol, None)
+                        self._latest_quote_payloads.pop(stale_symbol, None)
                         self._live_candles.pop(stale_symbol, None)
                         self._latest_quote_sequence.pop(stale_symbol, None)
                         self._latest_quote_timestamp.pop(stale_symbol, None)
@@ -1556,6 +1578,7 @@ class ScanController:
             self._cards.pop(clean, None)
             self._live_prices.pop(clean, None)
             self._live_quote_metadata.pop(clean, None)
+            self._latest_quote_payloads.pop(clean, None)
             self._live_candles.pop(clean, None)
             self._latest_quote_sequence.pop(clean, None)
             self._latest_quote_timestamp.pop(clean, None)
