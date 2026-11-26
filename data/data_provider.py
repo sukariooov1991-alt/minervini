@@ -316,7 +316,12 @@ class DataProvider:
         eps = q.loc["Diluted EPS"].dropna() if "Diluted EPS" in q.index else pd.Series(dtype=float)
         rev = q.loc["Total Revenue"].dropna() if "Total Revenue" in q.index else pd.Series(dtype=float)
 
-        dates = sorted(set(eps.index) | set(rev.index), reverse=True)
+        # Compare EPS and revenue only for the same reported quarter. A union
+        # creates synthetic partial rows that the screener can misclassify as
+        # an earnings failure and use to remove a valid watchlist card.
+        dates = sorted(set(eps.index) & set(rev.index), reverse=True)
+        if not dates:
+            return pd.DataFrame()
         rows = []
         for d in dates:
             d_ts = pd.Timestamp(d)
