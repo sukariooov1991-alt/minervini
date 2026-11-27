@@ -52,7 +52,7 @@ def check_market_regime(
     # volume observation in its 25-session window is present and finite.
     # Missing volume must not silently become zero distribution days.
     recent = clean_df.tail(26)
-    recent_close = pd.to_numeric(recent["close"], errors="coerce").to_numpy(dtype=float)
+    recent_close = pd.to_numeric(recent["close"], errors="coerce").to_numpy(dtype=float, na_value=np.nan)
     recent_volume = pd.to_numeric(recent["volume"], errors="coerce").to_numpy(dtype=float)
     if (
         len(recent) < 26
