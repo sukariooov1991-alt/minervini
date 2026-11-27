@@ -43,7 +43,12 @@ def require_dashboard_access():
         return jsonify({"error": "dashboard access is not configured"}), 503
 
     credentials = request.authorization
-    supplied_key = credentials.password if credentials and credentials.type.lower() == "basic" else ""
+    valid_basic_user = bool(
+        credentials
+        and credentials.type.lower() == "basic"
+        and credentials.username == "admin"
+    )
+    supplied_key = credentials.password if valid_basic_user else ""
     if not hmac.compare_digest(supplied_key or "", access_key):
         response = jsonify({"error": "authentication required"})
         response.status_code = 401
