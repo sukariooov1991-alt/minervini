@@ -121,25 +121,15 @@ def _pop_next_realtime_quote(
     return None, None
 
 
-def _realtime_source_priority(source: Any) -> int:
-    """Prefer an executed Trade tick over a same-second incremental Quote snapshot."""
-    return 2 if str(source or "").lower().startswith("longbridge_trade_websocket") else 1
-
-
 def _is_out_of_order_realtime_tick(
     incoming_timestamp: float | None,
     previous_timestamp: float | None,
-    incoming_source: Any,
-    previous_source: Any,
 ) -> bool:
-    if incoming_timestamp is None or previous_timestamp is None:
-        return False
-    if incoming_timestamp < previous_timestamp:
-        return True
+    """Reject an older executed Trade tick; only one price stream is authoritative."""
     return bool(
-        incoming_timestamp == previous_timestamp
-        and _realtime_source_priority(incoming_source)
-        < _realtime_source_priority(previous_source)
+        incoming_timestamp is not None
+        and previous_timestamp is not None
+        and incoming_timestamp < previous_timestamp
     )
 
 
@@ -292,11 +282,8 @@ class ScanController:
 
         self._realtime_locks: dict[str, threading.Lock] = {}
         self._ws_seen_symbols: set[str] = set()
-        self._latest_quote_sequence: dict[str, int] = {}
         self._latest_quote_timestamp: dict[str, float] = {}
-        self._latest_quote_source: dict[str, str] = {}
         self._processed_quote_timestamp: dict[str, float] = {}
-        self._processed_quote_source: dict[str, str] = {}
         self._last_ws_reconnect_monotonic = 0.0
         self._last_ws_subscription_monotonic: float | None = None
         self._ws_last_log_at: dict[str, float] = {}
@@ -652,13 +639,10 @@ class ScanController:
                 try:
                     self.lb_client.reconnect(symbols)
                     with self._state_cv:
-                        self._latest_quote_sequence.clear()
                         self._latest_quote_timestamp.clear()
-                        getattr(self, "_latest_quote_source", {}).clear()
                         getattr(self, "_live_volume_sequence", {}).clear()
                         getattr(self, "_live_volume_timestamp", {}).clear()
                         self._processed_quote_timestamp.clear()
-                        getattr(self, "_processed_quote_source", {}).clear()
                         self._ws_seen_symbols.clear()
                         self._ws_last_log_at.clear()
                         self._ws_symbol_recovery_at.clear()
@@ -805,12 +789,6 @@ class ScanController:
         if not (price > 0 and math.isfinite(price)):
             return
 
-        sequence = quote.get("sequence")
-        try:
-            sequence = int(sequence) if sequence is not None and int(sequence) > 0 else None
-        except (TypeError, ValueError, OverflowError):
-            sequence = None
-
         now_mono = time.monotonic()
         quote_order = _quote_timestamp_order(quote.get("timestamp"))
         received_at = datetime.now(timezone.utc).isoformat()
@@ -842,34 +820,17 @@ class ScanController:
             # represent a new traded price. They must never advance the price
             # timestamp/sequence baseline or suppress a subsequent Trade tick.
             if is_price_tick:
-                previous_sequence = self._latest_quote_sequence.get(sym)
                 previous_timestamp = _realtime_timestamp_baseline(
                     self._latest_quote_timestamp.get(sym), previous_meta.get("price_timestamp")
                 )
-                latest_sources = getattr(self, "_latest_quote_source", None)
-                if latest_sources is None:
-                    latest_sources = self._latest_quote_source = {}
-                previous_source = latest_sources.get(sym)
-                incoming_source = str(quote.get("source") or "longbridge_websocket")
-                # Quote and Trade pushes share the same socket but may carry
-                # independent sequence counters. Enforce timestamp ordering across
-                # both streams and prefer an executed Trade over a same-second Quote
-                # snapshot, which can still contain the preceding last_done value.
-                if _is_out_of_order_realtime_tick(
-                    quote_order, previous_timestamp, incoming_source, previous_source
-                ):
+                if _is_out_of_order_realtime_tick(quote_order, previous_timestamp):
                     log.debug(
-                        "Ignoring stale realtime tick for %s: source=%s timestamp=%s previous_source=%s previous_timestamp=%s",
-                        sym, incoming_source, quote_order, previous_source, previous_timestamp,
+                        "Ignoring stale Longbridge Trade tick for %s: timestamp=%s previous_timestamp=%s",
+                        sym, quote_order, previous_timestamp,
                     )
                     return
-                if sequence is not None and previous_sequence is not None and sequence <= previous_sequence:
-                    return
-                if sequence is not None:
-                    self._latest_quote_sequence[sym] = sequence
                 if quote_order is not None:
                     self._latest_quote_timestamp[sym] = quote_order
-                    latest_sources[sym] = incoming_source
             self._ws_connected = True
             card = self._cards.get(sym)
             if card is not None:
@@ -1126,32 +1087,18 @@ class ScanController:
         received_at = str(
             quote.get("_received_at") or datetime.now(timezone.utc).isoformat()
         )
-        sequence = quote.get("sequence")
-        try:
-            sequence = int(sequence) if sequence is not None and int(sequence) > 0 else None
-        except (TypeError, ValueError, OverflowError):
-            sequence = None
-
         quote_order = _quote_timestamp_order(quote.get("timestamp"))
         with self._lock:
             first_ws_push = is_price_tick and sym not in self._ws_seen_symbols
             if is_price_tick:
                 self._ws_seen_symbols.add(sym)
                 previous_processed_timestamp = self._processed_quote_timestamp.get(sym)
-                processed_sources = getattr(self, "_processed_quote_source", None)
-                if processed_sources is None:
-                    processed_sources = self._processed_quote_source = {}
-                previous_processed_source = processed_sources.get(sym)
-                incoming_source = str(quote.get("source") or "longbridge_websocket")
-                # Only price-bearing pushes participate in price ordering.
                 if _is_out_of_order_realtime_tick(
-                    quote_order, previous_processed_timestamp,
-                    incoming_source, previous_processed_source,
+                    quote_order, previous_processed_timestamp
                 ):
                     return
                 if quote_order is not None:
                     self._processed_quote_timestamp[sym] = quote_order
-                    processed_sources[sym] = incoming_source
         if first_ws_push:
             log.info(
                 "Longbridge WebSocket first quote push: symbol=%s price=%s session=%s timestamp=%s",
@@ -1257,9 +1204,6 @@ class ScanController:
                 ))
                 watchlist_eligible = bool(trend_template_passed and accumulation_passed and earnings_passed)
                 with self._state_cv:
-                    latest_sequence = self._latest_quote_sequence.get(sym)
-                    if sequence is not None and latest_sequence is not None and sequence < latest_sequence:
-                        return
                     self._ws_connected = True
                     card = self._cards.get(sym)
                     if card is None:
@@ -1269,11 +1213,8 @@ class ScanController:
                         self._live_candles.pop(sym, None)
                         getattr(self, "_live_volume_sequence", {}).pop(sym, None)
                         getattr(self, "_live_volume_timestamp", {}).pop(sym, None)
-                        self._latest_quote_sequence.pop(sym, None)
                         self._latest_quote_timestamp.pop(sym, None)
-                        getattr(self, "_latest_quote_source", {}).pop(sym, None)
                         self._processed_quote_timestamp.pop(sym, None)
-                        getattr(self, "_processed_quote_source", {}).pop(sym, None)
                         self._ws_seen_symbols.discard(sym)
                         self._ws_last_log_at.pop(sym, None)
                         self._notify_state_changed_locked()
@@ -1426,9 +1367,6 @@ class ScanController:
                 # a provider candle or calculation is malformed.
                 log.exception("Realtime setup recalculation failed for %s", sym)
                 with self._state_cv:
-                    latest_sequence = self._latest_quote_sequence.get(sym)
-                    if sequence is not None and latest_sequence is not None and sequence < latest_sequence:
-                        return
                     self._ws_connected = True
                     card = self._cards.get(sym)
                     if card is not None:
@@ -1905,11 +1843,8 @@ class ScanController:
                         )
                         self._cards.pop(stale_symbol, None)
                         self._live_candles.pop(stale_symbol, None)
-                        self._latest_quote_sequence.pop(stale_symbol, None)
                         self._latest_quote_timestamp.pop(stale_symbol, None)
-                        getattr(self, "_latest_quote_source", {}).pop(stale_symbol, None)
                         self._processed_quote_timestamp.pop(stale_symbol, None)
-                        getattr(self, "_processed_quote_source", {}).pop(stale_symbol, None)
                         self._ws_seen_symbols.discard(stale_symbol)
                         self._ws_last_log_at.pop(stale_symbol, None)
                         try:
@@ -2021,11 +1956,8 @@ class ScanController:
         with self._state_cv:
             self._cards.pop(clean, None)
             self._live_candles.pop(clean, None)
-            self._latest_quote_sequence.pop(clean, None)
             self._latest_quote_timestamp.pop(clean, None)
-            getattr(self, "_latest_quote_source", {}).pop(clean, None)
             self._processed_quote_timestamp.pop(clean, None)
-            getattr(self, "_processed_quote_source", {}).pop(clean, None)
             getattr(self, "_live_volume_sequence", {}).pop(clean, None)
             getattr(self, "_live_volume_timestamp", {}).pop(clean, None)
             self._ws_seen_symbols.discard(clean)
