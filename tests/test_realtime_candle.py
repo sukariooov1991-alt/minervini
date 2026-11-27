@@ -45,7 +45,6 @@ class RealtimeCandleTests(unittest.TestCase):
         controller._cards = {"ABBV": {"symbol": "ABBV"}}
         controller._last_ws_subscription_monotonic = time.monotonic() - 2000.0
         controller._last_ws_reconnect_monotonic = time.monotonic() - 1000.0
-        controller._latest_quote_sequence = {}
         controller._latest_quote_timestamp = {}
         controller._live_volume_sequence = {"ABBV": 999}
         controller._live_volume_timestamp = {"ABBV": 1795737600.0}
@@ -68,7 +67,6 @@ class RealtimeCandleTests(unittest.TestCase):
         controller._lock = RLock()
         controller._state_cv = Condition(controller._lock)
         controller._state_version = 0
-        controller._latest_quote_sequence = {}
         controller._latest_quote_timestamp = {}
         controller._cards = {"ABBV": {"symbol": "ABBV"}}
         controller._ws_last_log_at = {}
@@ -108,7 +106,7 @@ class RealtimeCandleTests(unittest.TestCase):
             "last_done": 190.25,
             "sequence": 1,
             "timestamp": 1795683600,
-            "source": "longbridge_trade_websocket",
+            "source": "longbridge_websocket",
         })
 
         self.assertEqual(controller._realtime_pending, [])
@@ -119,7 +117,6 @@ class RealtimeCandleTests(unittest.TestCase):
         controller._lock = RLock()
         controller._state_cv = Condition(controller._lock)
         controller._state_version = 0
-        controller._latest_quote_sequence = {}
         controller._latest_quote_timestamp = {}
         controller._cards = {
             "AAPL": {
@@ -157,7 +154,6 @@ class RealtimeCandleTests(unittest.TestCase):
         controller._lock = RLock()
         controller._state_cv = Condition(controller._lock)
         controller._state_version = 0
-        controller._latest_quote_sequence = {}
         controller._latest_quote_timestamp = {}
         controller._cards = {
             "AAPL": {
@@ -231,12 +227,11 @@ class RealtimeCandleTests(unittest.TestCase):
         self.assertEqual(_latest_realtime_activity(None, 200.0), 200.0)
         self.assertIsNone(_latest_realtime_activity(None, None))
 
-    def test_mixed_quote_and_trade_stream_rejects_older_provider_timestamp(self):
+    def test_quote_stream_rejects_older_provider_timestamp(self):
         controller = ScanController.__new__(ScanController)
         controller._lock = RLock()
         controller._state_cv = Condition(controller._lock)
         controller._state_version = 0
-        controller._latest_quote_sequence = {"AAPL": 10}
         controller._latest_quote_timestamp = {"AAPL": 100.0}
         controller._cards = {"AAPL": {"symbol": "AAPL", "current_price": 100.0}}
         controller._ws_last_log_at = {}
@@ -244,11 +239,11 @@ class RealtimeCandleTests(unittest.TestCase):
         controller._realtime_event = Event()
 
         controller._on_realtime_quote({
-            "symbol": "AAPL", "last_done": 101.0, "sequence": None,
-            "timestamp": 200, "source": "longbridge_trade_websocket",
+            "symbol": "AAPL", "last_done": 101.0,
+            "timestamp": 200, "source": "longbridge_websocket",
         })
         controller._on_realtime_quote({
-            "symbol": "AAPL", "last_done": 99.0, "sequence": 11,
+            "symbol": "AAPL", "last_done": 99.0,
             "timestamp": 150, "source": "longbridge_websocket",
         })
 
@@ -293,7 +288,6 @@ class RealtimeCandleTests(unittest.TestCase):
         controller._state_version = 0
         controller._cards = {"AAPL": {}, "MSFT": {}}
         controller._live_candles = {"AAPL": {"volume": 1000.0}}
-        controller._latest_quote_sequence = {"AAPL": 10}
         controller._latest_quote_timestamp = {"AAPL": 1795737600.0}
         controller._processed_quote_timestamp = {"AAPL": 1795737600.0}
         controller._live_volume_sequence = {"AAPL": 10}
