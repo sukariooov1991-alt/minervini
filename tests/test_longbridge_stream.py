@@ -242,23 +242,52 @@ class LongbridgeQuoteTests(unittest.TestCase):
         self.assertIsNotNone(client.last_message_monotonic)
 
     def test_subscription_sync_is_idempotent_and_adds_only_missing_symbols(self):
-        quote_type = object()
+        quote_type = SimpleNamespace(name="Quote")
+        trade_type = SimpleNamespace(name="Trade")
         ctx = FakeQuoteContext([
-            SimpleNamespace(symbol="AAPL.US", sub_types=[quote_type])
+            SimpleNamespace(symbol="AAPL.US", sub_types=[quote_type, trade_type])
         ])
         client = LongbridgeRealtimeClient()
         client._ctx = ctx
-        client._sub_types = [quote_type, object()]
-        # The adapter's in-memory set is authoritative for this context life.
+        client._sub_types = [quote_type, trade_type]
         client._subscribed_symbols = ["AAPL.US"]
 
         added = client.ensure_subscriptions(["AAPL", "MSFT"])
         self.assertEqual(added, ["MSFT"])
         self.assertEqual(ctx.subscribe_calls, [(["MSFT.US"], client._sub_types)])
+        self.assertEqual(set(client._subscribed_symbols), {"AAPL.US", "MSFT.US"})
 
         added_again = client.ensure_subscriptions(["AAPL", "MSFT"])
         self.assertEqual(added_again, [])
         self.assertEqual(len(ctx.subscribe_calls), 1)
+
+    def test_provider_unconfirmed_subscription_is_not_marked_active_and_is_retried(self):
+        quote_type = SimpleNamespace(name="Quote")
+        trade_type = SimpleNamespace(name="Trade")
+
+        class DelayedQuoteContext(FakeQuoteContext):
+            def __init__(self):
+                super().__init__()
+                self.confirm_after = 2
+
+            def subscriptions(self):
+                if len(self.subscribe_calls) < self.confirm_after:
+                    return []
+                return super().subscriptions()
+
+        ctx = DelayedQuoteContext()
+        client = LongbridgeRealtimeClient()
+        client._ctx = ctx
+        client._sub_types = [quote_type, trade_type]
+
+        first = client.ensure_subscriptions(["AAPL"])
+        self.assertEqual(first, ["AAPL"])
+        self.assertEqual(client._subscribed_symbols, [])
+
+        second = client.ensure_subscriptions(["AAPL"])
+        self.assertEqual(second, ["AAPL"])
+        self.assertEqual(client._subscribed_symbols, ["AAPL.US"])
+        self.assertEqual(len(ctx.subscribe_calls), 2)
 
 
 if __name__ == "__main__":
