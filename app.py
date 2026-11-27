@@ -268,24 +268,28 @@ class ScanController:
         self._last_error: str | None = None
         self._scan_errors: list[dict[str, str]] = []
         self._scan_progress: dict[str, Any] = {"phase": "idle", "completed": 0, "total": 0, "percent": 0, "current_symbol": ""}
-        if self._cards and self.lb_client.has_credentials():
+        if self._background_workers_enabled and self._cards and self.lb_client.has_credentials():
             self._subscribe_watchlist_symbols(list(self._cards), context="startup restore")
-        self._realtime_watchdog = threading.Thread(
-            target=self._realtime_watchdog_loop,
-            name="longbridge-realtime-watchdog",
-            daemon=True,
-        )
-        self._realtime_watchdog.start()
+        self._realtime_watchdog = None
+        if self._background_workers_enabled:
+            self._realtime_watchdog = threading.Thread(
+                target=self._realtime_watchdog_loop,
+                name="longbridge-realtime-watchdog",
+                daemon=True,
+            )
+            self._realtime_watchdog.start()
         # Independent background maintenance: refresh durable research caches
         # every four hours, including holidays, and OHLCV after completed US
         # sessions. It never runs a stock scan or changes watchlist eligibility.
         self._daily_history_stop = threading.Event()
-        self._daily_history_scheduler = threading.Thread(
-            target=self._daily_history_scheduler_loop,
-            name="daily-history-refresh-scheduler",
-            daemon=True,
-        )
-        self._daily_history_scheduler.start()
+        self._daily_history_scheduler = None
+        if self._background_workers_enabled:
+            self._daily_history_scheduler = threading.Thread(
+                target=self._daily_history_scheduler_loop,
+                name="daily-history-refresh-scheduler",
+                daemon=True,
+            )
+            self._daily_history_scheduler.start()
 
     def _daily_history_scheduler_loop(self) -> None:
         """Refresh durable research caches and the rolling 300-bar OHLCV universe."""
