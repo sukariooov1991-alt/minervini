@@ -168,11 +168,18 @@ class LongbridgeRealtimeClient:
                     return
                 trades = _value(event, "trades")
                 if trades is None:
-                    trades = _value(event, "trade", [])
-                try:
-                    trade_items = list(trades or [])
-                except TypeError:
+                    trades = _value(event, "trade")
+                if trades is None:
                     trade_items = []
+                elif isinstance(trades, (list, tuple)):
+                    trade_items = list(trades)
+                else:
+                    # SDK/protobuf variants may expose either a repeated
+                    # trades field or one singular trade message.
+                    try:
+                        trade_items = list(trades)
+                    except TypeError:
+                        trade_items = [trades] if _value(trades, "price") is not None else []
                 log.info(
                     "STEP=WEBSOCKET_TRADE_PUSH STATUS=RECEIVED symbol=%s trades=%s",
                     self._denormalize_symbol(symbol), len(trade_items),
