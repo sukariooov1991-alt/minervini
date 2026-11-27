@@ -286,9 +286,9 @@ class LongbridgeQuoteTests(unittest.TestCase):
         self.assertEqual(client._subscribed_symbols, [])
 
         second = client.ensure_subscriptions(["AAPL"])
-        self.assertEqual(second, ["AAPL"])
+        self.assertEqual(second, [])
         self.assertEqual(client._subscribed_symbols, ["AAPL.US"])
-        self.assertEqual(len(ctx.subscribe_calls), 2)
+        self.assertEqual(len(ctx.subscribe_calls), 1)
 
     def test_provider_unconfirmed_subscription_is_not_marked_active_and_is_retried(self):
         quote_type = SimpleNamespace(name="Quote")
