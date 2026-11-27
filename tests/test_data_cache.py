@@ -335,10 +335,9 @@ class PermanentDataCacheTests(unittest.TestCase):
         self.assertEqual(stored.iloc[0]["date"], pd.Timestamp(initial_dates[10]))
 
     def test_initial_full_fetch_persists_only_latest_300_completed_bars(self):
-        dates = pd.bdate_range(
-            end=pd.Timestamp.now().normalize() - pd.offsets.BDay(1),
-            periods=501,
-        )
+        ny = ZoneInfo("America/New_York")
+        stable_now = datetime(2026, 11, 25, 18, 0, tzinfo=ny)
+        dates = pd.bdate_range(end=pd.Timestamp("2026-11-25"), periods=501)
         frame = pd.DataFrame({
             "open": [10.0] * 501,
             "high": [11.0] * 501,
@@ -352,7 +351,8 @@ class PermanentDataCacheTests(unittest.TestCase):
         provider.last_source = None
         provider._fetch_yahoo = lambda period: frame
 
-        fetched = provider.fetch_and_store_daily_candles("2y", append=True)
+        with patch("data.data_provider.MarketTime.now", return_value=stable_now):
+            fetched = provider.fetch_and_store_daily_candles("2y", append=True)
         stored = self.storage.get_candles_df("FIRST")
         self.assertEqual(fetched, 501)
         self.assertEqual(len(stored), 300)
@@ -369,10 +369,9 @@ class PermanentDataCacheTests(unittest.TestCase):
         self.storage.upsert_candles_bulk("SWITCH", old_rows)
         self.storage.set_cache("daily_source:SWITCH", "Yahoo Finance")
 
-        new_dates = pd.bdate_range(
-            end=pd.Timestamp.now().normalize() - pd.offsets.BDay(1),
-            periods=300,
-        )
+        ny = ZoneInfo("America/New_York")
+        stable_now = datetime(2026, 11, 25, 18, 0, tzinfo=ny)
+        new_dates = pd.bdate_range(end=pd.Timestamp("2026-11-25"), periods=300)
         full_new = pd.DataFrame({
             "open": [20.0] * 300,
             "high": [21.0] * 300,
@@ -392,7 +391,8 @@ class PermanentDataCacheTests(unittest.TestCase):
             return full_new if period == "2y" else recent_new
         provider._fetch_stooq = stooq
 
-        provider.fetch_and_store_daily_candles("10d", append=True)
+        with patch("data.data_provider.MarketTime.now", return_value=stable_now):
+            provider.fetch_and_store_daily_candles("10d", append=True)
         stored = self.storage.get_candles_df("SWITCH")
         self.assertEqual(requested, ["10d", "2y"])
         self.assertEqual(len(stored), 300)
