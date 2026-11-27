@@ -32,6 +32,7 @@ class LongbridgeQuoteTests(unittest.TestCase):
         class FakeSubType:
             Quote = object()
             Trade = object()
+            Trade = object()
 
         class FakeContext:
             def __init__(self, config):
@@ -77,12 +78,15 @@ class LongbridgeQuoteTests(unittest.TestCase):
 
         class FakeSubType:
             Quote = object()
+            Trade = object()
 
         class FakeContext:
             def __init__(self, config):
                 pass
             def set_on_quote(self, callback):
                 captured["callback"] = callback
+            def set_on_trades(self, callback):
+                captured["trades_callback"] = callback
 
         fake_module = ModuleType("longbridge.openapi")
         fake_module.Config = FakeConfig
@@ -129,7 +133,7 @@ class LongbridgeQuoteTests(unittest.TestCase):
 
         def connect():
             client._ctx = new_context
-            client._sub_type_quote = object()
+            client._sub_types = [object(), object()]
             client._subscribed_symbols = []
 
         client.connect = connect
@@ -148,6 +152,7 @@ class LongbridgeQuoteTests(unittest.TestCase):
 
         class FakeSubType:
             Quote = object()
+            Trade = object()
             Trade = object()
 
         class FakeContext:
@@ -194,6 +199,7 @@ class LongbridgeQuoteTests(unittest.TestCase):
 
         class FakeSubType:
             Quote = object()
+            Trade = object()
 
         class FakeContext:
             def __init__(self, config):
@@ -201,6 +207,8 @@ class LongbridgeQuoteTests(unittest.TestCase):
 
             def set_on_quote(self, callback):
                 captured["callback"] = callback
+            def set_on_trades(self, callback):
+                captured["trades_callback"] = callback
 
         fake_module = ModuleType("longbridge.openapi")
         fake_module.Config = FakeConfig
