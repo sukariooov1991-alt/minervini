@@ -161,6 +161,8 @@ class LongbridgeQuoteTests(unittest.TestCase):
                 captured["quote_callback"] = callback
             def set_on_trades(self, callback):
                 captured["trade_callback"] = callback
+            def subscribe(self, symbols, sub_types):
+                captured["subscription"] = (list(symbols), list(sub_types))
 
         fake_module = ModuleType("longbridge.openapi")
         fake_module.Config = FakeConfig
@@ -174,6 +176,13 @@ class LongbridgeQuoteTests(unittest.TestCase):
         fake_package.__path__ = []
         with patch.dict(sys.modules, {"longbridge": fake_package, "longbridge.openapi": fake_module}):
             client.connect()
+
+        self.assertEqual(client._sub_types, [FakeSubType.Quote, FakeSubType.Trade])
+        self.assertEqual(client.subscribe(["AAPL"]), ["AAPL"])
+        self.assertEqual(
+            captured["subscription"],
+            (["AAPL.US"], [FakeSubType.Quote, FakeSubType.Trade]),
+        )
 
         captured["trade_callback"](
             "AAPL.US",
