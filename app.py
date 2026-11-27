@@ -800,6 +800,14 @@ class ScanController:
             should_log = now_mono - self._ws_last_log_at.get(sym, 0.0) >= 15.0
             if should_log:
                 self._ws_last_log_at[sym] = now_mono
+            # Enqueue while holding the same lock as immediate price
+            # publication. Concurrent SDK callbacks therefore enter the
+            # per-symbol FIFO in exactly the order their card updates are applied.
+            queued_quote = dict(quote)
+            queued_quote["_received_at"] = received_at
+            queued_quote["_is_price_tick"] = is_price_tick
+            self._realtime_pending.append(queued_quote)
+            self._realtime_event.set()
             self._notify_state_changed_locked()
         if should_log:
             log.info(
@@ -807,15 +815,6 @@ class ScanController:
                 sym, price, quote.get("source", "longbridge_websocket"),
                 quote.get("trade_session"), sequence, quote.get("timestamp"),
             )
-
-        # Preserve every price tick for the requested per-tick setup recalculation.
-        # UI publication above never waits for this background work.
-        with self._lock:
-            queued_quote = dict(quote)
-            queued_quote["_received_at"] = received_at
-            queued_quote["_is_price_tick"] = is_price_tick
-            self._realtime_pending.append(queued_quote)
-            self._realtime_event.set()
 
     def _realtime_worker_loop(self) -> None:
         while True:
