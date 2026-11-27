@@ -741,8 +741,9 @@ class ScanController:
             self._notify_state_changed_locked()
         if should_log:
             log.info(
-                "Longbridge WebSocket quote tick: symbol=%s price=%s session=%s sequence=%s timestamp=%s",
-                sym, price, quote.get("trade_session"), sequence, quote.get("timestamp"),
+                "Longbridge WebSocket price tick: symbol=%s price=%s source=%s session=%s sequence=%s timestamp=%s",
+                sym, price, quote.get("source", "longbridge_websocket"),
+                quote.get("trade_session"), sequence, quote.get("timestamp"),
             )
 
         # Preserve every price tick for the requested per-tick setup recalculation.
