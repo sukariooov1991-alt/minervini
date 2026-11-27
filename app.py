@@ -860,9 +860,9 @@ class ScanController:
             self._notify_state_changed_locked()
         if should_log:
             log.info(
-                "Longbridge WebSocket price tick: symbol=%s price=%s source=%s session=%s sequence=%s timestamp=%s",
+                "Longbridge WebSocket price tick: symbol=%s price=%s source=%s session=%s timestamp=%s",
                 sym, price, quote.get("source", "longbridge_websocket"),
-                quote.get("trade_session"), sequence, quote.get("timestamp"),
+                quote.get("trade_session"), quote.get("timestamp"),
             )
 
     def _realtime_worker_loop(self) -> None:
