@@ -1,6 +1,8 @@
 import unittest
+from collections import deque
 from datetime import date, datetime
-from threading import Condition, Event, RLock
+from types import SimpleNamespace
+from threading import Condition, Event, Lock, RLock
 import time
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
@@ -177,6 +179,8 @@ class RealtimeCandleTests(unittest.TestCase):
 
     def test_remove_card_clears_pending_quote_and_volume_state(self):
         controller = self._controller()
+        controller._state_cv = Condition(controller._lock)
+        controller._state_version = 0
         controller._cards = {"AAPL": {}, "MSFT": {}}
         controller._live_prices = {"AAPL": 100.0}
         controller._live_quote_metadata = {"AAPL": {"price_timestamp": "2026-11-26T00:00:00+00:00"}}
@@ -193,7 +197,7 @@ class RealtimeCandleTests(unittest.TestCase):
             {"symbol": "AAPL", "last_done": 100.0},
             {"symbol": "MSFT", "last_done": 200.0},
         ])
-        controller._realtime_lock = threading.Lock()
+        controller._realtime_lock = Lock()
         controller._realtime_event = threading.Event()
         controller._realtime_event.set()
         controller.storage = SimpleNamespace(delete_watchlist_card=lambda symbol: None)
