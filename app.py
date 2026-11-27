@@ -254,14 +254,21 @@ class ScanController:
         # One worker cannot keep up with concurrent pushes from a 493-symbol
         # watchlist. Multiple consumers process different symbols in parallel;
         # per-symbol locks preserve each symbol's calculation order.
-        self._realtime_workers = [
-            threading.Thread(
-                target=self._realtime_worker_loop,
-                name=f"longbridge-quote-processor-{index + 1}",
-                daemon=True,
-            )
-            for index in range(4)
-        ]
+        self._background_workers_enabled = (
+            os.getenv("MINERVINI_DISABLE_BACKGROUND_WORKERS", "").strip().lower()
+            not in {"1", "true", "yes"}
+        )
+        self._realtime_workers = (
+            [
+                threading.Thread(
+                    target=self._realtime_worker_loop,
+                    name=f"longbridge-quote-processor-{index + 1}",
+                    daemon=True,
+                )
+                for index in range(4)
+            ]
+            if self._background_workers_enabled else []
+        )
         for worker in self._realtime_workers:
             worker.start()
         self._ws_connected: bool = False
