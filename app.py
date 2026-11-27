@@ -125,7 +125,7 @@ def _is_out_of_order_realtime_tick(
     incoming_timestamp: float | None,
     previous_timestamp: float | None,
 ) -> bool:
-    """Reject an older executed Trade tick; only one price stream is authoritative."""
+    """Reject an older Quote price update so stale pushes cannot roll back the card."""
     return bool(
         incoming_timestamp is not None
         and previous_timestamp is not None
@@ -766,12 +766,9 @@ class ScanController:
         sym = str(quote.get("symbol", "")).upper().strip()
         if not sym:
             return
-        # Only executed Trade pushes are authoritative for the displayed live
-        # price. Quote.last_done is a quote snapshot and must never compete with
-        # or overwrite the Trade tape price.
-        incoming_source = str(quote.get("source") or "").lower()
-        is_trade_tick = incoming_source == "longbridge_trade_websocket"
-        raw_price = quote.get("last_done") if is_trade_tick else None
+        # Quote.last_done is the authoritative live stock price for the card.
+        # Volume-only Quote pushes carry no price and must not replace it.
+        raw_price = quote.get("last_done")
         with self._lock:
             existing_card = self._cards.get(sym)
             if existing_card is None:
@@ -817,15 +814,15 @@ class ScanController:
                 ),
             }
             # Volume-only Quote pushes may update volume, but they do not
-            # represent a new traded price. They must never advance the price
-            # timestamp/sequence baseline or suppress a subsequent Trade tick.
+            # represent a new price. They must never advance the price timestamp
+            # baseline or overwrite the last valid Quote price.
             if is_price_tick:
                 previous_timestamp = _realtime_timestamp_baseline(
                     self._latest_quote_timestamp.get(sym), previous_meta.get("price_timestamp")
                 )
                 if _is_out_of_order_realtime_tick(quote_order, previous_timestamp):
                     log.debug(
-                        "Ignoring stale Longbridge Trade tick for %s: timestamp=%s previous_timestamp=%s",
+                        "Ignoring stale Longbridge Quote price update for %s: timestamp=%s previous_timestamp=%s",
                         sym, quote_order, previous_timestamp,
                     )
                     return
@@ -850,8 +847,8 @@ class ScanController:
             # publication. Concurrent SDK callbacks therefore enter the
             # per-symbol FIFO in exactly the order their card updates are applied.
             queued_quote = dict(quote)
-            # Strip Quote.last_done before background processing as well; Quote
-            # pushes may still carry volume updates, but are never price ticks.
+            # Preserve Quote.last_done for price calculations; volume-only pushes
+            # remain price-neutral because raw_price is None.
             queued_quote["last_done"] = raw_price
             queued_quote["_received_at"] = received_at
             queued_quote["_is_price_tick"] = is_price_tick
@@ -1101,7 +1098,7 @@ class ScanController:
                     self._processed_quote_timestamp[sym] = quote_order
         if first_ws_push:
             log.info(
-                "Longbridge WebSocket first quote push: symbol=%s price=%s session=%s timestamp=%s",
+                "Longbridge WebSocket first price push: symbol=%s price=%s session=%s timestamp=%s",
                 sym, price, quote.get("trade_session"), quote.get("timestamp"),
             )
 
