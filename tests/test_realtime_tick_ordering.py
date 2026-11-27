@@ -1,6 +1,7 @@
 import unittest
+from collections import deque
 
-from app import _is_out_of_order_realtime_tick
+from app import _is_out_of_order_realtime_tick, _pop_next_realtime_quote
 
 
 class RealtimeTickOrderingTests(unittest.TestCase):
@@ -31,6 +32,28 @@ class RealtimeTickOrderingTests(unittest.TestCase):
                 102.0, 101.0, "longbridge_websocket", "longbridge_trade_websocket"
             )
         )
+
+    def test_parallel_workers_keep_each_symbols_queue_fifo(self):
+        pending = deque([
+            {"symbol": "AAPL", "last_done": 100.0},
+            {"symbol": "AAPL", "last_done": 101.0},
+            {"symbol": "MSFT", "last_done": 200.0},
+        ])
+        active = {"AAPL"}
+
+        quote, symbol = _pop_next_realtime_quote(pending, active)
+        self.assertEqual(symbol, "MSFT")
+        self.assertEqual(quote["last_done"], 200.0)
+        self.assertIsNone(_pop_next_realtime_quote(pending, active)[0])
+
+        active.discard("AAPL")
+        first, first_symbol = _pop_next_realtime_quote(pending, active)
+        self.assertEqual(first_symbol, "AAPL")
+        self.assertEqual(first["last_done"], 100.0)
+        active.discard("AAPL")
+        second, second_symbol = _pop_next_realtime_quote(pending, active)
+        self.assertEqual(second_symbol, "AAPL")
+        self.assertEqual(second["last_done"], 101.0)
 
     def test_missing_timestamps_preserve_arrival_order(self):
         self.assertFalse(
