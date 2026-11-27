@@ -67,6 +67,7 @@ class LongbridgeRealtimeClient:
         self._sub_types: list[Any] = []
         self._last_message_monotonic: float | None = None
         self._symbol_last_message_monotonic: dict[str, float] = {}
+        self._activity_lock = threading.Lock()
 
     def has_credentials(self) -> bool:
         return bool(self.app_key and self.app_secret and self.access_token)
@@ -78,7 +79,7 @@ class LongbridgeRealtimeClient:
     @property
     def symbol_last_message_monotonic(self) -> dict[str, float]:
         """Return a snapshot of the last raw WebSocket push time per symbol."""
-        with self._context_lock:
+        with self._activity_lock:
             return dict(self._symbol_last_message_monotonic)
 
     def _normalize_symbol(self, symbol: str) -> str:
@@ -120,7 +121,7 @@ class LongbridgeRealtimeClient:
                 # volume-only updates that are not valid price ticks.
                 received_mono = time.monotonic()
                 self._last_message_monotonic = received_mono
-                with self._context_lock:
+                with self._activity_lock:
                     self._symbol_last_message_monotonic[self._denormalize_symbol(symbol)] = received_mono
                 if self.on_quote is None:
                     return
@@ -429,7 +430,8 @@ class LongbridgeRealtimeClient:
             self._subscribed_symbols = []
             self._sub_types = []
             self._last_message_monotonic = None
-            self._symbol_last_message_monotonic.clear()
+            with self._activity_lock:
+                self._symbol_last_message_monotonic.clear()
             if ctx is not None and hasattr(ctx, "close"):
                 try:
                     ctx.close()
