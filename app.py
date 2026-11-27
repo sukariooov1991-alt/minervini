@@ -61,14 +61,19 @@ def _quote_timestamp_order(value: Any) -> float | None:
         return None
     if isinstance(value, (int, float)):
         number = float(value)
-        return number if math.isfinite(number) else None
+        return number if math.isfinite(number) and number > 0 else None
     try:
+        text_value = str(value).strip()
+        if text_value.isdigit():
+            number = float(text_value)
+            return number if math.isfinite(number) and number > 0 else None
         parsed = pd.Timestamp(value)
         if pd.isna(parsed):
             return None
         if parsed.tzinfo is None:
             parsed = parsed.tz_localize("UTC")
-        return float(parsed.timestamp())
+        timestamp = float(parsed.timestamp())
+        return timestamp if timestamp > 0 else None
     except (TypeError, ValueError, OverflowError):
         return None
 
@@ -682,7 +687,7 @@ class ScanController:
 
         sequence = quote.get("sequence")
         try:
-            sequence = int(sequence) if sequence is not None else None
+            sequence = int(sequence) if sequence is not None and int(sequence) > 0 else None
         except (TypeError, ValueError, OverflowError):
             sequence = None
 
