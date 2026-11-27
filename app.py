@@ -1844,6 +1844,8 @@ class ScanController:
             self._latest_quote_sequence.pop(clean, None)
             self._latest_quote_timestamp.pop(clean, None)
             self._processed_quote_timestamp.pop(clean, None)
+            getattr(self, "_live_volume_sequence", {}).pop(clean, None)
+            getattr(self, "_live_volume_timestamp", {}).pop(clean, None)
             self._ws_seen_symbols.discard(clean)
             self._ws_last_log_at.pop(clean, None)
             try:
@@ -1851,6 +1853,15 @@ class ScanController:
             except Exception:
                 log.exception("Failed to delete persisted watchlist card for %s", clean)
             self._notify_state_changed_locked()
+        with self._realtime_lock:
+            self._realtime_pending = deque(
+                item for item in self._realtime_pending
+                if str(item.get("symbol", "")).upper() != clean
+            )
+            if self._realtime_pending:
+                self._realtime_event.set()
+            else:
+                self._realtime_event.clear()
         if self.lb_client.has_credentials():
             try:
                 self.lb_client.unsubscribe([clean])
