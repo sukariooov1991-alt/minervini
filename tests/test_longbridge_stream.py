@@ -21,6 +21,14 @@ class FakeQuoteContext:
 
 
 class LongbridgeQuoteTests(unittest.TestCase):
+    def test_installed_sdk_exposes_quote_and_trade_push_apis(self):
+        from longbridge.openapi import QuoteContext, SubType
+
+        self.assertTrue(callable(getattr(QuoteContext, "set_on_quote", None)))
+        self.assertTrue(callable(getattr(QuoteContext, "set_on_trades", None)))
+        self.assertIsNotNone(getattr(SubType, "Quote", None))
+        self.assertIsNotNone(getattr(SubType, "Trade", None))
+
     def test_websocket_push_preserves_sequence_and_session(self):
         captured = {}
 
