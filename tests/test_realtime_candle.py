@@ -96,6 +96,44 @@ class RealtimeCandleTests(unittest.TestCase):
             card["price_received_at"],
         )
 
+    def test_volume_only_push_does_not_refresh_price_timestamp(self):
+        controller = ScanController.__new__(ScanController)
+        controller._lock = RLock()
+        controller._state_cv = Condition(controller._lock)
+        controller._state_version = 0
+        controller._latest_quote_sequence = {}
+        controller._latest_quote_timestamp = {}
+        controller._cards = {
+            "AAPL": {
+                "symbol": "AAPL",
+                "current_price": 100.25,
+                "price_source": "Longbridge WebSocket",
+                "price_session": "regular",
+                "price_timestamp": "2026-11-27T14:30:00+00:00",
+                "price_received_at": "2026-11-27T14:30:00+00:00",
+                "price_tag": 0,
+            }
+        }
+        controller._ws_last_log_at = {}
+        controller._realtime_pending = []
+        controller._realtime_event = Event()
+
+        controller._on_realtime_quote({
+            "symbol": "AAPL",
+            "last_done": None,
+            "sequence": 11,
+            "timestamp": "2026-11-27T14:30:05Z",
+            "current_volume": 250,
+            "trade_session": "regular",
+            "source": "longbridge_websocket",
+        })
+
+        card = controller._cards["AAPL"]
+        self.assertEqual(card["current_price"], 100.25)
+        self.assertEqual(card["price_timestamp"], "2026-11-27T14:30:00+00:00")
+        self.assertEqual(card["price_received_at"], "2026-11-27T14:30:00+00:00")
+        self.assertFalse(controller._realtime_pending[0]["_is_price_tick"])
+
     def test_watchdog_uses_new_subscription_time_after_quiet_reconnect(self):
         self.assertEqual(_latest_realtime_activity(100.0, 200.0), 200.0)
         self.assertEqual(_latest_realtime_activity(250.0, 200.0), 250.0)
