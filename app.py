@@ -713,10 +713,12 @@ class ScanController:
         if not sym:
             return
         raw_price = quote.get("last_done")
+        with self._lock:
+            existing_card = self._cards.get(sym)
+            if existing_card is None:
+                return
+            current_card_price = existing_card.get("current_price")
         if raw_price is None:
-            with self._lock:
-                existing_card = self._cards.get(sym) or {}
-                current_card_price = existing_card.get("current_price")
             if current_card_price is None:
                 return
             price = float(current_card_price)
@@ -1019,10 +1021,12 @@ class ScanController:
         is_price_tick = quote.get("_is_price_tick", raw_price is not None)
         if not sym:
             return
+        with self._lock:
+            existing_card = self._cards.get(sym)
+            if existing_card is None:
+                return
+            current_card_price = existing_card.get("current_price")
         if raw_price is None:
-            with self._lock:
-                existing_card = self._cards.get(sym) or {}
-                current_card_price = existing_card.get("current_price")
             if current_card_price is None:
                 return
             price = float(current_card_price)
@@ -1175,6 +1179,19 @@ class ScanController:
                     self._ws_connected = True
                     card = self._cards.get(sym)
                     if card is None:
+                        # A card may be deleted while this symbol's worker is
+                        # calculating. Do not leave an orphaned live candle or
+                        # volume/order state behind after the queued tick exits.
+                        self._live_candles.pop(sym, None)
+                        getattr(self, "_live_volume_sequence", {}).pop(sym, None)
+                        getattr(self, "_live_volume_timestamp", {}).pop(sym, None)
+                        self._latest_quote_sequence.pop(sym, None)
+                        self._latest_quote_timestamp.pop(sym, None)
+                        getattr(self, "_latest_quote_source", {}).pop(sym, None)
+                        self._processed_quote_timestamp.pop(sym, None)
+                        getattr(self, "_processed_quote_source", {}).pop(sym, None)
+                        self._ws_seen_symbols.discard(sym)
+                        self._ws_last_log_at.pop(sym, None)
                         self._notify_state_changed_locked()
                         return
 
