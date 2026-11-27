@@ -1,3 +1,4 @@
+import threading
 import unittest
 from collections import deque
 
@@ -5,6 +6,7 @@ from app import (
     _is_out_of_order_realtime_tick,
     _pop_next_realtime_quote,
     _realtime_timestamp_baseline,
+    ScanController,
 )
 
 
@@ -71,6 +73,54 @@ class RealtimeTickOrderingTests(unittest.TestCase):
             _realtime_timestamp_baseline(200.0, "2026-11-27T11:15:00+00:00"),
             200.0,
         )
+
+    def test_volume_only_push_does_not_block_older_real_price_tick(self):
+        controller = ScanController.__new__(ScanController)
+        controller._lock = threading.RLock()
+        controller._state_cv = threading.Condition(controller._lock)
+        controller._state_version = 0
+        controller._cards = {
+            "AAPL": {
+                "symbol": "AAPL",
+                "current_price": 190.0,
+                "price_timestamp": None,
+                "price_source": "Stored daily data",
+            }
+        }
+        controller._latest_quote_sequence = {}
+        controller._latest_quote_timestamp = {}
+        controller._latest_quote_source = {}
+        controller._processed_quote_timestamp = {}
+        controller._processed_quote_source = {}
+        controller._ws_last_log_at = {}
+        controller._ws_connected = False
+        controller._realtime_pending = deque()
+        controller._realtime_event = threading.Event()
+
+        controller._on_realtime_quote({
+            "symbol": "AAPL",
+            "last_done": None,
+            "sequence": 99,
+            "timestamp": 200,
+            "current_volume": 500,
+            "source": "longbridge_websocket",
+        })
+
+        self.assertEqual(controller._cards["AAPL"]["current_price"], 190.0)
+        self.assertNotIn("AAPL", controller._latest_quote_timestamp)
+        self.assertNotIn("AAPL", controller._latest_quote_sequence)
+
+        controller._on_realtime_quote({
+            "symbol": "AAPL",
+            "last_done": 190.25,
+            "sequence": 1,
+            "timestamp": 199,
+            "source": "longbridge_trade_websocket",
+        })
+
+        self.assertEqual(controller._cards["AAPL"]["current_price"], 190.25)
+        self.assertEqual(controller._latest_quote_timestamp["AAPL"], 199.0)
+        self.assertEqual(controller._latest_quote_source["AAPL"], "longbridge_trade_websocket")
 
     def test_missing_timestamps_preserve_arrival_order(self):
         self.assertFalse(

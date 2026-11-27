@@ -774,34 +774,38 @@ class ScanController:
                     received_at if is_price_tick else previous_meta.get("price_received_at")
                 ),
             }
-            previous_sequence = self._latest_quote_sequence.get(sym)
-            previous_timestamp = _realtime_timestamp_baseline(
-                self._latest_quote_timestamp.get(sym), previous_meta.get("price_timestamp")
-            )
-            latest_sources = getattr(self, "_latest_quote_source", None)
-            if latest_sources is None:
-                latest_sources = self._latest_quote_source = {}
-            previous_source = latest_sources.get(sym)
-            incoming_source = str(quote.get("source") or "longbridge_websocket")
-            # Quote and Trade pushes share the same socket but may carry
-            # independent sequence counters. Enforce timestamp ordering across
-            # both streams and prefer an executed Trade over a same-second Quote
-            # snapshot, which can still contain the preceding last_done value.
-            if _is_out_of_order_realtime_tick(
-                quote_order, previous_timestamp, incoming_source, previous_source
-            ):
-                log.debug(
-                    "Ignoring stale realtime tick for %s: source=%s timestamp=%s previous_source=%s previous_timestamp=%s",
-                    sym, incoming_source, quote_order, previous_source, previous_timestamp,
+            # Volume-only Quote pushes may update volume, but they do not
+            # represent a new traded price. They must never advance the price
+            # timestamp/sequence baseline or suppress a subsequent Trade tick.
+            if is_price_tick:
+                previous_sequence = self._latest_quote_sequence.get(sym)
+                previous_timestamp = _realtime_timestamp_baseline(
+                    self._latest_quote_timestamp.get(sym), previous_meta.get("price_timestamp")
                 )
-                return
-            if sequence is not None and previous_sequence is not None and sequence <= previous_sequence:
-                return
-            if sequence is not None:
-                self._latest_quote_sequence[sym] = sequence
-            if quote_order is not None:
-                self._latest_quote_timestamp[sym] = quote_order
-                latest_sources[sym] = incoming_source
+                latest_sources = getattr(self, "_latest_quote_source", None)
+                if latest_sources is None:
+                    latest_sources = self._latest_quote_source = {}
+                previous_source = latest_sources.get(sym)
+                incoming_source = str(quote.get("source") or "longbridge_websocket")
+                # Quote and Trade pushes share the same socket but may carry
+                # independent sequence counters. Enforce timestamp ordering across
+                # both streams and prefer an executed Trade over a same-second Quote
+                # snapshot, which can still contain the preceding last_done value.
+                if _is_out_of_order_realtime_tick(
+                    quote_order, previous_timestamp, incoming_source, previous_source
+                ):
+                    log.debug(
+                        "Ignoring stale realtime tick for %s: source=%s timestamp=%s previous_source=%s previous_timestamp=%s",
+                        sym, incoming_source, quote_order, previous_source, previous_timestamp,
+                    )
+                    return
+                if sequence is not None and previous_sequence is not None and sequence <= previous_sequence:
+                    return
+                if sequence is not None:
+                    self._latest_quote_sequence[sym] = sequence
+                if quote_order is not None:
+                    self._latest_quote_timestamp[sym] = quote_order
+                    latest_sources[sym] = incoming_source
             self._ws_connected = True
             card = self._cards.get(sym)
             if card is not None:
@@ -1063,26 +1067,24 @@ class ScanController:
 
         quote_order = _quote_timestamp_order(quote.get("timestamp"))
         with self._lock:
-            first_ws_push = sym not in self._ws_seen_symbols
-            self._ws_seen_symbols.add(sym)
-            previous_processed_timestamp = self._processed_quote_timestamp.get(sym)
-            processed_sources = getattr(self, "_processed_quote_source", None)
-            if processed_sources is None:
-                processed_sources = self._processed_quote_source = {}
-            previous_processed_source = processed_sources.get(sym)
-            incoming_source = str(quote.get("source") or "longbridge_websocket")
-            # Multiple workers may acquire a symbol lock in a different order
-            # than callbacks arrived. Apply the same timestamp/source tie-break
-            # again at processing time so a stale same-second Quote cannot
-            # overwrite a Trade tick that another worker already processed.
-            if _is_out_of_order_realtime_tick(
-                quote_order, previous_processed_timestamp,
-                incoming_source, previous_processed_source,
-            ):
-                return
-            if quote_order is not None:
-                self._processed_quote_timestamp[sym] = quote_order
-                processed_sources[sym] = incoming_source
+            first_ws_push = is_price_tick and sym not in self._ws_seen_symbols
+            if is_price_tick:
+                self._ws_seen_symbols.add(sym)
+                previous_processed_timestamp = self._processed_quote_timestamp.get(sym)
+                processed_sources = getattr(self, "_processed_quote_source", None)
+                if processed_sources is None:
+                    processed_sources = self._processed_quote_source = {}
+                previous_processed_source = processed_sources.get(sym)
+                incoming_source = str(quote.get("source") or "longbridge_websocket")
+                # Only price-bearing pushes participate in price ordering.
+                if _is_out_of_order_realtime_tick(
+                    quote_order, previous_processed_timestamp,
+                    incoming_source, previous_processed_source,
+                ):
+                    return
+                if quote_order is not None:
+                    self._processed_quote_timestamp[sym] = quote_order
+                    processed_sources[sym] = incoming_source
         if first_ws_push:
             log.info(
                 "Longbridge WebSocket first quote push: symbol=%s price=%s session=%s timestamp=%s",
