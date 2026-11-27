@@ -80,15 +80,12 @@ class LongbridgeQuoteTests(unittest.TestCase):
 
         class FakeSubType:
             Quote = object()
-            Trade = object()
 
         class FakeContext:
             def __init__(self, config):
                 pass
             def set_on_quote(self, callback):
                 captured["callback"] = callback
-            def set_on_trades(self, callback):
-                captured["trades_callback"] = callback
 
         fake_module = ModuleType("longbridge.openapi")
         fake_module.Config = FakeConfig
@@ -202,7 +199,6 @@ class LongbridgeQuoteTests(unittest.TestCase):
 
     def test_transient_subscription_verification_error_is_retried_not_trusted(self):
         quote_type = SimpleNamespace(name="Quote")
-        trade_type = SimpleNamespace(name="Trade")
 
         class FlakyVerificationContext(FakeQuoteContext):
             def __init__(self):
@@ -218,7 +214,7 @@ class LongbridgeQuoteTests(unittest.TestCase):
         ctx = FlakyVerificationContext()
         client = LongbridgeRealtimeClient()
         client._ctx = ctx
-        client._sub_types = [quote_type, trade_type]
+        client._sub_types = [quote_type]
 
         first = client.ensure_subscriptions(["AAPL"])
         self.assertEqual(first, ["AAPL"])
@@ -308,7 +304,7 @@ class LongbridgeQuoteTests(unittest.TestCase):
                 self.active = [item for item in self.active if item.symbol not in symbols]
 
         ctx = ResubscribeContext([
-            SimpleNamespace(symbol="AAPL.US", sub_types=[quote_type, trade_type])
+            SimpleNamespace(symbol="AAPL.US", sub_types=[quote_type])
         ])
         client = LongbridgeRealtimeClient()
         client._ctx = ctx
