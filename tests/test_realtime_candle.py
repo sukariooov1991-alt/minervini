@@ -2,7 +2,7 @@ import unittest
 from collections import deque
 from datetime import date, datetime
 from types import SimpleNamespace
-from threading import Condition, Event, Lock, RLock
+from threading import Condition, Event, RLock
 import time
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
