@@ -264,9 +264,10 @@ class LongbridgeRealtimeClient:
                     self._subscribed_symbols = sorted(active)
                 except Exception:
                     log.exception("STEP=WEBSOCKET_SUBSCRIBE_VERIFY STATUS=FAILED")
-                    # Do not discard a previously confirmed local state because
-                    # a transient verification request failed.
-                    can_verify = False
+                    # The verification API exists but is temporarily unavailable.
+                    # Keep the previously confirmed local state, retry the
+                    # subscription request, and still attempt post-submit
+                    # verification instead of silently trusting local acceptance.
 
             missing = [symbol for symbol in desired if symbol not in active]
             if not missing:
@@ -324,7 +325,9 @@ class LongbridgeRealtimeClient:
                     self._subscribed_symbols = sorted(active)
                     return [self._denormalize_symbol(s) for s in missing]
 
-            # Compatibility for older SDK builds without subscriptions().
+            # Compatibility is allowed only when the installed SDK does not
+            # expose subscriptions() at all. A transient provider verification
+            # error must never be treated as proof of an active subscription.
             log.warning("STEP=WEBSOCKET_SUBSCRIBE_VERIFY STATUS=UNAVAILABLE; using SDK subscribe acceptance")
             self._subscribed_symbols = sorted(active | set(missing))
             return [self._denormalize_symbol(symbol) for symbol in missing]
