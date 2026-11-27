@@ -295,9 +295,9 @@ class ScanController:
         self._realtime_pending: deque[dict[str, Any]] = deque()
         self._realtime_active_symbols: set[str] = set()
         self._realtime_event = threading.Event()
-        # One worker cannot keep up with concurrent pushes from a 493-symbol
-        # watchlist. Multiple consumers process different symbols in parallel;
-        # per-symbol locks preserve each symbol's calculation order.
+        # Multiple consumers process different symbols in parallel. The
+        # shared FIFO dispatcher permits only one active worker per symbol,
+        # preserving that symbol's arrival/calculation order.
         self._background_workers_enabled = (
             os.getenv("MINERVINI_DISABLE_BACKGROUND_WORKERS", "").strip().lower()
             not in {"1", "true", "yes"}
