@@ -1831,13 +1831,17 @@ class ScanController:
                             log.exception("Failed to persist watchlist card for %s", symbol)
                     self._notify_state_changed_locked()
                 for card in qualified:
+                    # The card is already visible. Subscribe this new symbol
+                    # on the existing shared WebSocket now, rather than waiting
+                    # for the entire universe scan to finish.
+                    self._subscribe_watchlist_symbols(
+                        [str(card["symbol"])],
+                        context="newly eligible candidate",
+                    )
                     if not card.get("entry_ready"):
                         continue
                     try: self.notifier.send_stock_appearance_alert(card)
                     except Exception: log.exception("Telegram alert failed for %s", card.get("symbol"))
-                # Do not subscribe per analysis batch. All newly eligible
-                # symbols are collected first, then sent in one bulk request
-                # after reconciliation below.
             result_df, failures, market_status = screener.run_screen(
                 update=update, progress_callback=self._update_scan_progress,
                 batch_callback=publish_batch, stop_callback=self._stop_event.is_set, batch_size=5,
