@@ -172,6 +172,41 @@ class RealtimeCandleTests(unittest.TestCase):
         )
         self.assertIsNone(controller._cards["AAPL"]["price_timestamp"])
 
+    def test_realtime_smart_reading_uses_completed_daily_atr(self):
+        controller = ScanController.__new__(ScanController)
+        completed = pd.DataFrame({
+            "open": [100.0] * 30,
+            "high": [101.0] * 30,
+            "low": [99.0] * 30,
+            "close": [100.0] * 30,
+            "volume": [100000.0] * 30,
+        })
+        live = pd.concat([
+            completed,
+            pd.DataFrame([{
+                "open": 100.0,
+                "high": 10000.0,
+                "low": 99.0,
+                "close": 10000.0,
+                "volume": 500000.0,
+            }]),
+        ], ignore_index=True)
+        card = {
+            "symbol": "AAPL",
+            "current_price": 100.25,
+            "price_source": "Longbridge WebSocket",
+            "rs_rating": 90,
+            "market_regime": "UNKNOWN",
+            "entry_zones": [],
+            "targets": [],
+            "notes": [],
+        }
+
+        reading = controller._build_smart_reading_from_card(
+            card, live, live_candle_included=True
+        )
+        self.assertIn("ATR(14) يقارب 2.00", reading)
+
     def test_watchdog_uses_new_subscription_time_after_quiet_reconnect(self):
         self.assertEqual(_latest_realtime_activity(100.0, 200.0), 200.0)
         self.assertEqual(_latest_realtime_activity(250.0, 200.0), 250.0)
