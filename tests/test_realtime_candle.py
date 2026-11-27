@@ -134,6 +134,44 @@ class RealtimeCandleTests(unittest.TestCase):
         self.assertEqual(card["price_received_at"], "2026-11-27T14:30:00+00:00")
         self.assertFalse(controller._realtime_pending[0]["_is_price_tick"])
 
+    def test_volume_only_push_does_not_relabel_daily_close_as_live(self):
+        controller = ScanController.__new__(ScanController)
+        controller._lock = RLock()
+        controller._state_cv = Condition(controller._lock)
+        controller._state_version = 0
+        controller._latest_quote_sequence = {}
+        controller._latest_quote_timestamp = {}
+        controller._cards = {
+            "AAPL": {
+                "symbol": "AAPL",
+                "current_price": 100.25,
+                "price_source": "Yahoo Finance (Daily Close)",
+                "price_session": "daily-close",
+                "price_timestamp": None,
+                "price_received_at": None,
+                "price_tag": None,
+            }
+        }
+        controller._ws_last_log_at = {}
+        controller._realtime_pending = []
+        controller._realtime_event = Event()
+
+        controller._on_realtime_quote({
+            "symbol": "AAPL",
+            "last_done": None,
+            "sequence": 11,
+            "timestamp": "2026-11-27T14:30:05Z",
+            "current_volume": 250,
+            "trade_session": "regular",
+            "source": "longbridge_websocket",
+        })
+
+        self.assertEqual(
+            controller._cards["AAPL"]["price_source"],
+            "Yahoo Finance (Daily Close)",
+        )
+        self.assertIsNone(controller._cards["AAPL"]["price_timestamp"])
+
     def test_watchdog_uses_new_subscription_time_after_quiet_reconnect(self):
         self.assertEqual(_latest_realtime_activity(100.0, 200.0), 200.0)
         self.assertEqual(_latest_realtime_activity(250.0, 200.0), 250.0)
