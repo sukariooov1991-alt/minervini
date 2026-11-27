@@ -102,6 +102,30 @@ class RealtimeCandleTests(unittest.TestCase):
         self.assertEqual(_latest_realtime_activity(None, 200.0), 200.0)
         self.assertIsNone(_latest_realtime_activity(None, None))
 
+    def test_mixed_quote_and_trade_stream_rejects_older_provider_timestamp(self):
+        controller = ScanController.__new__(ScanController)
+        controller._lock = RLock()
+        controller._state_cv = Condition(controller._lock)
+        controller._state_version = 0
+        controller._latest_quote_sequence = {"AAPL": 10}
+        controller._latest_quote_timestamp = {"AAPL": 100.0}
+        controller._cards = {"AAPL": {"symbol": "AAPL", "current_price": 100.0}}
+        controller._ws_last_log_at = {}
+        controller._realtime_pending = []
+        controller._realtime_event = Event()
+
+        controller._on_realtime_quote({
+            "symbol": "AAPL", "last_done": 101.0, "sequence": None,
+            "timestamp": 200, "source": "longbridge_trade_websocket",
+        })
+        controller._on_realtime_quote({
+            "symbol": "AAPL", "last_done": 99.0, "sequence": 11,
+            "timestamp": 150, "source": "longbridge_websocket",
+        })
+
+        self.assertEqual(controller._cards["AAPL"]["current_price"], 101.0)
+        self.assertEqual(len(controller._realtime_pending), 1)
+
     def test_sequence_less_quote_timestamps_are_orderable(self):
         older = _quote_timestamp_order("2026-11-26T12:00:00Z")
         newer = _quote_timestamp_order("2026-11-26T12:00:01Z")
