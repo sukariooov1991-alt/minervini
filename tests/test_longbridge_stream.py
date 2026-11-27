@@ -365,5 +365,75 @@ class LongbridgeQuoteTests(unittest.TestCase):
         self.assertEqual(len(ctx.subscribe_calls), 2)
 
 
+    def test_raw_push_activity_is_tracked_per_symbol(self):
+        captured = {}
+
+        class FakeConfig:
+            @staticmethod
+            def from_apikey(*args, **kwargs):
+                return object()
+
+        class FakeSubType:
+            Quote = object()
+            Trade = object()
+
+        class FakeContext:
+            def __init__(self, config):
+                pass
+            def set_on_quote(self, callback):
+                captured["callback"] = callback
+            def set_on_trades(self, callback):
+                captured["trades_callback"] = callback
+
+        fake_module = ModuleType("longbridge.openapi")
+        fake_module.Config = FakeConfig
+        fake_module.QuoteContext = FakeContext
+        fake_module.SubType = FakeSubType
+        client = LongbridgeRealtimeClient(
+            app_key="key", app_secret="secret", access_token="token",
+            on_quote=lambda payload: None,
+        )
+        fake_package = ModuleType("longbridge")
+        fake_package.__path__ = []
+        with patch.dict(sys.modules, {"longbridge": fake_package, "longbridge.openapi": fake_module}):
+            client.connect()
+
+        captured["callback"](
+            "AAPL.US",
+            SimpleNamespace(last_done=None, volume=0, current_volume=10),
+        )
+        captured["trades_callback"](
+            "MSFT.US",
+            SimpleNamespace(trades=[]),
+        )
+        activity = client.symbol_last_message_monotonic
+        self.assertIn("AAPL", activity)
+        self.assertIn("MSFT", activity)
+        self.assertGreater(activity["AAPL"], 0)
+        self.assertGreater(activity["MSFT"], 0)
+
+    def test_resubscribe_verifies_quote_and_trade_with_provider(self):
+        quote_type = SimpleNamespace(name="Quote")
+        trade_type = SimpleNamespace(name="Trade")
+
+        class ResubscribeContext(FakeQuoteContext):
+            def unsubscribe(self, symbols, sub_types):
+                self.active = [item for item in self.active if item.symbol not in symbols]
+
+        ctx = ResubscribeContext([
+            SimpleNamespace(symbol="AAPL.US", sub_types=[quote_type, trade_type])
+        ])
+        client = LongbridgeRealtimeClient()
+        client._ctx = ctx
+        client._sub_types = [quote_type, trade_type]
+        client._subscribed_symbols = ["AAPL.US"]
+
+        result = client.resubscribe(["AAPL"])
+        self.assertEqual(result, {"AAPL": True})
+        self.assertEqual(len(ctx.subscribe_calls), 1)
+        self.assertEqual(ctx.subscribe_calls[0][0], ["AAPL.US"])
+
+
+
 if __name__ == "__main__":
     unittest.main()
