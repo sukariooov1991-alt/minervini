@@ -300,6 +300,7 @@ class ScanController:
         self._last_ws_reconnect_monotonic = 0.0
         self._last_ws_subscription_monotonic: float | None = None
         self._ws_last_log_at: dict[str, float] = {}
+        self._ws_symbol_recovery_at: dict[str, float] = {}
         # Quote callbacks must stay short: the SDK dispatches pushes on its
         # receive path. Recalculate setups on this independent worker so one
         # slow VCP/SQLite pass cannot stall the WebSocket stream for other symbols.
@@ -611,48 +612,46 @@ class ScanController:
                 item["pending"] = not setup_passed
 
     def _realtime_watchdog_loop(self) -> None:
-        """Retry missing subscriptions and reconnect a stale stream during trading sessions."""
+        """Supervise socket-wide health and each subscribed symbol independently."""
         while True:
             time.sleep(30)
             if not self.lb_client.has_credentials():
                 continue
             session_label = self._detect_market_session()
-            # Longbridge can publish extended/overnight quotes when the regular
-            # exchange calendar says closed (weekends/holidays included).
-            # Keep the stream supervised; use the extended-session timeout.
-            stale_after_seconds = 300 if session_label == "مفتوح" else 900
+            # A completely silent socket is a connection-level failure. A
+            # single silent symbol is handled by a targeted resubscription.
+            socket_stale_after = 120 if session_label == "مفتوح" else 300
+            symbol_stale_after = 180 if session_label == "مفتوح" else 600
             now_mono = time.monotonic()
             with self._lock:
-                # Keep the existing stream healthy during a long scan. If a
-                # reconnect is needed, restore the current card set in one call;
-                # defer ordinary missing-symbol sync until the completed bulk sync.
                 scan_running = self._running
                 symbols = sorted(self._cards)
                 last_push = self.lb_client.last_message_monotonic
                 last_subscription = self._last_ws_subscription_monotonic
                 stream_reference = _latest_realtime_activity(last_push, last_subscription)
                 last_reconnect = self._last_ws_reconnect_monotonic
-                stale_stream = bool(
+                socket_age = (
+                    now_mono - stream_reference if stream_reference is not None else None
+                )
+                stale_socket = bool(
                     symbols
-                    and stream_reference is not None
-                    and now_mono - stream_reference > stale_after_seconds
+                    and socket_age is not None
+                    and socket_age > socket_stale_after
                     and now_mono - last_reconnect > 120
                 )
-                if stale_stream:
+                if stale_socket:
                     self._last_ws_reconnect_monotonic = now_mono
-            if not symbols or (scan_running and not stale_stream):
+
+            if not symbols:
                 continue
-            try:
-                if stale_stream:
-                    log.warning(
-                        "Longbridge WebSocket has had no quote pushes for %s seconds; reconnecting %s symbols",
-                        stale_after_seconds, len(symbols),
-                    )
+            if stale_socket:
+                log.error(
+                    "STEP=WEBSOCKET_HEALTH STATUS=SOCKET_STALLED last_message_age_seconds=%.1f threshold_seconds=%s symbols=%s action=RECONNECT",
+                    socket_age, socket_stale_after, len(symbols),
+                )
+                try:
                     self.lb_client.reconnect(symbols)
                     with self._state_cv:
-                        # A new QuoteContext can restart its sequence counter;
-                        # discard the old ordering state or valid new ticks may
-                        # be rejected forever as older than the previous socket.
                         self._latest_quote_sequence.clear()
                         self._latest_quote_timestamp.clear()
                         getattr(self, "_latest_quote_source", {}).clear()
@@ -662,20 +661,80 @@ class ScanController:
                         getattr(self, "_processed_quote_source", {}).clear()
                         self._ws_seen_symbols.clear()
                         self._ws_last_log_at.clear()
+                        self._ws_symbol_recovery_at.clear()
                         self._last_ws_subscription_monotonic = time.monotonic()
                         self._ws_connected = False
                         self._notify_state_changed_locked()
-                    continue
+                    log.warning(
+                        "STEP=WEBSOCKET_HEALTH STATUS=RECONNECT_COMPLETE symbols=%s; awaiting first push per symbol",
+                        len(symbols),
+                    )
+                except Exception:
+                    log.exception("STEP=WEBSOCKET_HEALTH STATUS=RECONNECT_FAILED symbols=%s", len(symbols))
+                    with self._state_cv:
+                        self._ws_connected = False
+                        self._notify_state_changed_locked()
+                continue
+
+            # A healthy symbol must not hide a dead subscription for another
+            # symbol. Use raw Quote/Trade callback activity, not only valid
+            # price ticks, so volume-only pushes also prove stream continuity.
+            try:
+                per_symbol_activity = self.lb_client.symbol_last_message_monotonic
+                recovery_candidates: list[tuple[str, float | None]] = []
+                for symbol in symbols:
+                    last_symbol_push = per_symbol_activity.get(symbol)
+                    reference = last_symbol_push if last_symbol_push is not None else last_subscription
+                    age = now_mono - reference if reference is not None else None
+                    if age is None or age <= symbol_stale_after:
+                        continue
+                    last_recovery = self._ws_symbol_recovery_at.get(symbol, 0.0)
+                    if now_mono - last_recovery < 300:
+                        continue
+                    self._ws_symbol_recovery_at[symbol] = now_mono
+                    recovery_candidates.append((symbol, age))
+
+                for symbol, age in recovery_candidates:
+                    log.error(
+                        "STEP=WEBSOCKET_HEALTH STATUS=SYMBOL_PUSH_STALLED symbol=%s last_push_age_seconds=%.1f threshold_seconds=%s last_push_seen=%s action=VERIFY_AND_RESUBSCRIBE",
+                        symbol, age, symbol_stale_after,
+                        per_symbol_activity.get(symbol),
+                    )
+
+                if recovery_candidates:
+                    results = self.lb_client.resubscribe(
+                        [symbol for symbol, _ in recovery_candidates]
+                    )
+                    for symbol, _ in recovery_candidates:
+                        if results.get(symbol):
+                            log.warning(
+                                "STEP=WEBSOCKET_HEALTH STATUS=SYMBOL_RESUBSCRIBE_CONFIRMED symbol=%s; awaiting next Quote/Trade push",
+                                symbol,
+                            )
+                        else:
+                            log.error(
+                                "STEP=WEBSOCKET_HEALTH STATUS=SYMBOL_RESUBSCRIBE_UNCONFIRMED symbol=%s; provider did not confirm both Quote and Trade",
+                                symbol,
+                            )
+            except Exception:
+                log.exception("STEP=WEBSOCKET_HEALTH STATUS=SYMBOL_MONITOR_FAILED")
+                with self._state_cv:
+                    self._ws_connected = False
+                    self._notify_state_changed_locked()
+
+            # Reconcile the complete desired set every pass. This catches a
+            # provider-side subscription loss even when other symbols are live.
+            try:
                 restored = self.lb_client.ensure_subscriptions(symbols)
                 if restored:
                     with self._lock:
                         self._last_ws_subscription_monotonic = time.monotonic()
                     log.warning(
-                        "Longbridge watchdog bulk-subscribed missing symbols: %s",
+                        "STEP=WEBSOCKET_HEALTH STATUS=MISSING_SUBSCRIPTIONS_RETRIED symbols=%s",
                         ",".join(restored),
                     )
             except Exception:
-                log.exception("Longbridge realtime watchdog failed")
+                log.exception("STEP=WEBSOCKET_HEALTH STATUS=SUBSCRIPTION_RECONCILE_FAILED")
                 with self._state_cv:
                     self._ws_connected = False
                     self._notify_state_changed_locked()
