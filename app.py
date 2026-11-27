@@ -661,7 +661,7 @@ class ScanController:
                 continue
 
             # A healthy symbol must not hide a dead subscription for another
-            # symbol. Use raw Quote/Trade callback activity, not only valid
+            # symbol. Use raw Quote callback activity, not only valid
             # price ticks, so volume-only pushes also prove stream continuity.
             try:
                 per_symbol_activity = self.lb_client.symbol_last_message_monotonic
