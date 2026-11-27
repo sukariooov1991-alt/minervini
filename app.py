@@ -1,6 +1,7 @@
 """MINERVINI web server & mobile-first dark UI (minervini_v2 structure)."""
 from __future__ import annotations
 
+import copy
 import hmac
 from collections import deque
 import json
@@ -1979,7 +1980,9 @@ class ScanController:
                 "last_error": self._last_error,
                 "scan_progress": self._scan_progress,
                 "scan_errors": list(self._scan_errors),
-                "cards": list(self._cards.values()),
+                # Nested filter rows/lists are mutated by realtime workers;
+                # return detached card snapshots before Flask serializes them.
+                "cards": copy.deepcopy(list(self._cards.values())),
             }
 
     def wait_for_update(self, last_version: int, timeout: float = 15.0) -> dict[str, Any]:
