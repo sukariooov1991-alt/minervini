@@ -722,22 +722,25 @@ class ScanController:
         received_at = datetime.now(timezone.utc).isoformat()
         with self._state_cv:
             previous_meta = self._cards.get(sym) or {}
+            is_price_tick = raw_price is not None
             quote_metadata = {
                 "price_session": (
-                    quote.get("trade_session")
-                    or previous_meta.get("price_session")
-                    or "regular"
+                    (quote.get("trade_session") or previous_meta.get("price_session") or "regular")
+                    if is_price_tick else previous_meta.get("price_session", "regular")
                 ),
                 "price_timestamp": (
-                    _quote_timestamp_iso(quote.get("timestamp"))
-                    or previous_meta.get("price_timestamp")
+                    (_quote_timestamp_iso(quote.get("timestamp")) or previous_meta.get("price_timestamp"))
+                    if is_price_tick else previous_meta.get("price_timestamp")
                 ),
                 "price_tag": (
-                    quote.get("tag")
-                    if quote.get("tag") is not None
-                    else previous_meta.get("price_tag")
+                    (quote.get("tag") if quote.get("tag") is not None else previous_meta.get("price_tag"))
+                    if is_price_tick else previous_meta.get("price_tag")
                 ),
-                "price_received_at": received_at,
+                # A volume-only PushQuote is stream activity, not a new price
+                # observation; preserve the timestamp of the last actual price.
+                "price_received_at": (
+                    received_at if is_price_tick else previous_meta.get("price_received_at")
+                ),
             }
             previous_sequence = self._latest_quote_sequence.get(sym)
             previous_timestamp = self._latest_quote_timestamp.get(sym)
@@ -790,6 +793,7 @@ class ScanController:
         with self._lock:
             queued_quote = dict(quote)
             queued_quote["_received_at"] = received_at
+            queued_quote["_is_price_tick"] = is_price_tick
             self._realtime_pending.append(queued_quote)
             self._realtime_event.set()
 
@@ -981,6 +985,7 @@ class ScanController:
     def _process_realtime_quote(self, quote: dict[str, Any]) -> None:
         sym = str(quote.get("symbol", "")).upper().strip()
         raw_price = quote.get("last_done")
+        is_price_tick = quote.get("_is_price_tick", raw_price is not None)
         if not sym:
             return
         if raw_price is None:
@@ -1187,20 +1192,20 @@ class ScanController:
                         "current_price": round(price, 4),
                         "price_source": "Longbridge WebSocket",
                         "price_session": (
-                            quote.get("trade_session")
-                            or card.get("price_session")
-                            or "regular"
+                            (quote.get("trade_session") or card.get("price_session") or "regular")
+                            if is_price_tick else card.get("price_session", "regular")
                         ),
                         "price_timestamp": (
-                            _quote_timestamp_iso(quote.get("timestamp"))
-                            or card.get("price_timestamp")
+                            (_quote_timestamp_iso(quote.get("timestamp")) or card.get("price_timestamp"))
+                            if is_price_tick else card.get("price_timestamp")
                         ),
                         "price_tag": (
-                            quote.get("tag")
-                            if quote.get("tag") is not None
-                            else card.get("price_tag")
+                            (quote.get("tag") if quote.get("tag") is not None else card.get("price_tag"))
+                            if is_price_tick else card.get("price_tag")
                         ),
-                        "price_received_at": received_at,
+                        "price_received_at": (
+                            received_at if is_price_tick else card.get("price_received_at")
+                        ),
                         "pivot_price": plan["pivot_price"],
                         "final_low": plan["final_low"],
                         "entry_zones": plan["entry_zones"],
@@ -1289,21 +1294,22 @@ class ScanController:
                     if card is not None:
                         card["current_price"] = round(price, 4)
                         card["price_source"] = "Longbridge WebSocket"
-                        card["price_session"] = (
-                            quote.get("trade_session")
-                            or card.get("price_session")
-                            or "regular"
-                        )
-                        card["price_timestamp"] = (
-                            _quote_timestamp_iso(quote.get("timestamp"))
-                            or card.get("price_timestamp")
-                        )
-                        card["price_tag"] = (
-                            quote.get("tag")
-                            if quote.get("tag") is not None
-                            else card.get("price_tag")
-                        )
-                        card["price_received_at"] = received_at
+                        if is_price_tick:
+                            card["price_session"] = (
+                                quote.get("trade_session")
+                                or card.get("price_session")
+                                or "regular"
+                            )
+                            card["price_timestamp"] = (
+                                _quote_timestamp_iso(quote.get("timestamp"))
+                                or card.get("price_timestamp")
+                            )
+                            card["price_tag"] = (
+                                quote.get("tag")
+                                if quote.get("tag") is not None
+                                else card.get("price_tag")
+                            )
+                            card["price_received_at"] = received_at
                         card["updated_at"] = datetime.now(timezone.utc).isoformat()
                         within_range, range_note = evaluate_entry_range(price, card.get("pivot_price"))
                         card["within_entry_range"] = within_range
