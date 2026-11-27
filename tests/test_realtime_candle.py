@@ -175,7 +175,6 @@ class RealtimeCandleTests(unittest.TestCase):
             {"symbol": "AAPL", "last_done": 100.0},
             {"symbol": "MSFT", "last_done": 200.0},
         ])
-        controller._realtime_lock = Lock()
         controller._realtime_event = Event()
         controller._realtime_event.set()
         controller.storage = SimpleNamespace(delete_watchlist_card=lambda symbol: None)
