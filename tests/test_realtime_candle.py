@@ -96,6 +96,24 @@ class RealtimeCandleTests(unittest.TestCase):
             card["price_received_at"],
         )
 
+    def test_realtime_push_for_deleted_card_is_ignored(self):
+        controller = ScanController.__new__(ScanController)
+        controller._lock = RLock()
+        controller._cards = {}
+        controller._realtime_pending = []
+        controller._realtime_event = Event()
+
+        controller._on_realtime_quote({
+            "symbol": "AAPL",
+            "last_done": 190.25,
+            "sequence": 1,
+            "timestamp": 1795683600,
+            "source": "longbridge_trade_websocket",
+        })
+
+        self.assertEqual(controller._realtime_pending, [])
+        self.assertFalse(controller._realtime_event.is_set())
+
     def test_volume_only_push_does_not_refresh_price_timestamp(self):
         controller = ScanController.__new__(ScanController)
         controller._lock = RLock()
