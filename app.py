@@ -988,6 +988,12 @@ class ScanController:
         if not math.isfinite(base_volume) or base_volume < 0:
             base_volume = 0.0
 
+        sequence = quote.get("sequence")
+        try:
+            sequence = int(sequence) if sequence is not None and int(sequence) > 0 else None
+        except (TypeError, ValueError, OverflowError):
+            sequence = None
+
         raw_total = quote.get("volume")
         raw_delta = quote.get("current_volume")
         try:
@@ -1081,12 +1087,6 @@ class ScanController:
         received_at = str(
             quote.get("_received_at") or datetime.now(timezone.utc).isoformat()
         )
-        sequence = quote.get("sequence")
-        try:
-            sequence = int(sequence) if sequence is not None and int(sequence) > 0 else None
-        except (TypeError, ValueError, OverflowError):
-            sequence = None
-
         quote_order = _quote_timestamp_order(quote.get("timestamp"))
         with self._lock:
             first_ws_push = is_price_tick and sym not in self._ws_seen_symbols
