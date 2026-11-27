@@ -64,6 +64,46 @@ class LongbridgeQuoteTests(unittest.TestCase):
         self.assertEqual(payload["sequence"], 987654321)
         self.assertEqual(payload["trade_session"], "pre-market")
 
+    def test_volume_only_push_is_forwarded_without_inventing_a_price(self):
+        captured = {}
+
+        class FakeConfig:
+            @staticmethod
+            def from_apikey(*args, **kwargs):
+                return object()
+
+        class FakeSubType:
+            Quote = object()
+
+        class FakeContext:
+            def __init__(self, config):
+                pass
+            def set_on_quote(self, callback):
+                captured["callback"] = callback
+
+        fake_module = ModuleType("longbridge.openapi")
+        fake_module.Config = FakeConfig
+        fake_module.QuoteContext = FakeContext
+        fake_module.SubType = FakeSubType
+        client = LongbridgeRealtimeClient(
+            app_key="key", app_secret="secret", access_token="token",
+            on_quote=lambda payload: captured.setdefault("quotes", []).append(payload),
+        )
+        fake_package = ModuleType("longbridge")
+        fake_package.__path__ = []
+        with patch.dict(sys.modules, {"longbridge": fake_package, "longbridge.openapi": fake_module}):
+            client.connect()
+
+        event = SimpleNamespace(
+            last_done=None, sequence=12, timestamp=1795683601,
+            trade_session=0, volume=None, current_volume=250,
+            turnover=None, current_turnover="1000", trade_status=0, tag=0,
+        )
+        captured["callback"]("AAPL.US", event)
+        self.assertEqual(len(captured["quotes"]), 1)
+        self.assertIsNone(captured["quotes"][0]["last_done"])
+        self.assertEqual(captured["quotes"][0]["current_volume"], 250)
+
     def test_reconnect_recreates_context_and_restores_subscriptions(self):
         client = LongbridgeRealtimeClient(
             app_key="key", app_secret="secret", access_token="token"
