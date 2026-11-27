@@ -41,6 +41,14 @@ class DashboardAccessTests(unittest.TestCase):
         self.assertEqual(state.status_code, 200)
         self.assertEqual(state.get_json()["version"], 1)
 
+    def test_non_admin_username_is_rejected_even_with_correct_key(self):
+        with patch.dict(os.environ, {"MINERVINI_ACCESS_KEY": "test-secret"}):
+            token = base64.b64encode(b"someone:test-secret").decode()
+            response = self.client.get(
+                "/api/state", headers={"Authorization": f"Basic {token}"}
+            )
+        self.assertEqual(response.status_code, 401)
+
     def test_wrong_key_is_rejected(self):
         with patch.dict(os.environ, {"MINERVINI_ACCESS_KEY": "test-secret"}):
             response = self.client.get("/api/state", headers=self._auth_header("wrong"))
