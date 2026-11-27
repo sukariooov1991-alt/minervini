@@ -130,6 +130,12 @@ class LongbridgeRealtimeClient:
                     # Ignore messages with neither a valid price nor a volume update.
                     return
 
+                log.info(
+                    "STEP=WEBSOCKET_QUOTE_PUSH STATUS=RECEIVED symbol=%s last_done=%s timestamp=%s session=%s sequence=%s",
+                    self._denormalize_symbol(symbol), last_done,
+                    _value(event, "timestamp"), _session_label(_value(event, "trade_session")),
+                    _value(event, "sequence"),
+                )
                 payload = {
                     "symbol": self._denormalize_symbol(symbol),
                     "raw_symbol": symbol,
@@ -167,6 +173,10 @@ class LongbridgeRealtimeClient:
                     trade_items = list(trades or [])
                 except TypeError:
                     trade_items = []
+                log.info(
+                    "STEP=WEBSOCKET_TRADE_PUSH STATUS=RECEIVED symbol=%s trades=%s",
+                    self._denormalize_symbol(symbol), len(trade_items),
+                )
                 for trade in trade_items:
                     price = _valid_price(_value(trade, "price"))
                     if price is None:
@@ -244,10 +254,45 @@ class LongbridgeRealtimeClient:
                 raise
             self._subscribed_symbols = sorted(active | set(missing))
             log.info(
-                "STEP=WEBSOCKET_SUBSCRIBE STATUS=ACCEPTED requested=%s total_subscribed=%s push_types=Quote,Trade symbols=%s",
+                "STEP=WEBSOCKET_SUBSCRIBE STATUS=REQUEST_SENT requested=%s total_local=%s push_types=Quote,Trade symbols=%s",
                 len(missing), len(self._subscribed_symbols),
                 ",".join(self._denormalize_symbol(s) for s in missing),
             )
+            # Verify the SDK/server subscription state once after each bulk
+            # subscribe call. The local symbol set alone is not proof that the
+            # provider activated both push types.
+            if hasattr(self._ctx, "subscriptions"):
+                try:
+                    actual = self._ctx.subscriptions()
+                    actual_rows = []
+                    for item in actual or []:
+                        actual_symbol = str(_value(item, "symbol", "")).upper()
+                        raw_types = _value(item, "sub_types", []) or []
+                        type_names = sorted(
+                            str(getattr(value, "name", value)).split(".")[-1]
+                            for value in raw_types
+                        )
+                        actual_rows.append((actual_symbol, type_names))
+                    required = {self._normalize_symbol(s) for s in missing}
+                    actual_map = {symbol: set(types) for symbol, types in actual_rows}
+                    missing_server = [
+                        symbol for symbol in sorted(required)
+                        if not {"Quote", "Trade"}.issubset(actual_map.get(symbol, set()))
+                    ]
+                    if missing_server:
+                        log.error(
+                            "STEP=WEBSOCKET_SUBSCRIBE_VERIFY STATUS=INCOMPLETE missing=%s actual=%s",
+                            ",".join(missing_server), actual_rows,
+                        )
+                    else:
+                        log.info(
+                            "STEP=WEBSOCKET_SUBSCRIBE_VERIFY STATUS=CONFIRMED symbols=%s push_types=Quote,Trade",
+                            len(required),
+                        )
+                except Exception:
+                    log.exception("STEP=WEBSOCKET_SUBSCRIBE_VERIFY STATUS=FAILED")
+            else:
+                log.warning("STEP=WEBSOCKET_SUBSCRIBE_VERIFY STATUS=UNAVAILABLE sdk_has_no_subscriptions_method")
             return [self._denormalize_symbol(symbol) for symbol in missing]
 
     def subscribe(self, symbols: list[str]) -> list[str]:
