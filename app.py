@@ -872,12 +872,25 @@ class ScanController:
             sequence = None
 
         raw_total = quote.get("volume")
+        raw_delta = quote.get("current_volume")
+        try:
+            delta_hint = float(raw_delta) if raw_delta is not None else 0.0
+        except (TypeError, ValueError):
+            delta_hint = 0.0
         if raw_total is not None:
             try:
                 total = float(raw_total)
             except (TypeError, ValueError):
                 total = float("nan")
-            if math.isfinite(total) and total >= 0:
+            # Protobuf numeric fields may be zero when omitted. If the SDK
+            # supplies a positive current_volume delta alongside volume=0,
+            # treat zero as the omitted cumulative field, not a reset.
+            total_is_authoritative = (
+                math.isfinite(total)
+                and total >= 0
+                and (total > 0 or delta_hint <= 0)
+            )
+            if total_is_authoritative:
                 if sequence is not None:
                     seen = getattr(self, "_live_volume_sequence", None)
                     if seen is None:
@@ -892,7 +905,6 @@ class ScanController:
                     seen[symbol] = max(seen.get(symbol, quote_order), quote_order)
                 return max(base_volume, total)
 
-        raw_delta = quote.get("current_volume")
         if raw_delta is None:
             return None
         try:
