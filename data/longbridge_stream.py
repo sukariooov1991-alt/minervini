@@ -138,7 +138,7 @@ class LongbridgeRealtimeClient:
                     "turnover": _value(event, "turnover"),
                     "current_volume": _value(event, "current_volume"),
                     "current_turnover": _value(event, "current_turnover"),
-                    "trade_session": _session_label(_value(event, "trade_session")) or "regular",
+                    "trade_session": _session_label(_value(event, "trade_session")),
                     "trade_status": _value(event, "trade_status"),
                     "tag": _value(event, "tag"),
                     "source": "longbridge_websocket",
