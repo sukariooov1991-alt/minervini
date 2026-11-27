@@ -14,6 +14,7 @@ jobs:
     env:
       DB_PATH: ":memory:"
       OUTPUT_PATH: "watchlist.json"
+      MINERVINI_DISABLE_BACKGROUND_WORKERS: "1"
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
