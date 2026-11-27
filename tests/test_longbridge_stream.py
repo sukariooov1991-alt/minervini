@@ -204,6 +204,49 @@ class LongbridgeQuoteTests(unittest.TestCase):
         self.assertEqual(captured["quotes"][0]["trade_session"], "overnight")
         self.assertEqual(captured["quotes"][0]["source"], "longbridge_trade_websocket")
 
+    def test_trade_push_accepts_a_singular_trade_message(self):
+        captured = {}
+
+        class FakeConfig:
+            @staticmethod
+            def from_apikey(*args, **kwargs):
+                return object()
+
+        class FakeSubType:
+            Quote = object()
+            Trade = object()
+
+        class FakeContext:
+            def __init__(self, config):
+                pass
+            def set_on_quote(self, callback):
+                captured["quote_callback"] = callback
+            def set_on_trades(self, callback):
+                captured["trade_callback"] = callback
+
+        fake_module = ModuleType("longbridge.openapi")
+        fake_module.Config = FakeConfig
+        fake_module.QuoteContext = FakeContext
+        fake_module.SubType = FakeSubType
+        client = LongbridgeRealtimeClient(
+            app_key="key", app_secret="secret", access_token="token",
+            on_quote=lambda payload: captured.setdefault("quotes", []).append(payload),
+        )
+        fake_package = ModuleType("longbridge")
+        fake_package.__path__ = []
+        with patch.dict(sys.modules, {"longbridge": fake_package, "longbridge.openapi": fake_module}):
+            client.connect()
+
+        captured["trade_callback"](
+            "AAPL.US",
+            SimpleNamespace(trade=SimpleNamespace(
+                price="190.75", volume=7, timestamp=1795683604, trade_session=0
+            )),
+        )
+        self.assertEqual(len(captured["quotes"]), 1)
+        self.assertEqual(captured["quotes"][0]["last_done"], 190.75)
+        self.assertEqual(captured["quotes"][0]["current_volume"], 7)
+
     def test_websocket_push_without_last_done_is_not_a_price_tick(self):
         captured = {}
 
