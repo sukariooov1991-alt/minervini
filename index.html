@@ -435,13 +435,12 @@
         return;
       }
       const snapshotVersion = Number(data.version);
-      if (snapshotVersion <= lastAppliedSnapshotVersion) {
+      if (snapshotVersion < lastAppliedSnapshotVersion) {
         console.debug('[MINERVINI] Ignored stale state snapshot', {
           received: snapshotVersion, latest: lastAppliedSnapshotVersion
         });
         return;
       }
-      lastAppliedSnapshotVersion = snapshotVersion;
 
       const sessionEl = document.getElementById('marketSession');
       if (data.last_error) {
@@ -449,6 +448,12 @@
       } else {
         sessionEl.textContent = `حالة السوق: ${data.market_session || 'قبل الافتتاح'}`;
       }
+
+      // The market clock can change while the state version stays constant.
+      // Heartbeat snapshots must refresh the session badge even when no card,
+      // quote, or scan-progress state has changed.
+      if (snapshotVersion === lastAppliedSnapshotVersion) return;
+      lastAppliedSnapshotVersion = snapshotVersion;
       renderScanProgress(data);
 
       // A missing cards field is an incomplete payload, not an instruction to
