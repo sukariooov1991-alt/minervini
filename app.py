@@ -773,7 +773,10 @@ class ScanController:
             if card is not None:
                 card.update({
                     "current_price": round(price, 4),
-                    "price_source": "Longbridge WebSocket",
+                    "price_source": (
+                        "Longbridge WebSocket" if is_price_tick
+                        else previous_meta.get("price_source", "Stored daily data")
+                    ),
                     **quote_metadata,
                     "updated_at": received_at,
                 })
@@ -1190,7 +1193,10 @@ class ScanController:
                     )
                     card.update({
                         "current_price": round(price, 4),
-                        "price_source": "Longbridge WebSocket",
+                        "price_source": (
+                            "Longbridge WebSocket" if is_price_tick
+                            else card.get("price_source", "Stored daily data")
+                        ),
                         "price_session": (
                             (quote.get("trade_session") or card.get("price_session") or "regular")
                             if is_price_tick else card.get("price_session", "regular")
@@ -1293,7 +1299,8 @@ class ScanController:
                     card = self._cards.get(sym)
                     if card is not None:
                         card["current_price"] = round(price, 4)
-                        card["price_source"] = "Longbridge WebSocket"
+                        if is_price_tick:
+                            card["price_source"] = "Longbridge WebSocket"
                         if is_price_tick:
                             card["price_session"] = (
                                 quote.get("trade_session")
