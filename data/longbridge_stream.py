@@ -167,7 +167,7 @@ class LongbridgeRealtimeClient:
                 if self.on_quote is None:
                     return
                 trades = _value(event, "trades")
-                if trades is None:
+                if not trades:
                     trades = _value(event, "trade")
                 if trades is None:
                     trade_items = []
