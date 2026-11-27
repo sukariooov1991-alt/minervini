@@ -175,6 +175,39 @@ class RealtimeCandleTests(unittest.TestCase):
                 )
                 self.assertEqual(ScanController._detect_market_session(), "مفتوح")
 
+    def test_remove_card_clears_pending_quote_and_volume_state(self):
+        controller = self._controller()
+        controller._cards = {"AAPL": {}, "MSFT": {}}
+        controller._live_prices = {"AAPL": 100.0}
+        controller._live_quote_metadata = {"AAPL": {"price_timestamp": "2026-11-26T00:00:00+00:00"}}
+        controller._latest_quote_payloads = {"AAPL": {"symbol": "AAPL"}}
+        controller._live_candles = {"AAPL": {"volume": 1000.0}}
+        controller._latest_quote_sequence = {"AAPL": 10}
+        controller._latest_quote_timestamp = {"AAPL": 1795737600.0}
+        controller._processed_quote_timestamp = {"AAPL": 1795737600.0}
+        controller._live_volume_sequence = {"AAPL": 10}
+        controller._live_volume_timestamp = {"AAPL": 1795737600.0}
+        controller._ws_seen_symbols = {"AAPL"}
+        controller._ws_last_log_at = {"AAPL": 1.0}
+        controller._realtime_pending = deque([
+            {"symbol": "AAPL", "last_done": 100.0},
+            {"symbol": "MSFT", "last_done": 200.0},
+        ])
+        controller._realtime_lock = threading.Lock()
+        controller._realtime_event = threading.Event()
+        controller._realtime_event.set()
+        controller.storage = SimpleNamespace(delete_watchlist_card=lambda symbol: None)
+        controller.lb_client = SimpleNamespace(
+            has_credentials=lambda: False,
+            unsubscribe=lambda symbols: None,
+        )
+        controller.remove_card("AAPL")
+        self.assertNotIn("AAPL", controller._cards)
+        self.assertNotIn("AAPL", controller._live_volume_sequence)
+        self.assertNotIn("AAPL", controller._live_volume_timestamp)
+        self.assertEqual([item["symbol"] for item in controller._realtime_pending], ["MSFT"])
+        self.assertTrue(controller._realtime_event.is_set())
+
     def test_incremental_volume_is_added_once_and_requeued_ticks_are_deduplicated(self):
         controller = self._controller()
         controller._live_candles["AAPL"] = {"volume": 1000.0}
