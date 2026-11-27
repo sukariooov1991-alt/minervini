@@ -55,6 +55,17 @@ class EntryDecisionTests(unittest.TestCase):
             [],
         )
 
+    def test_market_regime_is_unknown_when_recent_index_volume_is_missing(self):
+        index = self._index()
+        index.loc[index.index[-1], "volume"] = float("nan")
+
+        result = check_market_regime(index, breadth_pct=100.0)
+
+        self.assertFalse(result["market_favorable"])
+        self.assertEqual(result["regime"], "UNKNOWN")
+        self.assertIsNone(result["distribution_days"])
+        self.assertTrue(any("volume data is incomplete" in reason for reason in result["reasons"]))
+
     def test_market_breadth_defaults_to_unavailable_when_index_data_is_missing(self):
         result = check_market_regime(pd.DataFrame())
         self.assertFalse(result["market_favorable"])
