@@ -52,7 +52,9 @@ class TradeLevelsPlan:
 
 def compute_atr(df: pd.DataFrame, period: int = 14) -> float | None:
     required = {"high", "low", "close"}
-    if df is None or not required.issubset(df.columns) or len(df) < period + 1:
+    # The first bar contributes its high-low as the initial true range,
+    # so exactly `period` valid OHLC rows are sufficient for the Wilder seed.
+    if df is None or not required.issubset(df.columns) or len(df) < period:
         return None
 
     high = pd.to_numeric(df["high"], errors="coerce")
