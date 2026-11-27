@@ -94,6 +94,22 @@ def _quote_timestamp_iso(value: Any) -> str | None:
         return None
 
 
+def _pop_next_realtime_quote(
+    pending: deque[dict[str, Any]],
+    active_symbols: set[str],
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Pop the oldest queued tick whose symbol is not already being processed."""
+    for index, quote in enumerate(pending):
+        symbol = str(quote.get("symbol", "")).upper().strip()
+        if symbol and symbol in active_symbols:
+            continue
+        del pending[index]
+        if symbol:
+            active_symbols.add(symbol)
+        return quote, symbol or None
+    return None, None
+
+
 def _realtime_source_priority(source: Any) -> int:
     """Prefer an executed Trade tick over a same-second incremental Quote snapshot."""
     return 2 if str(source or "").lower().startswith("longbridge_trade_websocket") else 1
@@ -277,6 +293,7 @@ class ScanController:
         # receive path. Recalculate setups on this independent worker so one
         # slow VCP/SQLite pass cannot stall the WebSocket stream for other symbols.
         self._realtime_pending: deque[dict[str, Any]] = deque()
+        self._realtime_active_symbols: set[str] = set()
         self._realtime_event = threading.Event()
         # One worker cannot keep up with concurrent pushes from a 493-symbol
         # watchlist. Multiple consumers process different symbols in parallel;
@@ -804,13 +821,17 @@ class ScanController:
         while True:
             self._realtime_event.wait()
             with self._lock:
-                if not self._realtime_pending:
+                active_symbols = getattr(self, "_realtime_active_symbols", None)
+                if active_symbols is None:
+                    active_symbols = self._realtime_active_symbols = set()
+                quote, active_symbol = _pop_next_realtime_quote(
+                    self._realtime_pending, active_symbols
+                )
+                if quote is None:
+                    # Remaining items may all belong to symbols currently
+                    # processed by other workers. Their completion wakes us.
                     self._realtime_event.clear()
                     continue
-                # Take one item at a time so several workers can drain the
-                # shared queue concurrently instead of one worker stealing a
-                # whole batch while the others remain idle.
-                quote = self._realtime_pending.popleft()
                 if not self._realtime_pending:
                     self._realtime_event.clear()
             try:
@@ -819,6 +840,14 @@ class ScanController:
                 log.exception(
                     "Queued realtime processing failed for %s", quote.get("symbol")
                 )
+            finally:
+                with self._lock:
+                    if active_symbol:
+                        active_symbols.discard(active_symbol)
+                    if self._realtime_pending:
+                        self._realtime_event.set()
+                    else:
+                        self._realtime_event.clear()
 
     def _merge_live_candle(
         self,
