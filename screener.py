@@ -354,10 +354,6 @@ class DailyScreener:
                         "current_symbol": batch[0] if batch else "",
                     })
 
-                # Publish completed analysis results once per five-symbol batch.
-                # This lets the realtime layer subscribe/seed quotes in groups
-                # instead of making a separate Longbridge API round-trip per stock.
-                batch_rows: list[dict] = []
                 for sym in batch:
                     if stop_callback and stop_callback():
                         stopped = True
@@ -532,6 +528,17 @@ class DailyScreener:
                             ),
                             "screen_date": MarketTime.now().date().isoformat(),
                         }
+                        # Publish an eligible candidate immediately after its
+                        # strategy filters are evaluated. Do not wait for the
+                        # remaining symbols in this batch (or the full scan).
+                        rows.append(row)
+                        if row["watchlist_eligible"] and batch_callback:
+                            try:
+                                batch_callback([row], market_status)
+                            except Exception:
+                                log.exception(
+                                    "Immediate candidate publish failed for %s", sym
+                                )
                         if row["watchlist_eligible"]:
                             try:
                                 # News is strategy context, not a per-scan dependency.
@@ -539,8 +546,6 @@ class DailyScreener:
                                 self._get_provider(sym).fetch_and_store_news()
                             except Exception:
                                 log.exception("News refresh failed for eligible symbol %s", sym)
-                        rows.append(row)
-                        batch_rows.append(row)
                         log.info(
                             "STEP=STOCK_ANALYSIS STATUS=COMPLETED symbol=%s "
                             "trend_template=PASS vcp=%s pullback=%s fundamentals=%s "
@@ -575,14 +580,6 @@ class DailyScreener:
 
                 if stopped:
                     break
-                if batch_callback and batch_rows:
-                    try:
-                        batch_callback(batch_rows, market_status)
-                    except Exception:
-                        log.exception(
-                            "Result publish failed for batch %s (%s symbols)",
-                            batch_no, len(batch_rows),
-                        )
                 if progress_callback:
                     progress_callback({
                         "phase": "اكتملت الدفعة",
