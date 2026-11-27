@@ -1108,7 +1108,11 @@ class ScanController:
 
                 setup_passed = bool(vcp_passed or pullback_info.get("candidate", False))
                 tt_info = (
-                    check_trend_template(live_df, card_snapshot.get("rs_rating"))
+                    check_trend_template(
+                        live_df,
+                        card_snapshot.get("rs_rating"),
+                        current_price=price,
+                    )
                     if not live_df.empty else {"passed": False, "conditions": {}}
                 )
                 trend_template_passed = bool(tt_info.get("passed", False))
