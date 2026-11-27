@@ -1862,7 +1862,9 @@ class ScanController:
             except Exception:
                 log.exception("Failed to delete persisted watchlist card for %s", clean)
             self._notify_state_changed_locked()
-        with self._realtime_lock:
+        # The realtime queue is protected by the controller's shared lock,
+        # exactly like enqueue/dequeue in the callback and worker paths.
+        with self._lock:
             self._realtime_pending = deque(
                 item for item in self._realtime_pending
                 if str(item.get("symbol", "")).upper() != clean
