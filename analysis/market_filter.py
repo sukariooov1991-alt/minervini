@@ -47,6 +47,27 @@ def check_market_regime(
         return out
 
     clean_df = ordered_frame(index_df, reset_index=True)
+    # Distribution-day counting is only trustworthy when every close and
+    # volume observation in its 25-session window is present and finite.
+    # Missing volume must not silently become zero distribution days.
+    recent = clean_df.tail(26)
+    recent_close = pd.to_numeric(recent["close"], errors="coerce").to_numpy(dtype=float)
+    recent_volume = pd.to_numeric(recent["volume"], errors="coerce").to_numpy(dtype=float)
+    if (
+        len(recent) < 26
+        or not pd.notna(recent_close).all()
+        or not pd.notna(recent_volume).all()
+        or not __import__("numpy").isfinite(recent_close).all()
+        or not __import__("numpy").isfinite(recent_volume).all()
+        or (recent_close <= 0).any()
+        or (recent_volume < 0).any()
+    ):
+        out["distribution_days"] = None
+        out["reasons"].append(
+            "index close/volume data is incomplete or invalid in the 25-session distribution-day window"
+        )
+        return out
+
     close = pd.to_numeric(clean_df["close"], errors="coerce").dropna().reset_index(drop=True)
     if len(close) < 200:
         out["reasons"].append("insufficient valid close values")
