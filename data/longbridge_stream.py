@@ -66,6 +66,7 @@ class LongbridgeRealtimeClient:
         self._subscribed_symbols: list[str] = []
         self._sub_types: list[Any] = []
         self._last_message_monotonic: float | None = None
+        self._symbol_last_message_monotonic: dict[str, float] = {}
 
     def has_credentials(self) -> bool:
         return bool(self.app_key and self.app_secret and self.access_token)
@@ -73,6 +74,12 @@ class LongbridgeRealtimeClient:
     @property
     def last_message_monotonic(self) -> float | None:
         return self._last_message_monotonic
+
+    @property
+    def symbol_last_message_monotonic(self) -> dict[str, float]:
+        """Return a snapshot of the last raw WebSocket push time per symbol."""
+        with self._context_lock:
+            return dict(self._symbol_last_message_monotonic)
 
     def _normalize_symbol(self, symbol: str) -> str:
         s = str(symbol).upper().strip()
@@ -111,7 +118,10 @@ class LongbridgeRealtimeClient:
             def _handle_quote(symbol: str, event: Any) -> None:
                 # Count every received PushQuote as stream activity, including
                 # volume-only updates that are not valid price ticks.
-                self._last_message_monotonic = time.monotonic()
+                received_mono = time.monotonic()
+                self._last_message_monotonic = received_mono
+                with self._context_lock:
+                    self._symbol_last_message_monotonic[self._denormalize_symbol(symbol)] = received_mono
                 if self.on_quote is None:
                     return
 
@@ -163,7 +173,10 @@ class LongbridgeRealtimeClient:
                 # Trade pushes carry each executed trade, including overnight.
                 # Quote pushes alone are incremental quote-field changes and
                 # are not a guaranteed per-trade tape.
-                self._last_message_monotonic = time.monotonic()
+                received_mono = time.monotonic()
+                self._last_message_monotonic = received_mono
+                with self._context_lock:
+                    self._symbol_last_message_monotonic[self._denormalize_symbol(symbol)] = received_mono
                 if self.on_quote is None:
                     return
                 trades = _value(event, "trades")
@@ -343,6 +356,53 @@ class LongbridgeRealtimeClient:
     def subscribe(self, symbols: list[str]) -> list[str]:
         return self.ensure_subscriptions(symbols)
 
+    def resubscribe(self, symbols: list[str]) -> dict[str, bool]:
+        """Force a provider unsubscribe/subscribe cycle and verify Quote+Trade."""
+        with self._context_lock:
+            targets = sorted({
+                self._normalize_symbol(s) for s in symbols if s and str(s).strip()
+            })
+            if not targets:
+                return {}
+            if self._ctx is None:
+                self.connect()
+            results: dict[str, bool] = {}
+            for symbol in targets:
+                display = self._denormalize_symbol(symbol)
+                try:
+                    self._ctx.unsubscribe([symbol], self._sub_types)
+                    log.warning("STEP=WEBSOCKET_RESUBSCRIBE STATUS=UNSUBSCRIBE_SENT symbol=%s", display)
+                except Exception:
+                    log.exception("STEP=WEBSOCKET_RESUBSCRIBE STATUS=UNSUBSCRIBE_FAILED symbol=%s", display)
+                try:
+                    self._ctx.subscribe([symbol], self._sub_types)
+                    log.warning("STEP=WEBSOCKET_RESUBSCRIBE STATUS=SUBSCRIBE_SENT symbol=%s push_types=Quote,Trade", display)
+                    verified = False
+                    subscriptions = getattr(self._ctx, "subscriptions", None)
+                    if callable(subscriptions):
+                        actual = {}
+                        for item in subscriptions() or []:
+                            actual_symbol = str(_value(item, "symbol", "")).upper()
+                            raw_types = _value(item, "sub_types", []) or []
+                            actual[actual_symbol] = {
+                                str(getattr(value, "name", value)).split(".")[-1]
+                                for value in raw_types
+                            }
+                        verified = {"Quote", "Trade"}.issubset(actual.get(symbol, set()))
+                    else:
+                        log.error("STEP=WEBSOCKET_RESUBSCRIBE STATUS=UNVERIFIABLE symbol=%s reason=subscriptions_api_missing", display)
+                    results[display] = verified
+                    if verified:
+                        self._subscribed_symbols = sorted(set(self._subscribed_symbols) | {symbol})
+                        log.info("STEP=WEBSOCKET_RESUBSCRIBE STATUS=CONFIRMED symbol=%s push_types=Quote,Trade", display)
+                    else:
+                        self._subscribed_symbols = [item for item in self._subscribed_symbols if item != symbol]
+                        log.error("STEP=WEBSOCKET_RESUBSCRIBE STATUS=NOT_CONFIRMED symbol=%s expected=Quote,Trade", display)
+                except Exception:
+                    results[display] = False
+                    log.exception("STEP=WEBSOCKET_RESUBSCRIBE STATUS=FAILED symbol=%s", display)
+            return results
+
     def unsubscribe(self, symbols: list[str]) -> None:
         with self._context_lock:
             cleaned = sorted({
@@ -369,6 +429,7 @@ class LongbridgeRealtimeClient:
             self._subscribed_symbols = []
             self._sub_types = []
             self._last_message_monotonic = None
+            self._symbol_last_message_monotonic.clear()
             if ctx is not None and hasattr(ctx, "close"):
                 try:
                     ctx.close()
