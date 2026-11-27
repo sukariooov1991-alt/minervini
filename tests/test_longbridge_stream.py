@@ -96,7 +96,7 @@ class LongbridgeQuoteTests(unittest.TestCase):
 
         event = SimpleNamespace(
             last_done=None, sequence=12, timestamp=1795683601,
-            trade_session=0, volume=None, current_volume=250,
+            trade_session=0, volume=0, current_volume=250,
             turnover=None, current_turnover="1000", trade_status=0, tag=0,
         )
         captured["callback"]("AAPL.US", event)
