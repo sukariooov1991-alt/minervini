@@ -1812,6 +1812,15 @@ class ScanController:
                             self.storage.delete_watchlist_card(stale_symbol)
                         except Exception:
                             log.exception("Failed to delete stale persisted card for %s", stale_symbol)
+                    if removed:
+                        self._realtime_pending = deque(
+                            item for item in self._realtime_pending
+                            if str(item.get("symbol", "")).upper().strip() not in removed
+                        )
+                        if self._realtime_pending:
+                            self._realtime_event.set()
+                        else:
+                            self._realtime_event.clear()
                 self._notify_state_changed_locked()
             if removed and self.lb_client.has_credentials():
                 try:
