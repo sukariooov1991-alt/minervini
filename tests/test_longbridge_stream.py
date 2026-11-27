@@ -239,9 +239,12 @@ class LongbridgeQuoteTests(unittest.TestCase):
 
         captured["trade_callback"](
             "AAPL.US",
-            SimpleNamespace(trade=SimpleNamespace(
-                price="190.75", volume=7, timestamp=1795683604, trade_session=0
-            )),
+            SimpleNamespace(
+                trades=[],
+                trade=SimpleNamespace(
+                    price="190.75", volume=7, timestamp=1795683604, trade_session=0
+                ),
+            ),
         )
         self.assertEqual(len(captured["quotes"]), 1)
         self.assertEqual(captured["quotes"][0]["last_done"], 190.75)
