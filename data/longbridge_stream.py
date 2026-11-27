@@ -231,9 +231,10 @@ class LongbridgeRealtimeClient:
     def ensure_subscriptions(self, symbols: list[str]) -> list[str]:
         """Idempotently subscribe new symbols through the single persistent context.
 
-        The local set is authoritative for this QuoteContext lifetime. Calling
-        QuoteContext.subscriptions() for every scan batch caused repeated control
-        requests and fragmented subscriptions into one-symbol operations.
+        Reconcile the cached local set with provider-confirmed Quote and Trade
+        subscriptions once per bulk sync. Never treat a local subscribe request
+        as active until the provider confirms both push types when verification
+        is available.
         """
         with self._context_lock:
             desired = sorted({
