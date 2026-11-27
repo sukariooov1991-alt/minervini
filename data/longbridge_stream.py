@@ -238,12 +238,43 @@ class LongbridgeRealtimeClient:
                 self.connect()
 
             active = set(self._subscribed_symbols)
+            # The SDK exposes the provider's active subscription list. Reconcile
+            # against it before deciding that a symbol is already subscribed;
+            # a successful local subscribe() call is not proof that the server
+            # activated both Quote and Trade pushes.
+            can_verify = callable(getattr(self._ctx, "subscriptions", None))
+            actual_map: dict[str, set[str]] = {}
+            if can_verify:
+                try:
+                    for item in self._ctx.subscriptions() or []:
+                        actual_symbol = str(_value(item, "symbol", "")).upper()
+                        raw_types = _value(item, "sub_types", []) or []
+                        actual_map[actual_symbol] = {
+                            str(getattr(value, "name", value)).split(".")[-1]
+                            for value in raw_types
+                        }
+                    active = {
+                        symbol for symbol in active
+                        if {"Quote", "Trade"}.issubset(actual_map.get(symbol, set()))
+                    }
+                    active.update(
+                        symbol for symbol, types in actual_map.items()
+                        if {"Quote", "Trade"}.issubset(types)
+                    )
+                    self._subscribed_symbols = sorted(active)
+                except Exception:
+                    log.exception("STEP=WEBSOCKET_SUBSCRIBE_VERIFY STATUS=FAILED")
+                    # Do not discard a previously confirmed local state because
+                    # a transient verification request failed.
+                    can_verify = False
+
             missing = [symbol for symbol in desired if symbol not in active]
             if not missing:
                 return []
 
-            # Submit all new symbols in one SDK subscribe call. Only record them
-            # after the SDK accepts the request, so the watchdog can retry errors.
+            # Submit every missing symbol together through the one persistent
+            # QuoteContext. Do not mark it active until provider state confirms
+            # both requested push types.
             try:
                 self._ctx.subscribe(missing, self._sub_types)
             except Exception:
@@ -252,47 +283,50 @@ class LongbridgeRealtimeClient:
                     len(missing), ",".join(self._denormalize_symbol(s) for s in missing),
                 )
                 raise
-            self._subscribed_symbols = sorted(active | set(missing))
             log.info(
                 "STEP=WEBSOCKET_SUBSCRIBE STATUS=REQUEST_SENT requested=%s total_local=%s push_types=Quote,Trade symbols=%s",
-                len(missing), len(self._subscribed_symbols),
+                len(missing), len(active | set(missing)),
                 ",".join(self._denormalize_symbol(s) for s in missing),
             )
-            # Verify the SDK/server subscription state once after each bulk
-            # subscribe call. The local symbol set alone is not proof that the
-            # provider activated both push types.
-            if hasattr(self._ctx, "subscriptions"):
+
+            if can_verify:
                 try:
-                    actual = self._ctx.subscriptions()
-                    actual_rows = []
-                    for item in actual or []:
+                    actual_map = {}
+                    for item in self._ctx.subscriptions() or []:
                         actual_symbol = str(_value(item, "symbol", "")).upper()
                         raw_types = _value(item, "sub_types", []) or []
-                        type_names = sorted(
+                        actual_map[actual_symbol] = {
                             str(getattr(value, "name", value)).split(".")[-1]
                             for value in raw_types
-                        )
-                        actual_rows.append((actual_symbol, type_names))
-                    required = {self._normalize_symbol(s) for s in missing}
-                    actual_map = {symbol: set(types) for symbol, types in actual_rows}
-                    missing_server = [
-                        symbol for symbol in sorted(required)
-                        if not {"Quote", "Trade"}.issubset(actual_map.get(symbol, set()))
-                    ]
-                    if missing_server:
+                        }
+                    confirmed = {
+                        symbol for symbol, types in actual_map.items()
+                        if {"Quote", "Trade"}.issubset(types)
+                    }
+                    unconfirmed = [symbol for symbol in missing if symbol not in confirmed]
+                    self._subscribed_symbols = sorted(active | (confirmed & set(desired)))
+                    if unconfirmed:
                         log.error(
-                            "STEP=WEBSOCKET_SUBSCRIBE_VERIFY STATUS=INCOMPLETE missing=%s actual=%s",
-                            ",".join(missing_server), actual_rows,
+                            "STEP=WEBSOCKET_SUBSCRIBE_VERIFY STATUS=INCOMPLETE retry_required=%s actual=%s",
+                            ",".join(unconfirmed), sorted((s, sorted(v)) for s, v in actual_map.items()),
                         )
                     else:
                         log.info(
                             "STEP=WEBSOCKET_SUBSCRIBE_VERIFY STATUS=CONFIRMED symbols=%s push_types=Quote,Trade",
-                            len(required),
+                            len(missing),
                         )
+                    # Return unconfirmed symbols too: caller refreshes the
+                    # watchdog baseline, and the next watchdog pass retries them.
+                    return [self._denormalize_symbol(s) for s in missing]
                 except Exception:
                     log.exception("STEP=WEBSOCKET_SUBSCRIBE_VERIFY STATUS=FAILED")
-            else:
-                log.warning("STEP=WEBSOCKET_SUBSCRIBE_VERIFY STATUS=UNAVAILABLE sdk_has_no_subscriptions_method")
+                    # Verification failed: don't claim the new subscriptions.
+                    self._subscribed_symbols = sorted(active)
+                    return [self._denormalize_symbol(s) for s in missing]
+
+            # Compatibility for older SDK builds without subscriptions().
+            log.warning("STEP=WEBSOCKET_SUBSCRIBE_VERIFY STATUS=UNAVAILABLE; using SDK subscribe acceptance")
+            self._subscribed_symbols = sorted(active | set(missing))
             return [self._denormalize_symbol(symbol) for symbol in missing]
 
     def subscribe(self, symbols: list[str]) -> list[str]:
