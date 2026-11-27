@@ -1,4 +1,5 @@
 """General Market Health Filter based on Minervini's market timing principles."""
+import numpy as np
 import pandas as pd
 
 
@@ -57,8 +58,8 @@ def check_market_regime(
         len(recent) < 26
         or not pd.notna(recent_close).all()
         or not pd.notna(recent_volume).all()
-        or not __import__("numpy").isfinite(recent_close).all()
-        or not __import__("numpy").isfinite(recent_volume).all()
+        or not np.isfinite(recent_close).all()
+        or not np.isfinite(recent_volume).all()
         or (recent_close <= 0).any()
         or (recent_volume < 0).any()
     ):
