@@ -207,7 +207,7 @@ class LongbridgeRealtimeClient:
             self._sub_types = [SubType.Quote, SubType.Trade]
             self._subscribed_symbols = []
             log.info(
-                "STEP=WEBSOCKET_CONNECT STATUS=SUCCESS overnight_enabled=%s",
+                "STEP=WEBSOCKET_CONNECT STATUS=SUCCESS overnight_enabled=%s push_types=Quote,Trade",
                 enable_overnight,
             )
 
@@ -244,7 +244,7 @@ class LongbridgeRealtimeClient:
                 raise
             self._subscribed_symbols = sorted(active | set(missing))
             log.info(
-                "STEP=WEBSOCKET_SUBSCRIBE STATUS=ACCEPTED requested=%s total_subscribed=%s symbols=%s",
+                "STEP=WEBSOCKET_SUBSCRIBE STATUS=ACCEPTED requested=%s total_subscribed=%s push_types=Quote,Trade symbols=%s",
                 len(missing), len(self._subscribed_symbols),
                 ",".join(self._denormalize_symbol(s) for s in missing),
             )
