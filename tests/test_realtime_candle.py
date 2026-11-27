@@ -45,6 +45,8 @@ class RealtimeCandleTests(unittest.TestCase):
         controller._last_ws_reconnect_monotonic = time.monotonic() - 1000.0
         controller._latest_quote_sequence = {}
         controller._latest_quote_timestamp = {}
+        controller._live_volume_sequence = {"ABBV": 999}
+        controller._live_volume_timestamp = {"ABBV": 1795737600.0}
         controller._processed_quote_timestamp = {}
         controller._ws_seen_symbols = set()
         controller._ws_last_log_at = {}
@@ -56,6 +58,8 @@ class RealtimeCandleTests(unittest.TestCase):
                 controller._realtime_watchdog_loop()
 
         self.assertEqual(controller.lb_client.reconnect_calls, [["ABBV"]])
+        self.assertEqual(controller._live_volume_sequence, {})
+        self.assertEqual(controller._live_volume_timestamp, {})
 
     def test_websocket_callback_publishes_fractional_price_immediately(self):
         controller = ScanController.__new__(ScanController)
