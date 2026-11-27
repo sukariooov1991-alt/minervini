@@ -6,7 +6,11 @@ import pandas as pd
 
 from analysis.frame_utils import ordered_frame
 
-def check_trend_template(df: pd.DataFrame, rs_rating: float) -> dict:
+def check_trend_template(
+    df: pd.DataFrame,
+    rs_rating: float,
+    current_price: float | None = None,
+) -> dict:
     required = {"close", "high", "low"}
     result = {
         "passed": False,
@@ -31,11 +35,21 @@ def check_trend_template(df: pd.DataFrame, rs_rating: float) -> dict:
         return result
 
     close = df_clean["close"]
-    sma50 = close.rolling(50).mean()
-    sma150 = close.rolling(150).mean()
-    sma200 = close.rolling(200).mean()
+    # Realtime callers pass the evolving session candle and its current price.
+    # Moving averages must remain based on completed daily closes; the evolving
+    # candle is retained only for the rolling 52-week high/low context.
+    average_close = close.iloc[:-1] if current_price is not None else close
+    if len(average_close) < 221:
+        result["failed"] = ["requires at least 221 completed daily closes for realtime averages"]
+        return result
+    sma50 = average_close.rolling(50).mean()
+    sma150 = average_close.rolling(150).mean()
+    sma200 = average_close.rolling(200).mean()
 
-    price = float(close.iloc[-1])
+    try:
+        price = float(current_price) if current_price is not None else float(close.iloc[-1])
+    except (TypeError, ValueError):
+        price = float("nan")
     ma50 = float(sma50.iloc[-1])
     ma150 = float(sma150.iloc[-1])
     ma200 = float(sma200.iloc[-1])
