@@ -782,7 +782,12 @@ class ScanController:
         sym = str(quote.get("symbol", "")).upper().strip()
         if not sym:
             return
-        raw_price = quote.get("last_done")
+        # Only executed Trade pushes are authoritative for the displayed live
+        # price. Quote.last_done is a quote snapshot and must never compete with
+        # or overwrite the Trade tape price.
+        incoming_source = str(quote.get("source") or "").lower()
+        is_trade_tick = incoming_source == "longbridge_trade_websocket"
+        raw_price = quote.get("last_done") if is_trade_tick else None
         with self._lock:
             existing_card = self._cards.get(sym)
             if existing_card is None:
@@ -884,6 +889,9 @@ class ScanController:
             # publication. Concurrent SDK callbacks therefore enter the
             # per-symbol FIFO in exactly the order their card updates are applied.
             queued_quote = dict(quote)
+            # Strip Quote.last_done before background processing as well; Quote
+            # pushes may still carry volume updates, but are never price ticks.
+            queued_quote["last_done"] = raw_price
             queued_quote["_received_at"] = received_at
             queued_quote["_is_price_tick"] = is_price_tick
             self._realtime_pending.append(queued_quote)
