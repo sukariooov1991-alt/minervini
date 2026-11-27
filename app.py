@@ -289,7 +289,7 @@ class ScanController:
 
     def _daily_history_scheduler_loop(self) -> None:
         """Refresh durable research caches and the rolling 300-bar OHLCV universe."""
-        last_research_refresh = 0.0
+        last_research_refresh = time.monotonic() - 4 * 3600
         while not self._daily_history_stop.is_set():
             try:
                 now_et = MarketTime.now()
