@@ -1,8 +1,6 @@
 import threading
 import unittest
 from collections import deque
-from unittest.mock import patch
-
 from app import ScanController
 
 
@@ -34,7 +32,7 @@ class RealtimePriceSourceTests(unittest.TestCase):
         })
 
         self.assertEqual(controller._cards["AAPL"]["current_price"], 100.0)
-        self.assertEqual(controller._cards["AAPL"]["price_source"], None)
+        self.assertEqual(controller._cards["AAPL"]["price_source"], "Stored daily data")
         self.assertIsNone(controller._realtime_pending[-1]["last_done"])
         self.assertFalse(controller._realtime_pending[-1]["_is_price_tick"])
 
