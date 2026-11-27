@@ -611,7 +611,6 @@ class ScanController:
             symbol_stale_after = 180 if session_label == "مفتوح" else 600
             now_mono = time.monotonic()
             with self._lock:
-                scan_running = self._running
                 symbols = sorted(self._cards)
                 last_push = self.lb_client.last_message_monotonic
                 last_subscription = self._last_ws_subscription_monotonic
@@ -1660,10 +1659,7 @@ class ScanController:
             and plan.get("status") == "جاهز"
             and plan.get("within_entry_range") is True
         )
-        if not watchlist_eligible:
-            card_status = "شروط الاتجاه أو الأساسيات لم تعد مستوفاة — بانتظار الفحص"
-            card_stage = "المرحلة 1: إعادة تقييم أهلية السهم"
-        elif not setup_passed:
+        if not setup_passed:
             card_status = "انتظار — مراقبة VCP أو Pullback"
             card_stage = "المرحلة 1: سهم مؤهل للمراقبة"
         elif not entry_confirmation_passed:
