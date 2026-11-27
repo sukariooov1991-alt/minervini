@@ -649,7 +649,7 @@ class DataProvider:
 
             prior_target = d_ts - pd.DateOffset(months=12)
             prior_e, prior_r = _find_nearest_prior_period(
-                eps, rev, prior_target, max_window_days=60
+                eps, rev, prior_target, max_window_days=14
             )
 
             def growth(cur, prior):
