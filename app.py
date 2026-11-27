@@ -728,15 +728,17 @@ class ScanController:
             }
             previous_sequence = self._latest_quote_sequence.get(sym)
             previous_timestamp = self._latest_quote_timestamp.get(sym)
-            if sequence is not None and previous_sequence is not None and sequence <= previous_sequence:
-                return
+            # Quote and Trade pushes share the same socket but may carry
+            # independent sequence counters. Always enforce provider timestamp
+            # ordering across both streams; compare sequence only for quote pushes.
             if (
-                sequence is None
-                and quote_order is not None
+                quote_order is not None
                 and previous_timestamp is not None
                 and quote_order < previous_timestamp
             ):
-                log.debug("Ignoring out-of-order sequence-less quote for %s", sym)
+                log.debug("Ignoring out-of-order realtime tick for %s", sym)
+                return
+            if sequence is not None and previous_sequence is not None and sequence <= previous_sequence:
                 return
             if sequence is not None:
                 self._latest_quote_sequence[sym] = sequence
@@ -990,8 +992,7 @@ class ScanController:
             self._ws_seen_symbols.add(sym)
             previous_processed_timestamp = self._processed_quote_timestamp.get(sym)
             if (
-                sequence is None
-                and quote_order is not None
+                quote_order is not None
                 and previous_processed_timestamp is not None
                 and quote_order < previous_processed_timestamp
             ):
