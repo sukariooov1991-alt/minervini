@@ -1132,25 +1132,24 @@ class ScanController:
                         and plan.get("status") == "جاهز"
                         and plan.get("within_entry_range") is True
                     )
-                    latest_meta = self._live_quote_metadata.get(sym, {})
                     card.update({
                         "current_price": round(price, 4),
                         "price_source": "Longbridge WebSocket",
                         "price_session": (
                             quote.get("trade_session")
-                            or latest_meta.get("price_session")
+                            or card.get("price_session")
                             or card.get("price_session")
                             or "regular"
                         ),
                         "price_timestamp": (
                             _quote_timestamp_iso(quote.get("timestamp"))
-                            or latest_meta.get("price_timestamp")
+                            or card.get("price_timestamp")
                             or card.get("price_timestamp")
                         ),
                         "price_tag": (
                             quote.get("tag")
                             if quote.get("tag") is not None
-                            else latest_meta.get("price_tag")
+                            else card.get("price_tag")
                         ),
                         "price_received_at": received_at,
                         "pivot_price": plan["pivot_price"],
@@ -1243,22 +1242,21 @@ class ScanController:
                         card["price_source"] = (
                             "Longbridge WebSocket"
                         )
-                        latest_meta = self._live_quote_metadata.get(sym, {})
-                        card["price_session"] = (
+                            card["price_session"] = (
                             quote.get("trade_session")
-                            or latest_meta.get("price_session")
+                            or card.get("price_session")
                             or card.get("price_session")
                             or "regular"
                         )
                         card["price_timestamp"] = (
                             _quote_timestamp_iso(quote.get("timestamp"))
-                            or latest_meta.get("price_timestamp")
+                            or card.get("price_timestamp")
                             or card.get("price_timestamp")
                         )
                         card["price_tag"] = (
                             quote.get("tag")
                             if quote.get("tag") is not None
-                            else latest_meta.get("price_tag")
+                            else card.get("price_tag")
                         )
                         card["price_received_at"] = received_at
                         card["updated_at"] = datetime.now(timezone.utc).isoformat()
