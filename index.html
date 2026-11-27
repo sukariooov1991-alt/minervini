@@ -306,6 +306,11 @@
       if (el) { el.classList.toggle('is-open', openCards.has(sym)); el.querySelector('.card-header').setAttribute('aria-expanded', String(openCards.has(sym))); }
     }
 
+    function setTextIfChanged(element, value) {
+      const next = value == null ? '' : String(value);
+      if (element.textContent !== next) element.textContent = next;
+    }
+
     function ensureCardElement(container, sym) {
       let el = container.querySelector(`[data-symbol="${CSS.escape(sym)}"]`);
       if (!el) {
@@ -357,7 +362,7 @@
         el.classList.toggle('is-open', openCards.has(c.symbol));
         el.querySelector('.card-header').setAttribute('aria-expanded', String(openCards.has(c.symbol)));
 
-        el.querySelector('.symbol').textContent = c.symbol;
+        setTextIfChanged(el.querySelector('.symbol'), c.symbol);
         const parseQuoteDate = (value) => {
           if (value === null || value === undefined || value === '') return null;
           const raw = String(value);
@@ -380,50 +385,66 @@
           : null;
         const freshnessLimit = c.price_session === 'regular' ? 300 : 900;
         const isStaleQuote = quoteAgeSeconds !== null && quoteAgeSeconds > freshnessLimit;
-        el.querySelector('.price-text').textContent = c.current_price == null ? '—' : String(c.current_price);
+        setTextIfChanged(el.querySelector('.price-text'), c.current_price == null ? '—' : c.current_price);
         const isLivePrice = c.price_source === 'Longbridge WebSocket';
         const sourceLabel = isLivePrice
           ? (isStaleQuote ? 'آخر سعر قديم من Longbridge' : 'آخر سعر من Longbridge')
           : 'إغلاق يومي محفوظ';
         const tagLabel = Number(c.price_tag) === 1 ? 'بيانات معدّلة بعد الإغلاق' : '';
-        el.querySelector('.price-sub').textContent = [
+        setTextIfChanged(el.querySelector('.price-sub'), [
           sourceLabel,
           isLivePrice ? (c.price_session || 'regular') : '',
           priceUpdated ? (quoteDate ? 'وقت السعر ' : 'وقت الاستلام ') + priceUpdated : '',
           receivedUpdated ? 'وصل ' + receivedUpdated : '',
           tagLabel
-        ].filter(Boolean).join(' • ');
+        ].filter(Boolean).join(' • '));
         const status = el.querySelector('.status-badge');
-        status.textContent = c.entry_ready ? 'جاهز' : (c.setup_passed && !c.entry_confirmation_passed ? 'انتظار التأكيد' : (c.setup_passed && !c.market_favorable ? 'السوق غير مناسب' : 'مراقبة'));
+        setTextIfChanged(status, c.entry_ready ? 'جاهز' : (c.setup_passed && !c.entry_confirmation_passed ? 'انتظار التأكيد' : (c.setup_passed && !c.market_favorable ? 'السوق غير مناسب' : 'مراقبة')));
         status.classList.toggle('ready', Boolean(c.entry_ready));
-        el.querySelector('.stage-badge').textContent = String(c.stage || 'تجميع بانتظار النموذج').replace(/^المرحلة\s*\d+\s*:\s*/, '');
+        setTextIfChanged(el.querySelector('.stage-badge'), String(c.stage || 'تجميع بانتظار النموذج').replace(/^المرحلة\s*\d+\s*:\s*/, ''));
         const entries = Array.isArray(c.entry_zones) ? c.entry_zones : [];
         const targets = Array.isArray(c.targets) ? c.targets : [];
         const rows = el.querySelector('.levels-rows');
-        rows.replaceChildren();
-        for (let i = 0; i < 5; i++) {
-          const tr = document.createElement('tr');
-          const index = document.createElement('td'); index.className = 'row-index'; index.textContent = String(i + 1);
-          const entry = document.createElement('td'); entry.className = 'entry-cell'; entry.textContent = entries[i] == null ? '—' : String(entries[i]);
-          const target = document.createElement('td'); target.className = 'target-cell'; target.textContent = targets[i] == null ? '—' : String(targets[i]);
-          tr.append(index, entry, target);
-          rows.appendChild(tr);
+        const levelsSignature = JSON.stringify([
+          entries, targets, c.shared_stop_loss, c.levels_status
+        ]);
+        if (rows.dataset.signature !== levelsSignature) {
+          const fragment = document.createDocumentFragment();
+          for (let i = 0; i < 5; i++) {
+            const tr = document.createElement('tr');
+            const index = document.createElement('td'); index.className = 'row-index'; index.textContent = String(i + 1);
+            const entry = document.createElement('td'); entry.className = 'entry-cell'; entry.textContent = entries[i] == null ? '—' : String(entries[i]);
+            const target = document.createElement('td'); target.className = 'target-cell'; target.textContent = targets[i] == null ? '—' : String(targets[i]);
+            tr.append(index, entry, target);
+            fragment.appendChild(tr);
+          }
+          rows.replaceChildren(fragment);
+          rows.dataset.signature = levelsSignature;
         }
         const stopValue = el.querySelector('.stop-loss-value');
-        stopValue.textContent = c.shared_stop_loss == null ? (c.levels_status || 'غير متوفر') : String(c.shared_stop_loss);
-        el.querySelector('.smart-text').textContent = c.smart_reading || '';
+        setTextIfChanged(stopValue, c.shared_stop_loss == null ? (c.levels_status || 'غير متوفر') : c.shared_stop_loss);
+        setTextIfChanged(el.querySelector('.smart-text'), c.smart_reading || '');
 
         const filtersNode = el.querySelector('.filters-list');
-        filtersNode.replaceChildren();
-        for (const f of (Array.isArray(c.filters) ? c.filters : [])) {
-          const row = document.createElement('div');
-          row.className = 'filter-row';
-          const name = document.createElement('span');
-          name.textContent = f && f.name != null ? String(f.name) : '';
-          const status = document.createElement('span');
-          status.textContent = f && f.pending ? 'بانتظار النموذج' : (f && f.passed ? 'ناجح' : 'غير ناجح');
-          row.append(name, status);
-          filtersNode.appendChild(row);
+        const filters = Array.isArray(c.filters) ? c.filters : [];
+        const filtersSignature = JSON.stringify(filters.map(f => [
+          f && f.name != null ? String(f.name) : '',
+          f && f.pending ? 'بانتظار النموذج' : (f && f.passed ? 'ناجح' : 'غير ناجح')
+        ]));
+        if (filtersNode.dataset.signature !== filtersSignature) {
+          const fragment = document.createDocumentFragment();
+          for (const f of filters) {
+            const row = document.createElement('div');
+            row.className = 'filter-row';
+            const name = document.createElement('span');
+            name.textContent = f && f.name != null ? String(f.name) : '';
+            const status = document.createElement('span');
+            status.textContent = f && f.pending ? 'بانتظار النموذج' : (f && f.passed ? 'ناجح' : 'غير ناجح');
+            row.append(name, status);
+            fragment.appendChild(row);
+          }
+          filtersNode.replaceChildren(fragment);
+          filtersNode.dataset.signature = filtersSignature;
         }
       }
 
