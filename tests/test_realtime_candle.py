@@ -146,6 +146,8 @@ class RealtimeCandleTests(unittest.TestCase):
         self.assertIsNotNone(newer)
         self.assertLess(older, newer)
         self.assertIsNone(_quote_timestamp_order("not-a-timestamp"))
+        self.assertIsNone(_quote_timestamp_order(0))
+        self.assertIsNone(_quote_timestamp_order("0"))
         self.assertEqual(
             _quote_timestamp_iso("2026-11-26 00:59:30"),
             "2026-11-26T00:59:30+00:00",
