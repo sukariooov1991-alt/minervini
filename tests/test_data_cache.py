@@ -218,6 +218,36 @@ class PermanentDataCacheTests(unittest.TestCase):
         self.assertEqual(prior_eps, 1.25)
         self.assertEqual(prior_revenue, 100.0)
 
+    def test_fundamentals_refresh_ignores_pre_v2_cached_comparisons(self):
+        provider = DataProvider.__new__(DataProvider)
+        provider.symbol = "CACHEV2"
+        provider.storage = self.storage
+        provider.ticker = SimpleNamespace(
+            quarterly_financials=pd.DataFrame(
+                [
+                    [2.0, 1.25],
+                    [200.0, 100.0],
+                ],
+                index=["Diluted EPS", "Total Revenue"],
+                columns=[
+                    pd.Timestamp("2026-09-30"),
+                    pd.Timestamp("2025-09-23"),
+                ],
+            )
+        )
+        self.storage.set_cache("fundamentals:CACHEV2", [{
+            "period": "2026-09-30",
+            "eps_current": 2.0,
+            "eps_year_ago": 9.99,
+            "revenue_current": 200.0,
+            "revenue_year_ago": 999.0,
+        }])
+        with patch("data.data_provider._wait_for_yahoo_request_slot"):
+            frame = provider.get_fundamentals_dataframe()
+        self.assertEqual(float(frame.iloc[0]["eps_year_ago"]), 1.25)
+        self.assertEqual(float(frame.iloc[0]["revenue_year_ago"]), 100.0)
+        self.assertIsNotNone(self.storage.get_cache("fundamentals:v2:CACHEV2"))
+
     def test_fundamentals_fetch_does_not_match_a_quarter_59_days_away(self):
         provider = DataProvider.__new__(DataProvider)
         provider.symbol = "FISCAL"
