@@ -201,7 +201,7 @@ class LongbridgeRealtimeClient:
             # The SDK exposes the provider's active subscription list. Reconcile
             # against it before deciding that a symbol is already subscribed;
             # a successful local subscribe() call is not proof that the server
-            # activated both Quote pushes.
+            # activated the Quote push.
             can_verify = callable(getattr(self._ctx, "subscriptions", None))
             actual_map: dict[str, set[str]] = {}
             if can_verify:
