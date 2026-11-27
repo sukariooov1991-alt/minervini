@@ -21,13 +21,11 @@ class FakeQuoteContext:
 
 
 class LongbridgeQuoteTests(unittest.TestCase):
-    def test_installed_sdk_exposes_quote_and_trade_push_apis(self):
+    def test_installed_sdk_exposes_quote_push_api(self):
         from longbridge.openapi import QuoteContext, SubType
 
         self.assertTrue(callable(getattr(QuoteContext, "set_on_quote", None)))
-        self.assertTrue(callable(getattr(QuoteContext, "set_on_trades", None)))
         self.assertIsNotNone(getattr(SubType, "Quote", None))
-        self.assertIsNotNone(getattr(SubType, "Trade", None))
 
     def test_websocket_push_preserves_sequence_and_session(self):
         captured = {}
@@ -39,7 +37,6 @@ class LongbridgeQuoteTests(unittest.TestCase):
 
         class FakeSubType:
             Quote = object()
-            Trade = object()
 
         class FakeContext:
             def __init__(self, config):
@@ -47,8 +44,6 @@ class LongbridgeQuoteTests(unittest.TestCase):
 
             def set_on_quote(self, callback):
                 captured["callback"] = callback
-            def set_on_trades(self, callback):
-                captured["trades_callback"] = callback
 
         fake_module = ModuleType("longbridge.openapi")
         fake_module.Config = FakeConfig
@@ -85,15 +80,12 @@ class LongbridgeQuoteTests(unittest.TestCase):
 
         class FakeSubType:
             Quote = object()
-            Trade = object()
 
         class FakeContext:
             def __init__(self, config):
                 pass
             def set_on_quote(self, callback):
                 captured["callback"] = callback
-            def set_on_trades(self, callback):
-                captured["trades_callback"] = callback
 
         fake_module = ModuleType("longbridge.openapi")
         fake_module.Config = FakeConfig
@@ -136,7 +128,7 @@ class LongbridgeQuoteTests(unittest.TestCase):
         new_context = FakeContext()
         client._ctx = old_context
         client._subscribed_symbols = ["AAPL.US"]
-        client._sub_types = [object(), object()]
+        client._sub_types = [object()]
 
         def connect():
             client._ctx = new_context
@@ -149,107 +141,6 @@ class LongbridgeQuoteTests(unittest.TestCase):
         self.assertEqual(restored, ["AAPL", "MSFT"])
         self.assertEqual(new_context.subscribed, ["AAPL.US", "MSFT.US"])
 
-    def test_trade_push_forwards_each_executed_price_tick(self):
-        captured = {}
-
-        class FakeConfig:
-            @staticmethod
-            def from_apikey(*args, **kwargs):
-                return object()
-
-        class FakeSubType:
-            Quote = object()
-            Trade = object()
-
-        class FakeContext:
-            def __init__(self, config):
-                pass
-            def set_on_quote(self, callback):
-                captured["quote_callback"] = callback
-            def set_on_trades(self, callback):
-                captured["trade_callback"] = callback
-            def subscribe(self, symbols, sub_types):
-                captured["subscription"] = (list(symbols), list(sub_types))
-
-        fake_module = ModuleType("longbridge.openapi")
-        fake_module.Config = FakeConfig
-        fake_module.QuoteContext = FakeContext
-        fake_module.SubType = FakeSubType
-        client = LongbridgeRealtimeClient(
-            app_key="key", app_secret="secret", access_token="token",
-            on_quote=lambda payload: captured.setdefault("quotes", []).append(payload),
-        )
-        fake_package = ModuleType("longbridge")
-        fake_package.__path__ = []
-        with patch.dict(sys.modules, {"longbridge": fake_package, "longbridge.openapi": fake_module}):
-            client.connect()
-
-        self.assertEqual(client._sub_types, [FakeSubType.Quote, FakeSubType.Trade])
-        self.assertEqual(client.subscribe(["AAPL"]), ["AAPL"])
-        self.assertEqual(
-            captured["subscription"],
-            (["AAPL.US"], [FakeSubType.Quote, FakeSubType.Trade]),
-        )
-
-        captured["trade_callback"](
-            "AAPL.US",
-            SimpleNamespace(trades=[
-                SimpleNamespace(price="190.25", volume=10, timestamp=1795683602, trade_session=3),
-                SimpleNamespace(price="190.30", volume=5, timestamp=1795683603, trade_session=3),
-            ]),
-        )
-        self.assertEqual([q["last_done"] for q in captured["quotes"]], [190.25, 190.30])
-        self.assertEqual([q["timestamp"] for q in captured["quotes"]], [1795683602, 1795683603])
-        self.assertTrue(all(q["sequence"] is None for q in captured["quotes"]))
-        self.assertEqual(captured["quotes"][0]["trade_session"], "overnight")
-        self.assertEqual(captured["quotes"][0]["source"], "longbridge_trade_websocket")
-
-    def test_trade_push_accepts_a_singular_trade_message(self):
-        captured = {}
-
-        class FakeConfig:
-            @staticmethod
-            def from_apikey(*args, **kwargs):
-                return object()
-
-        class FakeSubType:
-            Quote = object()
-            Trade = object()
-
-        class FakeContext:
-            def __init__(self, config):
-                pass
-            def set_on_quote(self, callback):
-                captured["quote_callback"] = callback
-            def set_on_trades(self, callback):
-                captured["trade_callback"] = callback
-
-        fake_module = ModuleType("longbridge.openapi")
-        fake_module.Config = FakeConfig
-        fake_module.QuoteContext = FakeContext
-        fake_module.SubType = FakeSubType
-        client = LongbridgeRealtimeClient(
-            app_key="key", app_secret="secret", access_token="token",
-            on_quote=lambda payload: captured.setdefault("quotes", []).append(payload),
-        )
-        fake_package = ModuleType("longbridge")
-        fake_package.__path__ = []
-        with patch.dict(sys.modules, {"longbridge": fake_package, "longbridge.openapi": fake_module}):
-            client.connect()
-
-        captured["trade_callback"](
-            "AAPL.US",
-            SimpleNamespace(
-                trades=[],
-                trade=SimpleNamespace(
-                    price="190.75", volume=7, timestamp=1795683604, trade_session=0
-                ),
-            ),
-        )
-        self.assertEqual(len(captured["quotes"]), 1)
-        self.assertEqual(captured["quotes"][0]["last_done"], 190.75)
-        self.assertEqual(captured["quotes"][0]["current_volume"], 7)
-
     def test_websocket_push_without_last_done_is_not_a_price_tick(self):
         captured = {}
 
@@ -260,7 +151,6 @@ class LongbridgeQuoteTests(unittest.TestCase):
 
         class FakeSubType:
             Quote = object()
-            Trade = object()
 
         class FakeContext:
             def __init__(self, config):
@@ -268,8 +158,6 @@ class LongbridgeQuoteTests(unittest.TestCase):
 
             def set_on_quote(self, callback):
                 captured["callback"] = callback
-            def set_on_trades(self, callback):
-                captured["trades_callback"] = callback
 
         fake_module = ModuleType("longbridge.openapi")
         fake_module.Config = FakeConfig
@@ -289,13 +177,12 @@ class LongbridgeQuoteTests(unittest.TestCase):
 
     def test_subscription_sync_is_idempotent_and_adds_only_missing_symbols(self):
         quote_type = SimpleNamespace(name="Quote")
-        trade_type = SimpleNamespace(name="Trade")
         ctx = FakeQuoteContext([
-            SimpleNamespace(symbol="AAPL.US", sub_types=[quote_type, trade_type])
+            SimpleNamespace(symbol="AAPL.US", sub_types=[quote_type])
         ])
         client = LongbridgeRealtimeClient()
         client._ctx = ctx
-        client._sub_types = [quote_type, trade_type]
+        client._sub_types = [quote_type]
         client._subscribed_symbols = ["AAPL.US"]
 
         added = client.ensure_subscriptions(["AAPL", "MSFT"])
@@ -309,7 +196,6 @@ class LongbridgeQuoteTests(unittest.TestCase):
 
     def test_transient_subscription_verification_error_is_retried_not_trusted(self):
         quote_type = SimpleNamespace(name="Quote")
-        trade_type = SimpleNamespace(name="Trade")
 
         class FlakyVerificationContext(FakeQuoteContext):
             def __init__(self):
@@ -325,7 +211,7 @@ class LongbridgeQuoteTests(unittest.TestCase):
         ctx = FlakyVerificationContext()
         client = LongbridgeRealtimeClient()
         client._ctx = ctx
-        client._sub_types = [quote_type, trade_type]
+        client._sub_types = [quote_type]
 
         first = client.ensure_subscriptions(["AAPL"])
         self.assertEqual(first, ["AAPL"])
@@ -338,7 +224,6 @@ class LongbridgeQuoteTests(unittest.TestCase):
 
     def test_provider_unconfirmed_subscription_is_not_marked_active_and_is_retried(self):
         quote_type = SimpleNamespace(name="Quote")
-        trade_type = SimpleNamespace(name="Trade")
 
         class DelayedQuoteContext(FakeQuoteContext):
             def __init__(self):
@@ -353,7 +238,7 @@ class LongbridgeQuoteTests(unittest.TestCase):
         ctx = DelayedQuoteContext()
         client = LongbridgeRealtimeClient()
         client._ctx = ctx
-        client._sub_types = [quote_type, trade_type]
+        client._sub_types = [quote_type]
 
         first = client.ensure_subscriptions(["AAPL"])
         self.assertEqual(first, ["AAPL"])
@@ -375,15 +260,12 @@ class LongbridgeQuoteTests(unittest.TestCase):
 
         class FakeSubType:
             Quote = object()
-            Trade = object()
 
         class FakeContext:
             def __init__(self, config):
                 pass
             def set_on_quote(self, callback):
                 captured["callback"] = callback
-            def set_on_trades(self, callback):
-                captured["trades_callback"] = callback
 
         fake_module = ModuleType("longbridge.openapi")
         fake_module.Config = FakeConfig
@@ -402,30 +284,23 @@ class LongbridgeQuoteTests(unittest.TestCase):
             "AAPL.US",
             SimpleNamespace(last_done=None, volume=0, current_volume=10),
         )
-        captured["trades_callback"](
-            "MSFT.US",
-            SimpleNamespace(trades=[]),
-        )
         activity = client.symbol_last_message_monotonic
         self.assertIn("AAPL", activity)
-        self.assertIn("MSFT", activity)
         self.assertGreater(activity["AAPL"], 0)
-        self.assertGreater(activity["MSFT"], 0)
 
-    def test_resubscribe_verifies_quote_and_trade_with_provider(self):
+    def test_resubscribe_verifies_quote_with_provider(self):
         quote_type = SimpleNamespace(name="Quote")
-        trade_type = SimpleNamespace(name="Trade")
 
         class ResubscribeContext(FakeQuoteContext):
             def unsubscribe(self, symbols, sub_types):
                 self.active = [item for item in self.active if item.symbol not in symbols]
 
         ctx = ResubscribeContext([
-            SimpleNamespace(symbol="AAPL.US", sub_types=[quote_type, trade_type])
+            SimpleNamespace(symbol="AAPL.US", sub_types=[quote_type])
         ])
         client = LongbridgeRealtimeClient()
         client._ctx = ctx
-        client._sub_types = [quote_type, trade_type]
+        client._sub_types = [quote_type]
         client._subscribed_symbols = ["AAPL.US"]
 
         result = client.resubscribe(["AAPL"])

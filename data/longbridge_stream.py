@@ -170,84 +170,22 @@ class LongbridgeRealtimeClient:
                         payload["symbol"], payload["last_done"],
                     )
 
-            def _handle_trades(symbol: str, event: Any) -> None:
-                # Trade pushes carry each executed trade, including overnight.
-                # Quote pushes alone are incremental quote-field changes and
-                # are not a guaranteed per-trade tape.
-                received_mono = time.monotonic()
-                self._last_message_monotonic = received_mono
-                with self._context_lock:
-                    self._symbol_last_message_monotonic[self._denormalize_symbol(symbol)] = received_mono
-                if self.on_quote is None:
-                    return
-                trades = _value(event, "trades")
-                if not trades:
-                    trades = _value(event, "trade")
-                if trades is None:
-                    trade_items = []
-                elif isinstance(trades, (list, tuple)):
-                    trade_items = list(trades)
-                else:
-                    # SDK/protobuf variants may expose either a repeated
-                    # trades field or one singular trade message.
-                    try:
-                        trade_items = list(trades)
-                    except TypeError:
-                        trade_items = [trades] if _value(trades, "price") is not None else []
-                log.info(
-                    "STEP=WEBSOCKET_TRADE_PUSH STATUS=RECEIVED symbol=%s trades=%s",
-                    self._denormalize_symbol(symbol), len(trade_items),
-                )
-                for trade in trade_items:
-                    price = _valid_price(_value(trade, "price"))
-                    if price is None:
-                        continue
-                    trade_volume = _value(trade, "volume")
-                    payload = {
-                        "symbol": self._denormalize_symbol(symbol),
-                        "raw_symbol": symbol,
-                        "last_done": price,
-                        # Quote and trade sequence spaces must not be compared.
-                        # Timestamp ordering is shared by both push streams.
-                        "sequence": None,
-                        "timestamp": _value(trade, "timestamp"),
-                        "volume": None,
-                        "turnover": None,
-                        "current_volume": trade_volume,
-                        "current_turnover": None,
-                        "trade_session": _session_label(
-                            _value(trade, "trade_session")
-                            if _value(trade, "trade_session") is not None
-                            else _value(event, "trade_session")
-                        ),
-                        "trade_status": None,
-                        "tag": 0,
-                        "source": "longbridge_trade_websocket",
-                    }
-                    try:
-                        self.on_quote(payload)
-                    except Exception:
-                        log.exception(
-                            "STEP=WEBSOCKET_TRADE_CALLBACK STATUS=FAILED symbol=%s price=%s",
-                            payload["symbol"], price,
-                        )
 
             ctx.set_on_quote(_handle_quote)
-            ctx.set_on_trades(_handle_trades)
             self._ctx = ctx
-            self._sub_types = [SubType.Quote, SubType.Trade]
+            self._sub_types = [SubType.Quote]
             self._subscribed_symbols = []
             log.info(
-                "STEP=WEBSOCKET_CONNECT STATUS=SUCCESS overnight_enabled=%s push_types=Quote,Trade",
+                "STEP=WEBSOCKET_CONNECT STATUS=SUCCESS overnight_enabled=%s push_types=Quote",
                 enable_overnight,
             )
 
     def ensure_subscriptions(self, symbols: list[str]) -> list[str]:
         """Idempotently subscribe new symbols through the single persistent context.
 
-        Reconcile the cached local set with provider-confirmed Quote and Trade
+        Reconcile the cached local set with provider-confirmed Quote
         subscriptions once per bulk sync. Never treat a local subscribe request
-        as active until the provider confirms both push types when verification
+        as active until the provider confirms the Quote push type when verification
         is available.
         """
         with self._context_lock:
@@ -263,7 +201,7 @@ class LongbridgeRealtimeClient:
             # The SDK exposes the provider's active subscription list. Reconcile
             # against it before deciding that a symbol is already subscribed;
             # a successful local subscribe() call is not proof that the server
-            # activated both Quote and Trade pushes.
+            # activated the Quote push.
             can_verify = callable(getattr(self._ctx, "subscriptions", None))
             actual_map: dict[str, set[str]] = {}
             if can_verify:
@@ -277,11 +215,11 @@ class LongbridgeRealtimeClient:
                         }
                     active = {
                         symbol for symbol in active
-                        if {"Quote", "Trade"}.issubset(actual_map.get(symbol, set()))
+                        if {"Quote"}.issubset(actual_map.get(symbol, set()))
                     }
                     active.update(
                         symbol for symbol, types in actual_map.items()
-                        if {"Quote", "Trade"}.issubset(types)
+                        if {"Quote"}.issubset(types)
                     )
                     self._subscribed_symbols = sorted(active)
                 except Exception:
@@ -297,7 +235,7 @@ class LongbridgeRealtimeClient:
 
             # Submit every missing symbol together through the one persistent
             # QuoteContext. Do not mark it active until provider state confirms
-            # both requested push types.
+            # the requested Quote push type.
             try:
                 self._ctx.subscribe(missing, self._sub_types)
             except Exception:
@@ -307,7 +245,7 @@ class LongbridgeRealtimeClient:
                 )
                 raise
             log.info(
-                "STEP=WEBSOCKET_SUBSCRIBE STATUS=REQUEST_SENT requested=%s total_local=%s push_types=Quote,Trade symbols=%s",
+                "STEP=WEBSOCKET_SUBSCRIBE STATUS=REQUEST_SENT requested=%s total_local=%s push_types=Quote symbols=%s",
                 len(missing), len(active | set(missing)),
                 ",".join(self._denormalize_symbol(s) for s in missing),
             )
@@ -324,7 +262,7 @@ class LongbridgeRealtimeClient:
                         }
                     confirmed = {
                         symbol for symbol, types in actual_map.items()
-                        if {"Quote", "Trade"}.issubset(types)
+                        if {"Quote"}.issubset(types)
                     }
                     unconfirmed = [symbol for symbol in missing if symbol not in confirmed]
                     self._subscribed_symbols = sorted(active | (confirmed & set(desired)))
@@ -335,7 +273,7 @@ class LongbridgeRealtimeClient:
                         )
                     else:
                         log.info(
-                            "STEP=WEBSOCKET_SUBSCRIBE_VERIFY STATUS=CONFIRMED symbols=%s push_types=Quote,Trade",
+                            "STEP=WEBSOCKET_SUBSCRIBE_VERIFY STATUS=CONFIRMED symbols=%s push_types=Quote",
                             len(missing),
                         )
                     # Return unconfirmed symbols too: caller refreshes the
@@ -358,7 +296,7 @@ class LongbridgeRealtimeClient:
         return self.ensure_subscriptions(symbols)
 
     def resubscribe(self, symbols: list[str]) -> dict[str, bool]:
-        """Force a provider unsubscribe/subscribe cycle and verify Quote+Trade."""
+        """Force a provider unsubscribe/subscribe cycle and verify Quote."""
         with self._context_lock:
             targets = sorted({
                 self._normalize_symbol(s) for s in symbols if s and str(s).strip()
@@ -377,7 +315,7 @@ class LongbridgeRealtimeClient:
                     log.exception("STEP=WEBSOCKET_RESUBSCRIBE STATUS=UNSUBSCRIBE_FAILED symbol=%s", display)
                 try:
                     self._ctx.subscribe([symbol], self._sub_types)
-                    log.warning("STEP=WEBSOCKET_RESUBSCRIBE STATUS=SUBSCRIBE_SENT symbol=%s push_types=Quote,Trade", display)
+                    log.warning("STEP=WEBSOCKET_RESUBSCRIBE STATUS=SUBSCRIBE_SENT symbol=%s push_types=Quote", display)
                     verified = False
                     subscriptions = getattr(self._ctx, "subscriptions", None)
                     if callable(subscriptions):
@@ -389,16 +327,16 @@ class LongbridgeRealtimeClient:
                                 str(getattr(value, "name", value)).split(".")[-1]
                                 for value in raw_types
                             }
-                        verified = {"Quote", "Trade"}.issubset(actual.get(symbol, set()))
+                        verified = {"Quote"}.issubset(actual.get(symbol, set()))
                     else:
                         log.error("STEP=WEBSOCKET_RESUBSCRIBE STATUS=UNVERIFIABLE symbol=%s reason=subscriptions_api_missing", display)
                     results[display] = verified
                     if verified:
                         self._subscribed_symbols = sorted(set(self._subscribed_symbols) | {symbol})
-                        log.info("STEP=WEBSOCKET_RESUBSCRIBE STATUS=CONFIRMED symbol=%s push_types=Quote,Trade", display)
+                        log.info("STEP=WEBSOCKET_RESUBSCRIBE STATUS=CONFIRMED symbol=%s push_types=Quote", display)
                     else:
                         self._subscribed_symbols = [item for item in self._subscribed_symbols if item != symbol]
-                        log.error("STEP=WEBSOCKET_RESUBSCRIBE STATUS=NOT_CONFIRMED symbol=%s expected=Quote,Trade", display)
+                        log.error("STEP=WEBSOCKET_RESUBSCRIBE STATUS=NOT_CONFIRMED symbol=%s expected=Quote", display)
                 except Exception:
                     results[display] = False
                     log.exception("STEP=WEBSOCKET_RESUBSCRIBE STATUS=FAILED symbol=%s", display)
