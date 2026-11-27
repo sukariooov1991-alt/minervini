@@ -663,11 +663,21 @@ class ScanController:
     def _on_realtime_quote(self, quote: dict[str, Any]) -> None:
         """Publish each tick immediately, then queue technical work off the SDK thread."""
         sym = str(quote.get("symbol", "")).upper().strip()
-        try:
-            price = float(quote.get("last_done"))
-        except (TypeError, ValueError):
+        if not sym:
             return
-        if not sym or not (price > 0 and math.isfinite(price)):
+        raw_price = quote.get("last_done")
+        if raw_price is None:
+            with self._lock:
+                cached_price = getattr(self, "_live_prices", {}).get(sym)
+            if cached_price is None:
+                return
+            price = float(cached_price)
+        else:
+            try:
+                price = float(raw_price)
+            except (TypeError, ValueError):
+                return
+        if not (price > 0 and math.isfinite(price)):
             return
 
         sequence = quote.get("sequence")
@@ -823,15 +833,102 @@ class ScanController:
             self._live_candles[symbol] = dict(bar)
             return dict(bar)
 
+    def _resolve_quote_volume(
+        self,
+        symbol: str,
+        quote: dict[str, Any],
+        stored_volume: Any,
+        quote_order: float | None,
+    ) -> float | None:
+        """Resolve cumulative volume or deduplicated incremental PushQuote volume."""
+        try:
+            base_volume = float(stored_volume or 0.0)
+        except (TypeError, ValueError):
+            base_volume = 0.0
+        live_bar = getattr(self, "_live_candles", {}).get(symbol) or {}
+        try:
+            base_volume = max(base_volume, float(live_bar.get("volume") or 0.0))
+        except (TypeError, ValueError):
+            pass
+        if not math.isfinite(base_volume) or base_volume < 0:
+            base_volume = 0.0
+
+        sequence = quote.get("sequence")
+        try:
+            sequence = int(sequence) if sequence is not None else None
+        except (TypeError, ValueError, OverflowError):
+            sequence = None
+
+        raw_total = quote.get("volume")
+        if raw_total is not None:
+            try:
+                total = float(raw_total)
+            except (TypeError, ValueError):
+                total = float("nan")
+            if math.isfinite(total) and total >= 0:
+                if sequence is not None:
+                    seen = getattr(self, "_live_volume_sequence", None)
+                    if seen is None:
+                        self._live_volume_sequence = {}
+                        seen = self._live_volume_sequence
+                    seen[symbol] = max(seen.get(symbol, sequence), sequence)
+                elif quote_order is not None:
+                    seen = getattr(self, "_live_volume_timestamp", None)
+                    if seen is None:
+                        self._live_volume_timestamp = {}
+                        seen = self._live_volume_timestamp
+                    seen[symbol] = max(seen.get(symbol, quote_order), quote_order)
+                return max(base_volume, total)
+
+        raw_delta = quote.get("current_volume")
+        if raw_delta is None:
+            return None
+        try:
+            delta = float(raw_delta)
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(delta) or delta < 0:
+            return None
+
+        if sequence is not None:
+            seen = getattr(self, "_live_volume_sequence", None)
+            if seen is None:
+                self._live_volume_sequence = {}
+                seen = self._live_volume_sequence
+            previous = seen.get(symbol)
+            if previous is not None and sequence <= previous:
+                return base_volume
+            seen[symbol] = sequence
+        else:
+            if quote_order is None:
+                return None
+            seen = getattr(self, "_live_volume_timestamp", None)
+            if seen is None:
+                self._live_volume_timestamp = {}
+                seen = self._live_volume_timestamp
+            previous = seen.get(symbol)
+            if previous is not None and quote_order <= previous:
+                return base_volume
+            seen[symbol] = quote_order
+
+        return base_volume + delta
+
     def _process_realtime_quote(self, quote: dict[str, Any]) -> None:
         sym = str(quote.get("symbol", "")).upper().strip()
         raw_price = quote.get("last_done")
-        if not sym or raw_price is None:
+        if not sym:
             return
-        try:
-            price = float(raw_price)
-        except (TypeError, ValueError):
-            return
+        if raw_price is None:
+            with self._lock:
+                cached_price = getattr(self, "_live_prices", {}).get(sym)
+            if cached_price is None:
+                return
+            price = float(cached_price)
+        else:
+            try:
+                price = float(raw_price)
+            except (TypeError, ValueError):
+                return
         if not (price > 0 and math.isfinite(price)):
             return
         received_at = str(
@@ -883,14 +980,6 @@ class ScanController:
                     live_df["date"] = pd.to_datetime(live_df["date"], errors="coerce")
                     today = MarketTime.state().trading_date
                     today_mask = live_df["date"].dt.date == today
-                    raw_volume = quote.get("volume")
-                    try:
-                        quote_volume = float(raw_volume) if raw_volume is not None else None
-                        if quote_volume is not None and (not math.isfinite(quote_volume) or quote_volume < 0):
-                            quote_volume = None
-                    except (TypeError, ValueError):
-                        quote_volume = None
-
                     if bool(today_mask.any()):
                         stored_bar = live_df.loc[today_mask].iloc[-1].to_dict()
                     else:
@@ -907,6 +996,9 @@ class ScanController:
                             "close": previous_close,
                             "volume": 0.0,
                         }
+                    quote_volume = self._resolve_quote_volume(
+                        sym, quote, stored_bar.get("volume"), quote_order
+                    )
                     live_bar = self._merge_live_candle(
                         sym, stored_bar, price, quote_volume, today
                     )
