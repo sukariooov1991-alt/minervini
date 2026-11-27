@@ -1086,7 +1086,6 @@ class ScanController:
             # this worker only recalculates technical state and trade levels.
 
             alert_card = None
-            card_to_persist = None
             try:
                 with self._lock:
                     card_snapshot = dict(self._cards.get(sym) or {})
@@ -1331,19 +1330,10 @@ class ScanController:
                     card["smart_reading"] = self._build_smart_reading_from_card(
                         card, live_df, live_candle_included=True
                     )
-                    # Persist a detached snapshot after releasing the shared
-                    # state lock so SQLite latency cannot block SDK callbacks
-                    # from publishing the next live price.
-                    card_to_persist = copy.deepcopy(card)
+                    self.storage.save_watchlist_card(card)
                     if not was_entry_ready and card["entry_ready"]:
                         alert_card = dict(card)
                     self._notify_state_changed_locked()
-
-                if card_to_persist is not None:
-                    try:
-                        self.storage.save_watchlist_card(card_to_persist)
-                    except Exception:
-                        log.exception("Failed to persist realtime card for %s", sym)
 
                 if alert_card is not None:
                     try:
@@ -1360,7 +1350,6 @@ class ScanController:
                         return
                     self._ws_connected = True
                     card = self._cards.get(sym)
-                    fallback_card_to_persist = None
                     if card is not None:
                         card["current_price"] = round(price, 4)
                         if is_price_tick:
@@ -1387,13 +1376,11 @@ class ScanController:
                         if range_note and range_note not in card.get("notes", []):
                             card["notes"] = [range_note] + list(card.get("notes") or [])
                         card["smart_reading"] = self._build_smart_reading_from_card(card)
-                        fallback_card_to_persist = copy.deepcopy(card)
+                        try:
+                            self.storage.save_watchlist_card(card)
+                        except Exception:
+                            log.exception("Failed to persist realtime fallback card for %s", sym)
                     self._notify_state_changed_locked()
-                if fallback_card_to_persist is not None:
-                    try:
-                        self.storage.save_watchlist_card(fallback_card_to_persist)
-                    except Exception:
-                        log.exception("Failed to persist realtime fallback card for %s", sym)
 
     def _build_smart_reading_from_card(
         self,
@@ -1761,22 +1748,15 @@ class ScanController:
                     except Exception:
                         log.exception("Candidate card construction failed for %s", row.get("symbol"))
                 if not qualified: return
-                cards_to_persist = []
                 with self._state_cv:
                     for card in qualified:
                         symbol = str(card["symbol"]).upper()
                         self._cards[symbol] = card
-                        cards_to_persist.append(copy.deepcopy(card))
+                        try:
+                            self.storage.save_watchlist_card(card)
+                        except Exception:
+                            log.exception("Failed to persist watchlist card for %s", symbol)
                     self._notify_state_changed_locked()
-                # Keep disk I/O outside the lock used by the WebSocket callback.
-                for persisted_card in cards_to_persist:
-                    try:
-                        self.storage.save_watchlist_card(persisted_card)
-                    except Exception:
-                        log.exception(
-                            "Failed to persist watchlist card for %s",
-                            persisted_card.get("symbol"),
-                        )
                 for card in qualified:
                     if not card.get("entry_ready"):
                         continue
