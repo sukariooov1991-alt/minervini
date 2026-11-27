@@ -1139,12 +1139,10 @@ class ScanController:
                         "price_session": (
                             quote.get("trade_session")
                             or card.get("price_session")
-                            or card.get("price_session")
                             or "regular"
                         ),
                         "price_timestamp": (
                             _quote_timestamp_iso(quote.get("timestamp"))
-                            or card.get("price_timestamp")
                             or card.get("price_timestamp")
                         ),
                         "price_tag": (
@@ -1240,18 +1238,14 @@ class ScanController:
                     card = self._cards.get(sym)
                     if card is not None:
                         card["current_price"] = round(price, 4)
-                        card["price_source"] = (
-                            "Longbridge WebSocket"
-                        )
-                            card["price_session"] = (
+                        card["price_source"] = "Longbridge WebSocket"
+                        card["price_session"] = (
                             quote.get("trade_session")
-                            or card.get("price_session")
                             or card.get("price_session")
                             or "regular"
                         )
                         card["price_timestamp"] = (
                             _quote_timestamp_iso(quote.get("timestamp"))
-                            or card.get("price_timestamp")
                             or card.get("price_timestamp")
                         )
                         card["price_tag"] = (
