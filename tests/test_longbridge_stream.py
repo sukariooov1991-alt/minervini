@@ -261,6 +261,35 @@ class LongbridgeQuoteTests(unittest.TestCase):
         self.assertEqual(added_again, [])
         self.assertEqual(len(ctx.subscribe_calls), 1)
 
+    def test_transient_subscription_verification_error_is_retried_not_trusted(self):
+        quote_type = SimpleNamespace(name="Quote")
+        trade_type = SimpleNamespace(name="Trade")
+
+        class FlakyVerificationContext(FakeQuoteContext):
+            def __init__(self):
+                super().__init__()
+                self.verification_calls = 0
+
+            def subscriptions(self):
+                self.verification_calls += 1
+                if self.verification_calls <= 2:
+                    raise RuntimeError("temporary provider verification failure")
+                return super().subscriptions()
+
+        ctx = FlakyVerificationContext()
+        client = LongbridgeRealtimeClient()
+        client._ctx = ctx
+        client._sub_types = [quote_type, trade_type]
+
+        first = client.ensure_subscriptions(["AAPL"])
+        self.assertEqual(first, ["AAPL"])
+        self.assertEqual(client._subscribed_symbols, [])
+
+        second = client.ensure_subscriptions(["AAPL"])
+        self.assertEqual(second, ["AAPL"])
+        self.assertEqual(client._subscribed_symbols, ["AAPL.US"])
+        self.assertEqual(len(ctx.subscribe_calls), 2)
+
     def test_provider_unconfirmed_subscription_is_not_marked_active_and_is_retried(self):
         quote_type = SimpleNamespace(name="Quote")
         trade_type = SimpleNamespace(name="Trade")
