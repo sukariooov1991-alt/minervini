@@ -218,6 +218,30 @@ class PermanentDataCacheTests(unittest.TestCase):
         self.assertEqual(prior_eps, 1.25)
         self.assertEqual(prior_revenue, 100.0)
 
+    def test_fundamentals_fetch_does_not_match_a_quarter_59_days_away(self):
+        provider = DataProvider.__new__(DataProvider)
+        provider.symbol = "FISCAL"
+        provider.ticker = SimpleNamespace(
+            quarterly_financials=pd.DataFrame(
+                [
+                    [2.0, 1.0, 9.0],
+                    [200.0, 100.0, 900.0],
+                ],
+                index=["Diluted EPS", "Total Revenue"],
+                columns=[
+                    pd.Timestamp("2026-09-30"),
+                    pd.Timestamp("2025-08-02"),
+                    pd.Timestamp("2025-10-01"),
+                ],
+            )
+        )
+        with patch("data.data_provider._wait_for_yahoo_request_slot"):
+            frame = provider._fetch_fundamentals_dataframe()
+        latest = frame.iloc[0]
+        self.assertEqual(pd.Timestamp(latest["period"]), pd.Timestamp("2026-09-30"))
+        self.assertTrue(pd.isna(latest["eps_year_ago"]))
+        self.assertTrue(pd.isna(latest["revenue_year_ago"]))
+
     def test_prior_year_quarter_matching_rejects_an_unrelated_earlier_quarter(self):
         from data.data_provider import _find_nearest_prior_period
 
