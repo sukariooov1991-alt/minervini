@@ -1110,6 +1110,7 @@ class ScanController:
                     pullback_anchor = pullback_info.get("entry_trigger_price")
                     pullback_low = pullback_info.get("support_low")
                 else:
+                    completed_df = pd.DataFrame()
                     vcp_passed = False
                     pullback_passed = False
                     breakout_passed = False
@@ -1168,7 +1169,9 @@ class ScanController:
                         symbol=sym,
                         current_price=price,
                         pivot_price=active_pivot,
-                        candles_df=live_df if not live_df.empty else None,
+                        # ATR and daily move are daily-bar calculations;
+                        # never feed the evolving intraday candle into them.
+                        candles_df=completed_df if not completed_df.empty else None,
                         final_low=active_low,
                     ).to_dict() if setup_passed else {
                         "pivot_price": None,
@@ -1276,7 +1279,9 @@ class ScanController:
                         elif name == "Market Regime Favorable":
                             item["passed"] = market_favorable
                             item["pending"] = not setup_passed
-                    card["smart_reading"] = self._build_smart_reading_from_card(card, live_df)
+                    card["smart_reading"] = self._build_smart_reading_from_card(
+                        card, live_df, live_candle_included=True
+                    )
                     self.storage.save_watchlist_card(card)
                     if not was_entry_ready and card["entry_ready"]:
                         alert_card = dict(card)
@@ -1330,7 +1335,11 @@ class ScanController:
                     self._notify_state_changed_locked()
 
     def _build_smart_reading_from_card(
-        self, card: dict[str, Any], candles_df: pd.DataFrame | None = None
+        self,
+        card: dict[str, Any],
+        candles_df: pd.DataFrame | None = None,
+        *,
+        live_candle_included: bool = False,
     ) -> str:
         """Build a technical, decision-oriented explanation; never expose feed/vendor metadata."""
         import numpy as np
@@ -1371,13 +1380,17 @@ class ScanController:
                 for col in ("high", "low", "close"):
                     df[col] = pd.to_numeric(df[col], errors="coerce")
                 df = df.dropna(subset=["high", "low", "close"]).tail(220)
-                if len(df) >= 30:
-                    close = df["close"]
-                    last = float(close.iloc[-1])
-                    ma20 = float(close.tail(20).mean()) if len(df) >= 20 else None
-                    ma50 = float(close.tail(50).mean()) if len(df) >= 50 else None
-                    ma150 = float(close.tail(150).mean()) if len(df) >= 150 else None
-                    ma200 = float(close.tail(200).mean()) if len(df) >= 200 else None
+                average_df = df.iloc[:-1] if live_candle_included else df
+                if len(average_df) >= 30:
+                    close = average_df["close"]
+                    try:
+                        last = float(card.get("current_price")) if card.get("current_price") is not None else float(df["close"].iloc[-1])
+                    except (TypeError, ValueError):
+                        last = float(df["close"].iloc[-1])
+                    ma20 = float(close.tail(20).mean()) if len(average_df) >= 20 else None
+                    ma50 = float(close.tail(50).mean()) if len(average_df) >= 50 else None
+                    ma150 = float(close.tail(150).mean()) if len(average_df) >= 150 else None
+                    ma200 = float(close.tail(200).mean()) if len(average_df) >= 200 else None
                     trend_parts = []
                     for label, ma in (("20 يوم", ma20), ("50 يوم", ma50), ("150 يوم", ma150), ("200 يوم", ma200)):
                         if ma is not None:
@@ -1408,7 +1421,7 @@ class ScanController:
 
                     # Reuse the trade-plan Wilder ATR so the explanation and
                     # actual stop fallback report the same volatility measure.
-                    atr = compute_atr(df, period=14)
+                    atr = compute_atr(average_df, period=14)
                     if atr is not None and np.isfinite(atr):
                         sections.append(f"التذبذب والمخاطر: متوسط المدى الحقيقي ATR(14) يقارب {fmt(atr)}؛ لذلك يجب تقييم مسافة وقف الخسارة وحجم المركز وفق هذا التذبذب.")
                 else:
