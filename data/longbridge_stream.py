@@ -64,7 +64,7 @@ class LongbridgeRealtimeClient:
         self._context_lock = threading.RLock()
         self._ctx: Any = None
         self._subscribed_symbols: list[str] = []
-        self._sub_type_quote: Any = None
+        self._sub_types: list[Any] = []
         self._last_message_monotonic: float | None = None
 
     def has_credentials(self) -> bool:
@@ -153,9 +153,58 @@ class LongbridgeRealtimeClient:
                         payload["symbol"], payload["last_done"],
                     )
 
+            def _handle_trades(symbol: str, event: Any) -> None:
+                # Trade pushes carry each executed trade, including overnight.
+                # Quote pushes alone are incremental quote-field changes and
+                # are not a guaranteed per-trade tape.
+                self._last_message_monotonic = time.monotonic()
+                if self.on_quote is None:
+                    return
+                trades = _value(event, "trades")
+                if trades is None:
+                    trades = _value(event, "trade", [])
+                try:
+                    trade_items = list(trades or [])
+                except TypeError:
+                    trade_items = []
+                for trade in trade_items:
+                    price = _valid_price(_value(trade, "price"))
+                    if price is None:
+                        continue
+                    trade_volume = _value(trade, "volume")
+                    payload = {
+                        "symbol": self._denormalize_symbol(symbol),
+                        "raw_symbol": symbol,
+                        "last_done": price,
+                        # Quote and trade sequence spaces must not be compared.
+                        # Timestamp ordering is shared by both push streams.
+                        "sequence": None,
+                        "timestamp": _value(trade, "timestamp"),
+                        "volume": None,
+                        "turnover": None,
+                        "current_volume": trade_volume,
+                        "current_turnover": None,
+                        "trade_session": _session_label(
+                            _value(trade, "trade_session")
+                            if _value(trade, "trade_session") is not None
+                            else _value(event, "trade_session")
+                        ),
+                        "trade_status": None,
+                        "tag": 0,
+                        "source": "longbridge_trade_websocket",
+                    }
+                    try:
+                        self.on_quote(payload)
+                    except Exception:
+                        log.exception(
+                            "STEP=WEBSOCKET_TRADE_CALLBACK STATUS=FAILED symbol=%s price=%s",
+                            payload["symbol"], price,
+                        )
+
             ctx.set_on_quote(_handle_quote)
+            ctx.set_on_trades(_handle_trades)
             self._ctx = ctx
-            self._sub_type_quote = SubType.Quote
+            self._sub_types = [SubType.Quote, SubType.Trade]
             self._subscribed_symbols = []
             log.info(
                 "STEP=WEBSOCKET_CONNECT STATUS=SUCCESS overnight_enabled=%s",
@@ -186,7 +235,7 @@ class LongbridgeRealtimeClient:
             # Submit all new symbols in one SDK subscribe call. Only record them
             # after the SDK accepts the request, so the watchdog can retry errors.
             try:
-                self._ctx.subscribe(missing, [self._sub_type_quote])
+                self._ctx.subscribe(missing, self._sub_types)
             except Exception:
                 log.exception(
                     "STEP=WEBSOCKET_SUBSCRIBE STATUS=FAILED requested=%s symbols=%s",
@@ -215,7 +264,7 @@ class LongbridgeRealtimeClient:
             remove = [symbol for symbol in cleaned if symbol in active]
             if not remove:
                 return
-            self._ctx.unsubscribe(remove, [self._sub_type_quote])
+            self._ctx.unsubscribe(remove, self._sub_types)
             self._subscribed_symbols = sorted(active - set(remove))
 
     def reconnect(self, symbols: list[str]) -> list[str]:
@@ -228,7 +277,7 @@ class LongbridgeRealtimeClient:
             ctx = self._ctx
             self._ctx = None
             self._subscribed_symbols = []
-            self._sub_type_quote = None
+            self._sub_types = []
             self._last_message_monotonic = None
             if ctx is not None and hasattr(ctx, "close"):
                 try:
