@@ -169,6 +169,46 @@ class RealtimeCandleTests(unittest.TestCase):
                 )
                 self.assertEqual(ScanController._detect_market_session(), "مفتوح")
 
+    def test_incremental_volume_is_added_once_and_requeued_ticks_are_deduplicated(self):
+        controller = self._controller()
+        controller._live_candles["AAPL"] = {"volume": 1000.0}
+        first = controller._resolve_quote_volume(
+            "AAPL",
+            {"sequence": 10, "current_volume": 100, "volume": None},
+            1000.0,
+            1795737600.0,
+        )
+        self.assertEqual(first, 1100.0)
+        controller._live_candles["AAPL"]["volume"] = first
+        duplicate = controller._resolve_quote_volume(
+            "AAPL",
+            {"sequence": 10, "current_volume": 100, "volume": None},
+            1000.0,
+            1795737600.0,
+        )
+        self.assertEqual(duplicate, 1100.0)
+        next_tick = controller._resolve_quote_volume(
+            "AAPL",
+            {"sequence": 11, "current_volume": 50, "volume": None},
+            1100.0,
+            1795737601.0,
+        )
+        self.assertEqual(next_tick, 1150.0)
+        absolute = controller._resolve_quote_volume(
+            "AAPL",
+            {"sequence": 12, "volume": 1200, "current_volume": 100},
+            1150.0,
+            1795737602.0,
+        )
+        self.assertEqual(absolute, 1200.0)
+        after_absolute = controller._resolve_quote_volume(
+            "AAPL",
+            {"sequence": 13, "current_volume": 25, "volume": None},
+            1200.0,
+            1795737603.0,
+        )
+        self.assertEqual(after_absolute, 1225.0)
+
     def test_live_candle_retains_open_high_low_and_volume_between_ticks(self):
         controller = self._controller()
         session = date(2026, 11, 26)
