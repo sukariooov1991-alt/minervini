@@ -257,7 +257,7 @@ class RealtimeCandleTests(unittest.TestCase):
         controller._live_candles["AAPL"] = {"volume": 1000.0}
         first = controller._resolve_quote_volume(
             "AAPL",
-            {"current_volume": 100, "volume": 0},
+            {"sequence": 0, "current_volume": 100, "volume": 0},
             1000.0,
             1795737600.0,
         )
@@ -265,7 +265,7 @@ class RealtimeCandleTests(unittest.TestCase):
         controller._live_candles["AAPL"]["volume"] = first
         second = controller._resolve_quote_volume(
             "AAPL",
-            {"current_volume": 50, "volume": 0},
+            {"sequence": 0, "current_volume": 50, "volume": 0},
             1100.0,
             1795737600.0,
         )
@@ -273,7 +273,7 @@ class RealtimeCandleTests(unittest.TestCase):
         controller._live_candles["AAPL"]["volume"] = second
         replay = controller._resolve_quote_volume(
             "AAPL",
-            {"current_volume": 50, "volume": 0, "_replay_for_recalc": True},
+            {"sequence": 0, "current_volume": 50, "volume": 0, "_replay_for_recalc": True},
             1150.0,
             1795737600.0,
         )
