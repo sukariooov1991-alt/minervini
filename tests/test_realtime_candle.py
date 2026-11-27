@@ -211,6 +211,33 @@ class RealtimeCandleTests(unittest.TestCase):
         )
         self.assertEqual(after_absolute, 1225.0)
 
+    def test_sequence_less_volume_deltas_allow_same_second_but_not_replay_double_count(self):
+        controller = self._controller()
+        controller._live_candles["AAPL"] = {"volume": 1000.0}
+        first = controller._resolve_quote_volume(
+            "AAPL",
+            {"current_volume": 100, "volume": 0},
+            1000.0,
+            1795737600.0,
+        )
+        self.assertEqual(first, 1100.0)
+        controller._live_candles["AAPL"]["volume"] = first
+        second = controller._resolve_quote_volume(
+            "AAPL",
+            {"current_volume": 50, "volume": 0},
+            1100.0,
+            1795737600.0,
+        )
+        self.assertEqual(second, 1150.0)
+        controller._live_candles["AAPL"]["volume"] = second
+        replay = controller._resolve_quote_volume(
+            "AAPL",
+            {"current_volume": 50, "volume": 0, "_replay_for_recalc": True},
+            1150.0,
+            1795737600.0,
+        )
+        self.assertEqual(replay, 1150.0)
+
     def test_live_candle_retains_open_high_low_and_volume_between_ticks(self):
         controller = self._controller()
         session = date(2026, 11, 26)
