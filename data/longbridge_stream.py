@@ -120,9 +120,11 @@ class LongbridgeRealtimeClient:
                 # trade_session; pre/post/overnight nested quote objects belong
                 # to the pull quote response and are not part of PushQuote.
                 last_done = _valid_price(_value(event, "last_done"))
+                volume_value = _value(event, "volume")
+                current_volume_value = _value(event, "current_volume")
                 has_volume_update = (
-                    _value(event, "volume") is not None
-                    or _value(event, "current_volume") is not None
+                    (volume_value is not None and volume_value != 0)
+                    or (current_volume_value is not None and current_volume_value != 0)
                 )
                 if last_done is None and not has_volume_update:
                     # Ignore messages with neither a valid price nor a volume update.
