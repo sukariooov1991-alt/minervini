@@ -936,10 +936,12 @@ class ScanController:
                 self._live_volume_timestamp = {}
                 seen = self._live_volume_timestamp
             previous = seen.get(symbol)
-            if previous is not None and quote_order <= previous:
+            if previous is not None and quote_order < previous:
                 return base_volume
-            seen[symbol] = quote_order
+            seen[symbol] = max(previous or quote_order, quote_order)
 
+        if quote.get("_replay_for_recalc"):
+            return base_volume
         return base_volume + delta
 
     def _process_realtime_quote(self, quote: dict[str, Any]) -> None:
@@ -1609,6 +1611,7 @@ class ScanController:
         # existed. Requeue it now so technical state and trade levels catch up.
         queued_quote = dict(latest_quote)
         queued_quote.setdefault("_received_at", latest_meta.get("price_received_at"))
+        queued_quote["_replay_for_recalc"] = True
         self._realtime_pending.append(queued_quote)
         self._realtime_event.set()
         return True
