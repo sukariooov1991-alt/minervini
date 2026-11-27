@@ -538,8 +538,8 @@ class DataProvider:
 
     def get_fundamentals_dataframe(self) -> pd.DataFrame:
         """Return cached quarterly fundamentals; cache empty responses briefly to avoid request storms."""
-        cache_key = f"fundamentals:{self.symbol}"
-        failure_key = f"fundamentals_failure:{self.symbol}"
+        cache_key = f"fundamentals:v2:{self.symbol}"
+        failure_key = f"fundamentals_failure:v2:{self.symbol}"
         cached = self.storage.get_cache(cache_key)
         cache_age = self.storage.cache_age_seconds(cache_key)
         failure_state = self.storage.get_cache(failure_key)
