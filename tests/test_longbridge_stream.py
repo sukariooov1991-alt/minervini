@@ -160,7 +160,6 @@ class LongbridgeQuoteTests(unittest.TestCase):
         class FakeSubType:
             Quote = object()
             Trade = object()
-            Trade = object()
 
         class FakeContext:
             def __init__(self, config):
