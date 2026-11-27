@@ -84,6 +84,16 @@ def _quote_timestamp_order(value: Any) -> float | None:
         return None
 
 
+
+def _realtime_timestamp_baseline(
+    latest_timestamp: float | None, persisted_timestamp: Any
+) -> float | None:
+    """Fall back to the persisted card timestamp before accepting a first push."""
+    if latest_timestamp is not None:
+        return latest_timestamp
+    return _quote_timestamp_order(persisted_timestamp)
+
+
 def _quote_timestamp_iso(value: Any) -> str | None:
     """Serialize the provider's Unix/UTC quote time unambiguously for the browser."""
     timestamp = _quote_timestamp_order(value)
@@ -765,7 +775,9 @@ class ScanController:
                 ),
             }
             previous_sequence = self._latest_quote_sequence.get(sym)
-            previous_timestamp = self._latest_quote_timestamp.get(sym)
+            previous_timestamp = _realtime_timestamp_baseline(
+                self._latest_quote_timestamp.get(sym), previous_meta.get("price_timestamp")
+            )
             latest_sources = getattr(self, "_latest_quote_source", None)
             if latest_sources is None:
                 latest_sources = self._latest_quote_source = {}
