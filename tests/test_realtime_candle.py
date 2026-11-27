@@ -70,9 +70,6 @@ class RealtimeCandleTests(unittest.TestCase):
         controller._state_version = 0
         controller._latest_quote_sequence = {}
         controller._latest_quote_timestamp = {}
-        controller._live_prices = {}
-        controller._live_quote_metadata = {}
-        controller._latest_quote_payloads = {}
         controller._cards = {"ABBV": {"symbol": "ABBV"}}
         controller._ws_last_log_at = {}
         controller._realtime_pending = []
@@ -91,53 +88,13 @@ class RealtimeCandleTests(unittest.TestCase):
         self.assertEqual(card["price_source"], "Longbridge WebSocket")
         self.assertEqual(card["price_session"], "post-market")
         self.assertIsNotNone(card["price_received_at"])
-        self.assertEqual(controller._live_prices["ABBV"], 294.48)
-        self.assertEqual(controller._live_quote_metadata["ABBV"]["price_timestamp"], "2026-11-26T20:00:00+00:00")
-        self.assertEqual(controller._live_quote_metadata["ABBV"]["price_tag"], 1)
+        self.assertEqual(card["price_timestamp"], "2026-11-26T20:00:00+00:00")
+        self.assertEqual(card["price_tag"], 1)
         self.assertEqual(len(controller._realtime_pending), 1)
         self.assertEqual(
             controller._realtime_pending[0]["_received_at"],
-            controller._live_quote_metadata["ABBV"]["price_received_at"],
+            card["price_received_at"],
         )
-
-    def test_scan_card_publication_preserves_latest_fractional_websocket_price(self):
-        controller = ScanController.__new__(ScanController)
-        controller._live_prices = {"ABBV": 294.48}
-        controller._live_quote_metadata = {
-            "ABBV": {
-                "price_session": "post-market",
-                "price_timestamp": "2026-11-26T20:00:00Z",
-                "price_received_at": "2026-11-26T20:00:01Z",
-            }
-        }
-        controller._latest_quote_payloads = {
-            "ABBV": {
-                "symbol": "ABBV",
-                "last_done": 294.48,
-                "sequence": 10,
-                "timestamp": "2026-11-26T20:00:00Z",
-                "trade_session": "post-market",
-            }
-        }
-        controller._realtime_pending = []
-        controller._realtime_event = Event()
-        card = {
-            "symbol": "ABBV",
-            "current_price": 294.0,
-            "price_source": "Stored daily data (Daily Close)",
-        }
-
-        self.assertTrue(controller._merge_latest_quote_into_card_locked(card))
-
-        self.assertEqual(card["current_price"], 294.48)
-        self.assertEqual(card["price_source"], "Longbridge WebSocket")
-        self.assertEqual(card["price_session"], "post-market")
-        self.assertEqual(len(controller._realtime_pending), 1)
-        self.assertEqual(
-            controller._realtime_pending[0]["_received_at"],
-            controller._live_quote_metadata["ABBV"]["price_received_at"],
-        )
-        self.assertTrue(controller._realtime_event.is_set())
 
     def test_watchdog_uses_new_subscription_time_after_quiet_reconnect(self):
         self.assertEqual(_latest_realtime_activity(100.0, 200.0), 200.0)
@@ -182,9 +139,6 @@ class RealtimeCandleTests(unittest.TestCase):
         controller._state_cv = Condition(controller._lock)
         controller._state_version = 0
         controller._cards = {"AAPL": {}, "MSFT": {}}
-        controller._live_prices = {"AAPL": 100.0}
-        controller._live_quote_metadata = {"AAPL": {"price_timestamp": "2026-11-26T00:00:00+00:00"}}
-        controller._latest_quote_payloads = {"AAPL": {"symbol": "AAPL"}}
         controller._live_candles = {"AAPL": {"volume": 1000.0}}
         controller._latest_quote_sequence = {"AAPL": 10}
         controller._latest_quote_timestamp = {"AAPL": 1795737600.0}
@@ -313,7 +267,6 @@ class RealtimeCandleTests(unittest.TestCase):
 
     def test_startup_revalidation_clears_obsolete_pullback_entry_levels(self):
         controller = ScanController.__new__(ScanController)
-        controller._live_prices = {}
         closes = [100.0 + i * 0.2 for i in range(80)]
         history = pd.DataFrame({
             "date": pd.date_range("2026-01-01", periods=80, freq="B"),
@@ -362,7 +315,6 @@ class RealtimeCandleTests(unittest.TestCase):
 
     def test_startup_clears_stale_vcp_breakout_flags(self):
         controller = ScanController.__new__(ScanController)
-        controller._live_prices = {}
         closes = [100.0 + i * 0.2 for i in range(80)]
         history = pd.DataFrame({
             "date": pd.date_range("2026-01-01", periods=80, freq="B"),
