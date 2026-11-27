@@ -157,10 +157,8 @@ class ScanController:
             "reasons": [],
         }
         self._cards: dict[str, dict[str, Any]] = {}
-        # Candidate reconstruction during startup reads the live-price cache.
-        self._live_prices: dict[str, float] = {}
-        self._live_quote_metadata: dict[str, dict[str, Any]] = {}
-        self._latest_quote_payloads: dict[str, dict[str, Any]] = {}
+        # The watchlist card is the live quote's published state. No separate
+        # last-price cache is used as a source of truth.
         # Preserve the evolving session OHLC between WebSocket pushes. Daily
         # history in SQLite is not rewritten on every quote tick.
         self._live_candles: dict[str, dict[str, Any]] = {}
@@ -473,8 +471,7 @@ class ScanController:
         })
 
         current_price = float(
-            self._live_prices.get(symbol)
-            or pd.to_numeric(history["close"], errors="coerce").dropna().iloc[-1]
+            pd.to_numeric(history["close"], errors="coerce").dropna().iloc[-1]
         )
         entry_confirmation = bool(vcp_confirmed or pullback_passed)
         active_pivot = vcp_pivot if vcp_confirmed else pullback_anchor
@@ -496,29 +493,13 @@ class ScanController:
         )
         card.update({
             "current_price": round(current_price, 4),
-            "price_source": (
-                "Longbridge WebSocket"
-                if symbol in self._live_prices
-                else "Stored daily data (Daily Close)"
-            ),
             # A restored card's persisted WebSocket timestamp is historical,
             # not proof that a live quote is still arriving after restart.
-            "price_session": (
-                getattr(self, "_live_quote_metadata", {}).get(symbol, {}).get("price_session", "regular")
-                if symbol in self._live_prices else "daily-close"
-            ),
-            "price_timestamp": (
-                getattr(self, "_live_quote_metadata", {}).get(symbol, {}).get("price_timestamp")
-                if symbol in self._live_prices else None
-            ),
-            "price_received_at": (
-                getattr(self, "_live_quote_metadata", {}).get(symbol, {}).get("price_received_at")
-                if symbol in self._live_prices else None
-            ),
-            "price_tag": (
-                getattr(self, "_live_quote_metadata", {}).get(symbol, {}).get("price_tag")
-                if symbol in self._live_prices else None
-            ),
+            "price_source": "Stored daily data (Daily Close)",
+            "price_session": "daily-close",
+            "price_timestamp": None,
+            "price_received_at": None,
+            "price_tag": None,
             "pivot_price": plan["pivot_price"],
             "final_low": plan["final_low"],
             "entry_zones": plan["entry_zones"],
@@ -686,10 +667,11 @@ class ScanController:
         raw_price = quote.get("last_done")
         if raw_price is None:
             with self._lock:
-                cached_price = getattr(self, "_live_prices", {}).get(sym)
-            if cached_price is None:
+                existing_card = self._cards.get(sym) or {}
+                current_card_price = existing_card.get("current_price")
+            if current_card_price is None:
                 return
-            price = float(cached_price)
+            price = float(current_card_price)
         else:
             try:
                 price = float(raw_price)
@@ -708,7 +690,7 @@ class ScanController:
         quote_order = _quote_timestamp_order(quote.get("timestamp"))
         received_at = datetime.now(timezone.utc).isoformat()
         with self._state_cv:
-            previous_meta = self._live_quote_metadata.get(sym, {})
+            previous_meta = self._cards.get(sym) or {}
             quote_metadata = {
                 "price_session": (
                     quote.get("trade_session")
@@ -745,9 +727,6 @@ class ScanController:
             if quote_order is not None:
                 self._latest_quote_timestamp[sym] = max(previous_timestamp or quote_order, quote_order)
             self._ws_connected = True
-            self._live_prices[sym] = price
-            self._live_quote_metadata[sym] = quote_metadata
-            self._latest_quote_payloads[sym] = dict(quote)
             card = self._cards.get(sym)
             if card is not None:
                 card.update({
@@ -966,10 +945,11 @@ class ScanController:
             return
         if raw_price is None:
             with self._lock:
-                cached_price = getattr(self, "_live_prices", {}).get(sym)
-            if cached_price is None:
+                existing_card = self._cards.get(sym) or {}
+                current_card_price = existing_card.get("current_price")
+            if current_card_price is None:
                 return
-            price = float(cached_price)
+            price = float(current_card_price)
         else:
             try:
                 price = float(raw_price)
@@ -1105,7 +1085,6 @@ class ScanController:
                     if sequence is not None and latest_sequence is not None and sequence < latest_sequence:
                         return
                     self._ws_connected = True
-                    self._live_prices[sym] = price
                     card = self._cards.get(sym)
                     if card is None:
                         self._notify_state_changed_locked()
@@ -1258,7 +1237,6 @@ class ScanController:
                     if sequence is not None and latest_sequence is not None and sequence < latest_sequence:
                         return
                     self._ws_connected = True
-                    self._live_prices[sym] = price
                     card = self._cards.get(sym)
                     if card is not None:
                         card["current_price"] = round(price, 4)
@@ -1496,8 +1474,17 @@ class ScanController:
         )
 
         with self._lock:
-            live_p = self._live_prices.get(sym)
-            live_quote_metadata = dict(getattr(self, "_live_quote_metadata", {}).get(sym, {}))
+            existing_card = dict(self._cards.get(sym) or {})
+        live_p = (
+            existing_card.get("current_price")
+            if existing_card.get("price_source") == "Longbridge WebSocket"
+            else None
+        )
+        live_quote_metadata = {
+            key: existing_card.get(key)
+            for key in ("price_session", "price_timestamp", "price_received_at", "price_tag")
+            if existing_card.get(key) is not None
+        }
 
         if live_p is not None:
             current_price = float(live_p)
@@ -1606,30 +1593,6 @@ class ScanController:
         card["smart_reading"] = self._build_smart_reading_from_card(card, df)
         return card
 
-    def _merge_latest_quote_into_card_locked(self, card: dict[str, Any]) -> bool:
-        """Preserve and reprocess a tick that arrived before its scan card existed."""
-        symbol = str(card.get("symbol") or "").upper()
-        latest_quote = self._latest_quote_payloads.get(symbol)
-        if latest_quote is None:
-            return False
-        latest_price = self._live_prices.get(symbol)
-        if latest_price is None:
-            return False
-        latest_meta = self._live_quote_metadata.get(symbol, {})
-        card.update({
-            "current_price": round(float(latest_price), 4),
-            "price_source": "Longbridge WebSocket",
-            **latest_meta,
-        })
-        # The quote worker may already have consumed this tick while no card
-        # existed. Requeue it now so technical state and trade levels catch up.
-        queued_quote = dict(latest_quote)
-        queued_quote.setdefault("_received_at", latest_meta.get("price_received_at"))
-        queued_quote["_replay_for_recalc"] = True
-        self._realtime_pending.append(queued_quote)
-        self._realtime_event.set()
-        return True
-
     def _update_scan_progress(self, progress: dict[str, Any]) -> None:
         total = int(progress.get("total") or 0)
         completed = int(progress.get("completed") or 0)
@@ -1671,8 +1634,6 @@ class ScanController:
                 with self._state_cv:
                     for card in qualified:
                         symbol = str(card["symbol"]).upper()
-                        # A tick can arrive before the scan card is published.
-                        self._merge_latest_quote_into_card_locked(card)
                         self._cards[symbol] = card
                         try:
                             self.storage.save_watchlist_card(card)
@@ -1741,9 +1702,6 @@ class ScanController:
                             stale_symbol,
                         )
                         self._cards.pop(stale_symbol, None)
-                        self._live_prices.pop(stale_symbol, None)
-                        self._live_quote_metadata.pop(stale_symbol, None)
-                        self._latest_quote_payloads.pop(stale_symbol, None)
                         self._live_candles.pop(stale_symbol, None)
                         self._latest_quote_sequence.pop(stale_symbol, None)
                         self._latest_quote_timestamp.pop(stale_symbol, None)
@@ -1849,9 +1807,6 @@ class ScanController:
         log.warning("Watchlist card manually deleted through API: %s", clean)
         with self._state_cv:
             self._cards.pop(clean, None)
-            self._live_prices.pop(clean, None)
-            self._live_quote_metadata.pop(clean, None)
-            self._latest_quote_payloads.pop(clean, None)
             self._live_candles.pop(clean, None)
             self._latest_quote_sequence.pop(clean, None)
             self._latest_quote_timestamp.pop(clean, None)
