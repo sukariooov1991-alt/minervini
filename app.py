@@ -874,7 +874,7 @@ class ScanController:
 
         sequence = quote.get("sequence")
         try:
-            sequence = int(sequence) if sequence is not None else None
+            sequence = int(sequence) if sequence is not None and int(sequence) > 0 else None
         except (TypeError, ValueError, OverflowError):
             sequence = None
 
@@ -969,7 +969,7 @@ class ScanController:
         )
         sequence = quote.get("sequence")
         try:
-            sequence = int(sequence) if sequence is not None else None
+            sequence = int(sequence) if sequence is not None and int(sequence) > 0 else None
         except (TypeError, ValueError, OverflowError):
             sequence = None
 
