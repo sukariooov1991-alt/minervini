@@ -740,7 +740,9 @@ class ScanController:
         quote_order = _quote_timestamp_order(quote.get("timestamp"))
         received_at = datetime.now(timezone.utc).isoformat()
         with self._state_cv:
-            previous_meta = self._cards.get(sym) or {}
+            previous_meta = self._cards.get(sym)
+            if previous_meta is None:
+                return
             is_price_tick = raw_price is not None
             quote_metadata = {
                 "price_session": (
