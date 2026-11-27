@@ -16,6 +16,14 @@ class EntryDecisionTests(unittest.TestCase):
         close = [100.0 + i * 0.2 for i in range(220)]
         return pd.DataFrame({"close": close, "volume": [1_000_000 + i * 1000 for i in range(220)]})
 
+    def test_wilder_atr_can_seed_from_exactly_fourteen_ohlc_bars(self):
+        frame = pd.DataFrame({
+            "high": [101.0] * 14,
+            "low": [99.0] * 14,
+            "close": [100.0] * 14,
+        })
+        self.assertAlmostEqual(compute_atr(frame, period=14), 2.0)
+
     def test_market_breadth_is_required_and_thresholded(self):
         index = self._index()
         missing = check_market_regime(index)
