@@ -372,7 +372,12 @@
         const receivedUpdated = quoteDate && receivedDate
           ? receivedDate.toLocaleTimeString('ar-SA', { hour:'2-digit', minute:'2-digit', second:'2-digit' })
           : '';
-        const quoteAgeSeconds = quoteDate ? Math.max(0, (Date.now() - quoteDate.getTime()) / 1000) : null;
+        // Provider time is preferred; when the feed omits it, server receipt
+        // time still gives a reliable age for the last observed live price.
+        const freshnessDate = quoteDate || receivedDate;
+        const quoteAgeSeconds = freshnessDate
+          ? Math.max(0, (Date.now() - freshnessDate.getTime()) / 1000)
+          : null;
         const freshnessLimit = c.price_session === 'regular' ? 300 : 900;
         const isStaleQuote = quoteAgeSeconds !== null && quoteAgeSeconds > freshnessLimit;
         el.querySelector('.price-text').textContent = c.current_price == null ? '—' : String(c.current_price);
