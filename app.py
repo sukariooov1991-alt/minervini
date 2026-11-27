@@ -1367,9 +1367,6 @@ class ScanController:
                 # a provider candle or calculation is malformed.
                 log.exception("Realtime setup recalculation failed for %s", sym)
                 with self._state_cv:
-                    latest_sequence = self._latest_quote_sequence.get(sym)
-                    if sequence is not None and latest_sequence is not None and sequence < latest_sequence:
-                        return
                     self._ws_connected = True
                     card = self._cards.get(sym)
                     if card is not None:
