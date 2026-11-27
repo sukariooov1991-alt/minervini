@@ -692,12 +692,12 @@ class ScanController:
                     for symbol, _ in recovery_candidates:
                         if results.get(symbol):
                             log.warning(
-                                "STEP=WEBSOCKET_HEALTH STATUS=SYMBOL_RESUBSCRIBE_CONFIRMED symbol=%s; awaiting next Quote/Trade push",
+                                "STEP=WEBSOCKET_HEALTH STATUS=SYMBOL_RESUBSCRIBE_CONFIRMED symbol=%s; awaiting next Quote push",
                                 symbol,
                             )
                         else:
                             log.error(
-                                "STEP=WEBSOCKET_HEALTH STATUS=SYMBOL_RESUBSCRIBE_UNCONFIRMED symbol=%s; provider did not confirm both Quote and Trade",
+                                "STEP=WEBSOCKET_HEALTH STATUS=SYMBOL_RESUBSCRIBE_UNCONFIRMED symbol=%s; provider did not confirm Quote",
                                 symbol,
                             )
             except Exception:
