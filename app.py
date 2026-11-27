@@ -1761,15 +1761,22 @@ class ScanController:
                     except Exception:
                         log.exception("Candidate card construction failed for %s", row.get("symbol"))
                 if not qualified: return
+                cards_to_persist = []
                 with self._state_cv:
                     for card in qualified:
                         symbol = str(card["symbol"]).upper()
                         self._cards[symbol] = card
-                        try:
-                            self.storage.save_watchlist_card(card)
-                        except Exception:
-                            log.exception("Failed to persist watchlist card for %s", symbol)
+                        cards_to_persist.append(copy.deepcopy(card))
                     self._notify_state_changed_locked()
+                # Keep disk I/O outside the lock used by the WebSocket callback.
+                for persisted_card in cards_to_persist:
+                    try:
+                        self.storage.save_watchlist_card(persisted_card)
+                    except Exception:
+                        log.exception(
+                            "Failed to persist watchlist card for %s",
+                            persisted_card.get("symbol"),
+                        )
                 for card in qualified:
                     if not card.get("entry_ready"):
                         continue
