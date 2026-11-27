@@ -1,4 +1,5 @@
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pandas as pd
@@ -134,7 +135,7 @@ class PermanentDataCacheTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "temporary Yahoo failure"):
             provider.get_fundamentals_dataframe()
 
-        self.assertEqual(self.storage.get_cache("fundamentals:NOFUND"), [])
+        self.assertEqual(self.storage.get_cache("fundamentals:v2:NOFUND"), [])
 
     def test_stale_fundamentals_failure_uses_six_hour_retry_cooldown(self):
         cached = [{
@@ -144,9 +145,9 @@ class PermanentDataCacheTests(unittest.TestCase):
             "revenue_current": 100.0,
             "revenue_year_ago": 90.0,
         }]
-        self.storage.set_cache("fundamentals:COOLDOWN", cached)
+        self.storage.set_cache("fundamentals:v2:COOLDOWN", cached)
         self.storage.set_cache(
-            "fundamentals_failure:COOLDOWN",
+            "fundamentals_failure:v2:COOLDOWN",
             {"last_failed_attempt": pd.Timestamp.now(tz="UTC").isoformat()},
         )
         provider = DataProvider.__new__(DataProvider)
@@ -311,7 +312,7 @@ class PermanentDataCacheTests(unittest.TestCase):
             "revenue_current": 100.0,
             "revenue_year_ago": 90.0,
         }])
-        self.storage.set_cache("fundamentals:AAPL", [{"period": "2026-06-30"}])
+        self.storage.set_cache("fundamentals:v2:AAPL", [{"period": "2026-06-30"}])
         with patch.object(self.storage, "cache_age_seconds", return_value=25 * 3600):
             result = provider.get_fundamentals_dataframe()
         self.assertEqual(pd.Timestamp(result.iloc[0]["period"]), pd.Timestamp("2026-09-30"))
@@ -324,7 +325,7 @@ class PermanentDataCacheTests(unittest.TestCase):
             "revenue_current": 100.0,
             "revenue_year_ago": 90.0,
         }]
-        self.storage.set_cache("fundamentals:STALE", cached)
+        self.storage.set_cache("fundamentals:v2:STALE", cached)
         provider = DataProvider.__new__(DataProvider)
         provider.symbol = "STALE"
         provider.storage = self.storage
@@ -337,7 +338,7 @@ class PermanentDataCacheTests(unittest.TestCase):
 
         self.assertTrue(result.attrs.get("stale"))
         self.assertEqual(len(result), 1)
-        self.assertEqual(self.storage.get_cache("fundamentals:STALE"), cached)
+        self.assertEqual(self.storage.get_cache("fundamentals:v2:STALE"), cached)
 
     def test_news_cache_expires_after_four_hours(self):
         provider = DataProvider.__new__(DataProvider)
@@ -613,7 +614,7 @@ class PermanentDataCacheTests(unittest.TestCase):
 
     def test_cached_fundamentals_backfill_missing_durable_earnings_event(self):
         period = "2026-09-30"
-        self.storage.set_cache("fundamentals:CACHE", [{
+        self.storage.set_cache("fundamentals:v2:CACHE", [{
             "period": period,
             "eps_current": 2.0,
             "eps_year_ago": 1.5,
