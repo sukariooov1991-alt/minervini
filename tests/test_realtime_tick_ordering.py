@@ -1,7 +1,11 @@
 import unittest
 from collections import deque
 
-from app import _is_out_of_order_realtime_tick, _pop_next_realtime_quote
+from app import (
+    _is_out_of_order_realtime_tick,
+    _pop_next_realtime_quote,
+    _realtime_timestamp_baseline,
+)
 
 
 class RealtimeTickOrderingTests(unittest.TestCase):
@@ -54,6 +58,19 @@ class RealtimeTickOrderingTests(unittest.TestCase):
         second, second_symbol = _pop_next_realtime_quote(pending, active)
         self.assertEqual(second_symbol, "AAPL")
         self.assertEqual(second["last_done"], 101.0)
+
+
+    def test_first_push_uses_persisted_card_timestamp_as_baseline(self):
+        self.assertEqual(
+            _realtime_timestamp_baseline(None, "2026-11-27T11:15:00+00:00"),
+            1795778100.0,
+        )
+
+    def test_in_memory_timestamp_takes_precedence_over_persisted_timestamp(self):
+        self.assertEqual(
+            _realtime_timestamp_baseline(200.0, "2026-11-27T11:15:00+00:00"),
+            200.0,
+        )
 
     def test_missing_timestamps_preserve_arrival_order(self):
         self.assertFalse(
