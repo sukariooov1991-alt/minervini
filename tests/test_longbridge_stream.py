@@ -165,7 +165,7 @@ class LongbridgeQuoteTests(unittest.TestCase):
         fake_package.__path__ = []
         with patch.dict(sys.modules, {"longbridge": fake_package, "longbridge.openapi": fake_module}):
             client.connect()
-        captured["callback"]("AAPL.US", SimpleNamespace(volume=1000, sequence=987654322))
+        captured["callback"]("AAPL.US", SimpleNamespace(volume=0, current_volume=0, sequence=987654322))
         self.assertEqual(captured.get("quotes", []), [])
         self.assertIsNotNone(client.last_message_monotonic)
 
