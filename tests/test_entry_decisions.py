@@ -52,6 +52,30 @@ class EntryDecisionTests(unittest.TestCase):
         self.assertFalse(result["market_favorable"])
         self.assertFalse(result["breadth_ok"])
 
+    def test_realtime_trend_template_keeps_moving_averages_on_completed_closes(self):
+        dates = pd.bdate_range("2025-01-01", periods=252)
+        completed = pd.DataFrame({
+            "date": dates,
+            "open": [100.0] * 252,
+            "high": [101.0] * 252,
+            "low": [99.0] * 252,
+            "close": [100.0] * 252,
+        })
+        live = pd.concat([
+            completed,
+            pd.DataFrame([{
+                "date": dates[-1] + pd.offsets.BDay(1),
+                "open": 100.0,
+                "high": 10000.0,
+                "low": 99.0,
+                "close": 10000.0,
+            }]),
+        ], ignore_index=True)
+
+        result = check_trend_template(live, 99, current_price=100.0)
+        self.assertFalse(result["conditions"]["sma150_above_sma200"])
+        self.assertFalse(result["conditions"]["sma50_above_150_and_200"])
+
     def test_trend_template_rejects_infinite_relative_strength(self):
         close = [100.0 + i * 0.3 for i in range(252)]
         frame = pd.DataFrame({
