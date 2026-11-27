@@ -622,11 +622,11 @@ class ScanController:
                         # be rejected forever as older than the previous socket.
                         self._latest_quote_sequence.clear()
                         self._latest_quote_timestamp.clear()
-                        self._latest_quote_source.clear()
+                        getattr(self, "_latest_quote_source", {}).clear()
                         getattr(self, "_live_volume_sequence", {}).clear()
                         getattr(self, "_live_volume_timestamp", {}).clear()
                         self._processed_quote_timestamp.clear()
-                        self._processed_quote_source.clear()
+                        getattr(self, "_processed_quote_source", {}).clear()
                         self._ws_seen_symbols.clear()
                         self._ws_last_log_at.clear()
                         self._last_ws_subscription_monotonic = time.monotonic()
@@ -736,7 +736,10 @@ class ScanController:
             }
             previous_sequence = self._latest_quote_sequence.get(sym)
             previous_timestamp = self._latest_quote_timestamp.get(sym)
-            previous_source = self._latest_quote_source.get(sym)
+            latest_sources = getattr(self, "_latest_quote_source", None)
+            if latest_sources is None:
+                latest_sources = self._latest_quote_source = {}
+            previous_source = latest_sources.get(sym)
             incoming_source = str(quote.get("source") or "longbridge_websocket")
             # Quote and Trade pushes share the same socket but may carry
             # independent sequence counters. Enforce timestamp ordering across
@@ -756,7 +759,7 @@ class ScanController:
                 self._latest_quote_sequence[sym] = sequence
             if quote_order is not None:
                 self._latest_quote_timestamp[sym] = quote_order
-                self._latest_quote_source[sym] = incoming_source
+                latest_sources[sym] = incoming_source
             self._ws_connected = True
             card = self._cards.get(sym)
             if card is not None:
@@ -1003,7 +1006,10 @@ class ScanController:
             first_ws_push = sym not in self._ws_seen_symbols
             self._ws_seen_symbols.add(sym)
             previous_processed_timestamp = self._processed_quote_timestamp.get(sym)
-            previous_processed_source = self._processed_quote_source.get(sym)
+            processed_sources = getattr(self, "_processed_quote_source", None)
+            if processed_sources is None:
+                processed_sources = self._processed_quote_source = {}
+            previous_processed_source = processed_sources.get(sym)
             incoming_source = str(quote.get("source") or "longbridge_websocket")
             # Multiple workers may acquire a symbol lock in a different order
             # than callbacks arrived. Apply the same timestamp/source tie-break
@@ -1016,7 +1022,7 @@ class ScanController:
                 return
             if quote_order is not None:
                 self._processed_quote_timestamp[sym] = quote_order
-                self._processed_quote_source[sym] = incoming_source
+                processed_sources[sym] = incoming_source
         if first_ws_push:
             log.info(
                 "Longbridge WebSocket first quote push: symbol=%s price=%s session=%s timestamp=%s",
@@ -1733,9 +1739,9 @@ class ScanController:
                         self._live_candles.pop(stale_symbol, None)
                         self._latest_quote_sequence.pop(stale_symbol, None)
                         self._latest_quote_timestamp.pop(stale_symbol, None)
-                        self._latest_quote_source.pop(stale_symbol, None)
+                        getattr(self, "_latest_quote_source", {}).pop(stale_symbol, None)
                         self._processed_quote_timestamp.pop(stale_symbol, None)
-                        self._processed_quote_source.pop(stale_symbol, None)
+                        getattr(self, "_processed_quote_source", {}).pop(stale_symbol, None)
                         self._ws_seen_symbols.discard(stale_symbol)
                         self._ws_last_log_at.pop(stale_symbol, None)
                         try:
@@ -1840,9 +1846,9 @@ class ScanController:
             self._live_candles.pop(clean, None)
             self._latest_quote_sequence.pop(clean, None)
             self._latest_quote_timestamp.pop(clean, None)
-            self._latest_quote_source.pop(clean, None)
+            getattr(self, "_latest_quote_source", {}).pop(clean, None)
             self._processed_quote_timestamp.pop(clean, None)
-            self._processed_quote_source.pop(clean, None)
+            getattr(self, "_processed_quote_source", {}).pop(clean, None)
             getattr(self, "_live_volume_sequence", {}).pop(clean, None)
             getattr(self, "_live_volume_timestamp", {}).pop(clean, None)
             self._ws_seen_symbols.discard(clean)
