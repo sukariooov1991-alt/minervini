@@ -62,14 +62,17 @@ class EntryDecisionTests(unittest.TestCase):
         moves = [1] * 11 + [-1] * 10 + [0] * 29
         for move in moves:
             closes.append(closes[-1] * (1.01 if move > 0 else 0.99 if move < 0 else 1.0))
-        frame = pd.DataFrame({
-            "close": closes,
-            "volume": [100_000.0] * len(closes),
-        })
+        volumes = [100_000.0] * len(closes)
+        for index, move in enumerate(moves, start=1):
+            if move > 0:
+                volumes[index] = 110_000.0
+        frame = pd.DataFrame({"close": closes, "volume": volumes})
 
         result = accumulation_distribution_summary(frame)
 
-        self.assertAlmostEqual(result["up_down_volume_ratio"], 1.1, places=6)
+        self.assertAlmostEqual(result["up_down_volume_ratio"], 1.21, places=6)
+        self.assertEqual(result["power_up_days"], 11)
+        self.assertEqual(result["power_down_days"], 0)
         self.assertTrue(result["accumulation"])
 
     def test_incomplete_fundamentals_are_detected_as_unknown_inputs(self):
