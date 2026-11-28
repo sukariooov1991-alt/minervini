@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import numpy as np
 import pandas as pd
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -15,6 +16,21 @@ from data.storage_manager import StorageManager
 class PermanentDataCacheTests(unittest.TestCase):
     def setUp(self):
         self.storage = StorageManager(":memory:")
+
+    def test_watchlist_cards_round_trip_numpy_and_pandas_scalars(self):
+        card = {
+            "symbol": "AAPL",
+            "flag": np.bool_(False),
+            "count": np.int64(17),
+            "values": np.array([1, 2, 3], dtype=np.int64),
+            "missing": pd.NA,
+        }
+        self.storage.save_watchlist_card(card)
+        restored = self.storage.load_watchlist_cards()[0]
+        self.assertIs(restored["flag"], False)
+        self.assertEqual(restored["count"], 17)
+        self.assertEqual(restored["values"], [1, 2, 3])
+        self.assertIsNone(restored["missing"])
 
     def test_same_symbol_fundamentals_refresh_is_serialized_across_provider_instances(self):
         first = DataProvider("AAPL", self.storage)
