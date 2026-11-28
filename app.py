@@ -1428,8 +1428,9 @@ class ScanController:
                         "updated_at": datetime.now(timezone.utc).isoformat(),
                     })
                     if not watchlist_eligible:
-                        card["status"] = "شروط الاتجاه أو الأساسيات لم تعد مستوفاة — بانتظار الفحص"
-                        card["stage"] = "المرحلة 1: إعادة تقييم أهلية السهم"
+                        reason = card.get("last_scan_eligibility_note") or "شروط الاتجاه أو الأساسيات غير مكتملة حالياً"
+                        card["status"] = f"السهم غير مؤهل حالياً — {reason}"
+                        card["stage"] = f"المرحلة 1: متابعة عودة الأهلية — {reason}"
                     elif setup_passed and not entry_confirmation_passed:
                         card["status"] = "النموذج قيد التأكيد — لا توجد إشارة دخول"
                         card["stage"] = "المرحلة 2: تأكيد نموذج الدخول"
