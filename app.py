@@ -2264,32 +2264,12 @@ class ScanController:
         # omit persistence/condition primitives. Snapshot generation must remain
         # safe in that case; durable recovery is enabled only on a fully initialized
         # controller.
-        persisted_cards = []
-        storage = getattr(self, "storage", None)
-        load_cards = getattr(storage, "load_watchlist_cards", None)
-        if callable(load_cards):
-            try:
-                persisted_cards = load_cards() or []
-            except Exception:
-                log.exception("Unable to reconcile persisted watchlist cards for state snapshot")
-
+        # Keep API/SSE snapshots strictly in-memory and fast. Persistent cards
+        # are restored once during ScanController initialization; querying SQLite
+        # on every 3-second poll and every SSE update can contend with scan writes
+        # and stall both progress delivery and card publication.
         state_lock = getattr(self, "_state_cv", None) or getattr(self, "_lock", None)
         with (state_lock if state_lock is not None else nullcontext()):
-            cards = getattr(self, "_cards", {})
-            restored = 0
-            for card in persisted_cards:
-                if not isinstance(card, dict):
-                    continue
-                symbol = str(card.get("symbol") or "").upper().strip()
-                if symbol and symbol not in cards:
-                    cards[symbol] = card
-                    restored += 1
-            if restored:
-                self._state_version = getattr(self, "_state_version", 0) + 1
-                log.warning(
-                    "Watchlist snapshot recovery: restored=%s total_cards=%s",
-                    restored, len(cards),
-                )
             self._market_session_label = self._detect_market_session()
             return {
                 "brand": "minervini",
