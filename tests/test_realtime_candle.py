@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
-from app import ScanController, _latest_realtime_activity, _quote_timestamp_iso, _quote_timestamp_order, _stable_pullback_levels
+from app import ScanController, _latest_realtime_activity, _quote_timestamp_iso, _quote_timestamp_order, _stable_pullback_levels, _realtime_accumulation_status
 from data.trade_levels import compute_atr
 from data.market_time import MarketTime
 
@@ -20,6 +20,26 @@ class RealtimeCandleTests(unittest.TestCase):
         controller._lock = RLock()
         controller._live_candles = {}
         return controller
+
+
+    def test_live_accumulation_recalculates_only_with_valid_regular_session_data(self):
+        frame = pd.DataFrame({
+            "close": [100.0 + index for index in range(51)],
+            "volume": [100_000.0] * 51,
+        })
+        with patch("app.accumulation_distribution_summary", return_value={"accumulation": True}) as summary:
+            self.assertTrue(_realtime_accumulation_status(frame, False, "regular"))
+            summary.assert_called_once_with(frame)
+
+        with patch("app.accumulation_distribution_summary") as summary:
+            self.assertTrue(_realtime_accumulation_status(frame, True, "pre-market"))
+            summary.assert_not_called()
+
+        invalid = frame.copy()
+        invalid.loc[50, "volume"] = 0.0
+        with patch("app.accumulation_distribution_summary") as summary:
+            self.assertFalse(_realtime_accumulation_status(invalid, False, "regular"))
+            summary.assert_not_called()
 
     def test_watchdog_reconnects_during_exchange_holiday_when_stream_is_stale(self):
         controller = ScanController.__new__(ScanController)
