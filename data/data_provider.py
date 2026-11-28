@@ -546,7 +546,10 @@ class DataProvider:
             self.storage.add_event(self.symbol, "earnings", event_date, payload)
 
     def get_fundamentals_dataframe(self) -> pd.DataFrame:
-        with self._research_lock:
+        lock = getattr(self, "_research_lock", None)
+        if lock is None:
+            lock = self._research_lock = _research_lock(getattr(self, "symbol", ""))
+        with lock:
             return self._get_fundamentals_dataframe_locked()
 
     def _get_fundamentals_dataframe_locked(self) -> pd.DataFrame:
@@ -686,7 +689,10 @@ class DataProvider:
         return pd.DataFrame(rows).sort_values("period", ascending=False).reset_index(drop=True)
 
     def fetch_and_store_news(self) -> list[dict[str, Any]]:
-        with self._research_lock:
+        lock = getattr(self, "_research_lock", None)
+        if lock is None:
+            lock = self._research_lock = _research_lock(getattr(self, "symbol", ""))
+        with lock:
             return self._fetch_and_store_news_locked()
 
     def _fetch_and_store_news_locked(self) -> list[dict[str, Any]]:
