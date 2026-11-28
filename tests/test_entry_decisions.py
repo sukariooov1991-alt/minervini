@@ -260,6 +260,43 @@ class EntryDecisionTests(unittest.TestCase):
         self.assertEqual(plan.targets, [])
         self.assertTrue(any("قاع هيكلي" in note for note in plan.notes))
 
+    def test_earnings_acceleration_is_reported_without_becoming_a_default_hard_gate(self):
+        accelerating = check_earnings(
+            eps_current=12.0,
+            eps_year_ago=10.0,
+            revenue_current=105.0,
+            revenue_year_ago=100.0,
+            prior_eps_growth_pct=15.0,
+        )
+        decelerating = check_earnings(
+            eps_current=12.0,
+            eps_year_ago=10.0,
+            revenue_current=105.0,
+            revenue_year_ago=100.0,
+            prior_eps_growth_pct=25.0,
+        )
+        unknown = check_earnings(
+            eps_current=12.0,
+            eps_year_ago=10.0,
+            revenue_current=105.0,
+            revenue_year_ago=100.0,
+        )
+        required_deceleration = check_earnings(
+            eps_current=12.0,
+            eps_year_ago=10.0,
+            revenue_current=105.0,
+            revenue_year_ago=100.0,
+            prior_eps_growth_pct=25.0,
+            require_acceleration=True,
+        )
+        self.assertTrue(accelerating["passed"])
+        self.assertTrue(accelerating["accelerating"])
+        self.assertTrue(decelerating["passed"])
+        self.assertFalse(decelerating["accelerating"])
+        self.assertTrue(unknown["passed"])
+        self.assertIsNone(unknown["accelerating"])
+        self.assertFalse(required_deceleration["passed"])
+
     def test_default_earnings_gate_does_not_impose_a_universal_ten_percent_sales_threshold(self):
         modest_sales_growth = check_earnings(
             eps_current=12.0,
