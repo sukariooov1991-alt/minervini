@@ -768,11 +768,17 @@ class ScanController:
                         self._notify_state_changed_locked()
                 continue
 
-            # A healthy symbol must not hide a dead subscription for another
-            # symbol. Use raw Quote callback activity, not only valid
-            # price ticks, so volume-only pushes also prove stream continuity.
+            # A healthy symbol must not hide a dead Quote subscription for another
+            # symbol. Raw Quote callback activity includes volume-only pushes,
+            # while Trade pushes are tracked separately and cannot mask a stalled quote feed.
             try:
-                per_symbol_activity = self.lb_client.symbol_last_message_monotonic
+                # Watch Quote callbacks specifically: a live Trade stream must
+                # not conceal a stalled price-quote subscription.
+                per_symbol_activity = getattr(
+                    self.lb_client,
+                    "symbol_last_quote_monotonic",
+                    self.lb_client.symbol_last_message_monotonic,
+                )
                 recovery_candidates: list[tuple[str, float | None]] = []
                 for symbol in symbols:
                     last_symbol_push = per_symbol_activity.get(symbol)
@@ -780,10 +786,13 @@ class ScanController:
                     age = now_mono - reference if reference is not None else None
                     if age is None or age <= symbol_stale_after:
                         continue
-                    last_recovery = self._ws_symbol_recovery_at.get(symbol, 0.0)
+                    symbol_recovery_at = getattr(self, "_ws_symbol_recovery_at", None)
+                    if symbol_recovery_at is None:
+                        symbol_recovery_at = self._ws_symbol_recovery_at = {}
+                    last_recovery = symbol_recovery_at.get(symbol, 0.0)
                     if now_mono - last_recovery < 300:
                         continue
-                    self._ws_symbol_recovery_at[symbol] = now_mono
+                    symbol_recovery_at[symbol] = now_mono
                     recovery_candidates.append((symbol, age))
 
                 for symbol, age in recovery_candidates:
