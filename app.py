@@ -975,8 +975,8 @@ class ScanController:
                         sequence, delta = 0, 0
                     session_key = str(quote.get("trade_session") or "regular")
                     if trade_count_sessions.get(sym) != session_key:
-                        # Count executions observed since monitoring began in this
-                        # session; this is not the provider's full-day market total.
+                        # Count valid records delivered for the active session;
+                        # the provider's initial push may include a recent history window.
                         card["trade_count"] = None
                         trade_count_sequences.pop(sym, None)
                         trade_count_sessions[sym] = session_key
