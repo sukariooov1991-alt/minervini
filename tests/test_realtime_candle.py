@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
-from app import ScanController, _latest_realtime_activity, _quote_timestamp_iso, _quote_timestamp_order, _stable_pullback_levels, _realtime_accumulation_status
+from app import ScanController, _latest_realtime_activity, _quote_timestamp_iso, _quote_timestamp_order, _stable_pullback_levels, _realtime_accumulation_status, _mark_card_ineligible
 from data.trade_levels import compute_atr
 from data.market_time import MarketTime
 
@@ -21,6 +21,64 @@ class RealtimeCandleTests(unittest.TestCase):
         controller._live_candles = {}
         return controller
 
+
+
+    def test_ineligible_scan_marks_card_but_does_not_remove_it(self):
+        card = {
+            "symbol": "AAPL",
+            "watchlist_eligible": True,
+            "entry_ready": True,
+            "passed_all_filters": True,
+            "filters": [
+                {"name": "Trend Template — price_above_150_and_200", "passed": True},
+                {"name": "Accumulation", "passed": True},
+                {"name": "Earnings Growth", "passed": True},
+            ],
+        }
+        row = {
+            "trend_template": "PASS",
+            "trend_conditions": {"price_above_150_and_200": True},
+            "accumulation": False,
+            "earnings_passed": True,
+            "rs_rating": 76,
+        }
+        result = _mark_card_ineligible(card, "2026-11-28T12:00:00+00:00", "شرط التجميع غير مستوفى", row=row)
+
+        self.assertIs(result, card)
+        self.assertEqual(result["symbol"], "AAPL")
+        self.assertFalse(result["watchlist_eligible"])
+        self.assertFalse(result["entry_ready"])
+        self.assertFalse(result["passed_all_filters"])
+        self.assertFalse(result["accumulation_passed"])
+        self.assertTrue(result["earnings_passed"])
+        self.assertEqual(result["last_scan_eligibility"], "FAIL")
+        self.assertIn("البطاقة محفوظة للمراقبة", result["status"])
+        self.assertFalse(result["filters"][1]["passed"])
+
+    def test_trend_template_failure_updates_card_conditions_without_deleting_card(self):
+        card = {
+            "symbol": "MSFT",
+            "filters": [
+                {"name": "Trend Template — price_above_150_and_200", "passed": True},
+                {"name": "Trend Template — relative_strength_rating_at_least_70", "passed": True},
+            ],
+        }
+        failure = {
+            "rs_rating": 65,
+            "trend_conditions": {
+                "price_above_150_and_200": True,
+                "relative_strength_rating_at_least_70": False,
+            },
+        }
+        result = _mark_card_ineligible(
+            card, "2026-11-28T12:00:00+00:00",
+            "فشل شرط واحد أو أكثر من Trend Template",
+            trend_failure=failure,
+        )
+        self.assertFalse(result["trend_template_passed"])
+        self.assertEqual(result["rs_rating"], 65)
+        self.assertTrue(result["filters"][0]["passed"])
+        self.assertFalse(result["filters"][1]["passed"])
 
     def test_live_accumulation_recalculates_only_with_valid_regular_session_data(self):
         frame = pd.DataFrame({
