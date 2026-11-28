@@ -134,17 +134,25 @@ def check_vcp(
     sma50_vol = float(vol_all.tail(min(len(vol_all), 50)).mean())
     slope_norm = _volume_slope(vol_all.tail(min(len(vol_all), 40)))
 
+    # Minervini specifies that the final contraction should trade below its
+    # 50-day average volume, with one or two exceptionally quiet days around
+    # the tight right-side/pivot area. Do not substitute a negative 40-day
+    # volume slope: earlier high-volume sessions can keep that slope positive
+    # even when the final contraction has dried up correctly.
     final_seg = base.iloc[last_c["high_idx"] : last_c["low_idx"] + 1]
     final_vol_mean = float(pd.to_numeric(final_seg["volume"], errors="coerce").mean())
 
-    recent_right = pd.to_numeric(base["volume"].tail(8), errors="coerce")
-    dry_pocket_days = int((recent_right < 0.55 * sma50_vol).sum()) if sma50_vol > 0 else 0
+    # The quiet-day check must belong to the final contraction/right-side
+    # pivot region. A low-volume day elsewhere in the base is not evidence
+    # that supply has dried up at the current buy point.
+    pivot_window_start = max(int(last_c["high_idx"]), len(base) - 8)
+    pivot_window = pd.to_numeric(base["volume"].iloc[pivot_window_start:], errors="coerce")
+    dry_pocket_days = int((pivot_window < 0.55 * sma50_vol).sum()) if sma50_vol > 0 else 0
 
     vol_dry = bool(
         sma50_vol > 0
         and np.isfinite(final_vol_mean)
-        and final_vol_mean < 0.75 * sma50_vol
-        and (np.isnan(slope_norm) or slope_norm <= 0.0)
+        and final_vol_mean < sma50_vol
         and dry_pocket_days >= 1
     )
 
@@ -179,7 +187,7 @@ def check_breakout(
     df: pd.DataFrame,
     pivot: float = None,
     volume_average_period: int = 50,
-    min_volume_mult: float = 1.35,
+    min_volume_mult: float = 1.0,
     min_close_pos: float = 0.65,
     breakout_buffer_pct: float = 0.25,
     require_vcp_structure: bool = True,
@@ -217,7 +225,9 @@ def check_breakout(
         return False
 
     price_ok = close > pivot * (1.0 + breakout_buffer_pct / 100.0)
-    vol_ok = volume >= avg_vol * min_volume_mult
+    # Minervini's stated baseline is volume above its own 50-day average;
+    # larger surges are preferable but are not a universal +35% requirement.
+    vol_ok = volume > avg_vol * min_volume_mult
     candle_range = high - low
     close_pos_ok = (
         candle_range > 0 and ((close - low) / candle_range) >= min_close_pos
