@@ -129,6 +129,7 @@ class LongbridgeQuoteTests(unittest.TestCase):
         self.assertEqual(payload["source"], "longbridge_trade_websocket")
         self.assertEqual(payload["trade_count_delta"], 2)
         self.assertEqual(payload["trade_count_sequence"], 777)
+        self.assertGreater(client.symbol_last_trade_monotonic["AAPL"], 0)
         self.assertIsNone(payload["volume"])
 
     def test_volume_only_push_is_forwarded_without_inventing_a_price(self):
@@ -363,6 +364,7 @@ class LongbridgeQuoteTests(unittest.TestCase):
         activity = client.symbol_last_message_monotonic
         self.assertIn("AAPL", activity)
         self.assertGreater(activity["AAPL"], 0)
+        self.assertGreater(client.symbol_last_quote_monotonic["AAPL"], 0)
 
     def test_resubscribe_verifies_quote_with_provider(self):
         quote_type = SimpleNamespace(name="Quote")
