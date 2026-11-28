@@ -209,8 +209,9 @@ class LongbridgeRealtimeClient:
                     )
 
             def _handle_trades(symbol: str, event: Any) -> None:
-                # A PushTrades event may bundle several executions. Forward
-                # its newest valid execution into the same ordered tick pipeline.
+                # A PushTrades event may bundle several executions. Keep this
+                # callback separate from Quote price updates; it supplies only
+                # the observed execution count and trade-session metadata.
                 received_mono = time.monotonic()
                 self._last_message_monotonic = received_mono
                 display_symbol = self._denormalize_symbol(symbol)
