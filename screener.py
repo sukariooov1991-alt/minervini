@@ -534,11 +534,6 @@ class DailyScreener:
                                 })
                             earnings = {"passed": False, "error": str(exc)}
                             fundamental_status = "UNKNOWN"
-                            failures.append({
-                                "symbol": sym,
-                                "error": f"Fundamental data error: {exc}",
-                                "phase": "analysis_error",
-                            })
 
                         # Final entry readiness must include the actual trade plan.
                         # A confirmed setup alone is not an executable entry when
