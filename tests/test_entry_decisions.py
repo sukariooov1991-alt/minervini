@@ -248,6 +248,13 @@ class EntryDecisionTests(unittest.TestCase):
         self.assertFalse(result["passed"])
         self.assertIsNone(result["entry_trigger_price"])
 
+    def test_pullback_rejects_non_finite_or_non_positive_recent_prices(self):
+        frame = self._pullback_frame(98.1, 98.8)
+        frame.loc[frame.index[-1], "close"] = float("inf")
+        self.assertFalse(check_pullback(frame)["passed"])
+        frame.loc[frame.index[-1], "close"] = -1.0
+        self.assertFalse(check_pullback(frame)["passed"])
+
     def test_trade_plan_uses_atr_fallback_when_structural_low_is_missing(self):
         frame = pd.DataFrame({
             "high": [101.0 + i * 0.1 for i in range(60)],
