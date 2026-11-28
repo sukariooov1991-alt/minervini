@@ -231,6 +231,7 @@
     // /api/state and SSE can arrive out of order; never let an older snapshot
     // overwrite a newer watchlist snapshot and make visible cards disappear.
     let lastAppliedSnapshotVersion = -1;
+    let lastSnapshotInstanceId = null;
     let lastRenderedCardCount = 0;
     let scanProgressHideTimer = null;
     let scanProgressDismissedPhase = null;
@@ -560,6 +561,14 @@
         return;
       }
       const snapshotVersion = Number(data.version);
+      const incomingInstanceId = String(data.instance_id || '');
+      if (incomingInstanceId && lastSnapshotInstanceId && incomingInstanceId !== lastSnapshotInstanceId) {
+        console.info('[MINERVINI] Server instance changed; resetting snapshot cursor', {
+          previous: lastSnapshotInstanceId, current: incomingInstanceId
+        });
+        lastAppliedSnapshotVersion = -1;
+      }
+      if (incomingInstanceId) lastSnapshotInstanceId = incomingInstanceId;
       if (snapshotVersion < lastAppliedSnapshotVersion) {
         console.debug('[MINERVINI] Ignored stale state snapshot', {
           received: snapshotVersion, latest: lastAppliedSnapshotVersion
@@ -577,9 +586,12 @@
       // Render progress on every snapshot, including SSE heartbeats.
       // This keeps the progress panel responsive if an event repeats a version.
       renderScanProgress(data);
-      const isNewSnapshot = snapshotVersion > lastAppliedSnapshotVersion;
-      if (!isNewSnapshot) return;
-      lastAppliedSnapshotVersion = snapshotVersion;
+      // Equal-version snapshots are still rendered: SSE and polling may
+      // deliver the same state through different paths, and the card renderer
+      // updates existing DOM nodes in place without rebuilding or flicker.
+      if (snapshotVersion > lastAppliedSnapshotVersion) {
+        lastAppliedSnapshotVersion = snapshotVersion;
+      }
 
       // A missing cards field is an incomplete payload, not an instruction to
       // erase the watchlist. An explicit empty array remains authoritative.
