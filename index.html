@@ -399,10 +399,7 @@
 
     function renderCards(cards) {
       const container = document.getElementById('cardsContainer');
-      const seen = new Set();
-
       for (const c of cards) {
-        seen.add(c.symbol);
         const el = ensureCardElement(container, c.symbol);
         el.classList.toggle('is-open', openCards.has(c.symbol));
         el.querySelector('.card-header').setAttribute('aria-expanded', String(openCards.has(c.symbol)));
@@ -457,7 +454,10 @@
         const status = el.querySelector('.status-badge');
         setTextIfChanged(status, c.current_eligibility === 'FAIL' ? 'غير مؤهل حالياً' : (c.entry_ready ? 'جاهز للدخول' : (c.setup_passed && !c.entry_confirmation_passed ? 'بانتظار التأكيد' : (c.setup_passed && !c.market_favorable ? 'السوق غير ملائم' : 'مراقبة'))));
         status.classList.toggle('ready', Boolean(c.entry_ready));
-        setTextIfChanged(el.querySelector('.stage-badge'), String(c.stage || 'تجميع بانتظار النموذج').replace(/^المرحلة\s*\d+\s*:\s*/, ''));
+        const stageLabel = String(c.stage || 'تجميع بانتظار النموذج')
+          .replace(/\bVCP\b/g, 'انكماش التذبذب')
+          .replace(/\bPullback\b/g, 'التراجع السعري');
+        setTextIfChanged(el.querySelector('.stage-badge'), stageLabel.replace(/^المرحلة\s*\d+\s*:\s*/, ''));
         const entries = Array.isArray(c.entry_zones) ? c.entry_zones : [];
         const targets = Array.isArray(c.targets) ? c.targets : [];
         const rows = el.querySelector('.levels-rows');
@@ -493,7 +493,25 @@
             const row = document.createElement('div');
             row.className = 'filter-row';
             const name = document.createElement('span');
-            name.textContent = f && f.name != null ? String(f.name) : '';
+            const filterNameTranslations = {
+              'VCP Pattern': 'نموذج انكماش التذبذب',
+              'VCP Breakout Confirmation': 'تأكيد اختراق نقطة الارتكاز',
+              'Pullback Setup': 'نموذج التراجع السعري',
+              'Pullback Entry Confirmation': 'تأكيد انعطاف السعر للأعلى',
+              'Accumulation': 'التجميع',
+              'Earnings Growth': 'نمو الأرباح والمبيعات',
+              'Market Regime Favorable': 'ملاءمة حالة السوق',
+              'Trend Template — price_above_150_and_200': 'السعر أعلى من متوسطي 150 و200 يوم',
+              'Trend Template — sma150_above_sma200': 'متوسط 150 يوم أعلى من متوسط 200 يوم',
+              'Trend Template — sma200_rising_for_at_least_one_month': 'متوسط 200 يوم صاعد منذ شهر على الأقل',
+              'Trend Template — sma50_above_150_and_200': 'متوسط 50 يوم أعلى من متوسطي 150 و200 يوم',
+              'Trend Template — price_above_sma50': 'السعر أعلى من متوسط 50 يوم',
+              'Trend Template — price_at_least_30_percent_above_52w_low': 'السعر أعلى من أدنى 52 أسبوعاً بنسبة 30% على الأقل',
+              'Trend Template — price_within_25_percent_of_52w_high': 'السعر ضمن 25% من أعلى 52 أسبوعاً',
+              'Trend Template — relative_strength_rating_at_least_70': 'القوة النسبية 70 أو أعلى'
+            };
+            const rawFilterName = f && f.name != null ? String(f.name) : '';
+            name.textContent = filterNameTranslations[rawFilterName] || rawFilterName;
             const status = document.createElement('span');
             status.textContent = f && f.pending ? 'بانتظار النموذج' : (f && f.passed ? 'ناجح' : 'غير ناجح');
             row.append(name, status);
