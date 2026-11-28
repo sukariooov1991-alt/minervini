@@ -9,7 +9,7 @@ def check_earnings(
     revenue_current: float,
     revenue_year_ago: float,
     min_eps_growth_pct: float = 20.0,
-    min_revenue_growth_pct: float = 10.0,
+    min_revenue_growth_pct: float | None = None,
     require_acceleration: bool = False,
     prior_eps_growth_pct: float = None,
 ) -> dict:
@@ -33,23 +33,33 @@ def check_earnings(
         peg = to_float(prior_eps_growth_pct)
         accel_ok = bool(pd.notna(eg) and pd.notna(peg) and eg > peg)
 
+    # Minervini discusses strong sales growth but does not set one universal
+    # percentage threshold for every industry. By default, require sales growth
+    # to be positive and report its actual rate; allow an explicit override for
+    # users who want a stricter research screen.
+    revenue_growth_ok = bool(
+        pd.notna(rg)
+        and math.isfinite(rg)
+        and (
+            rg > 0
+            if min_revenue_growth_pct is None
+            else rg >= (float(min_revenue_growth_pct) - 1e-9)
+        )
+    )
     passed = bool(
         math.isfinite(ec)
         and ec > 0
         and pd.notna(eg)
-        and pd.notna(rg)
         and math.isfinite(eg)
-        and math.isfinite(rg)
-        # Floating-point division can represent an exact 20%/10% result
-        # a few ulps below its decimal threshold; allow a tiny numeric tolerance.
         and eg >= (min_eps_growth_pct - 1e-9)
-        and rg >= (min_revenue_growth_pct - 1e-9)
+        and revenue_growth_ok
         and accel_ok
     )
     return {
         "passed": passed,
         "eps_growth_pct": eg,
         "revenue_growth_pct": rg,
+        "revenue_growth_ok": revenue_growth_ok,
         "accelerating": accel_ok,
     }
 
