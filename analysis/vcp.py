@@ -76,7 +76,7 @@ def check_vcp(
     lookback_bars: int = 90,
     pivot_order: int = 3,
     shrink_ratio_max: float = 0.75,
-    max_final_contraction_pct: float = 10.0,
+    max_final_contraction_pct: float | None = None,
     require_volume_dry_up: bool = True,
 ) -> dict:
     required = {"high", "low", "close", "volume"}
@@ -121,7 +121,14 @@ def check_vcp(
         seq[i]["depth_pct"] <= seq[i - 1]["depth_pct"] * shrink_ratio_max
         for i in range(1, len(seq))
     )
-    final_tight_ok = seq[-1]["depth_pct"] <= max_final_contraction_pct
+    # Minervini defines the final T by its contraction relative to the prior
+    # T and by volume drying up at the pivot; he does not prescribe a universal
+    # absolute 10% ceiling. Keep an optional override for explicit experiments,
+    # but do not reject an otherwise valid relative contraction by default.
+    final_tight_ok = (
+        max_final_contraction_pct is None
+        or seq[-1]["depth_pct"] <= float(max_final_contraction_pct)
+    )
 
     last_c = seq[-1]
     right_side_high = float(
@@ -172,7 +179,8 @@ def check_vcp(
         out["failed"].append("contractions do not shrink progressively by required ratio")
     if not final_tight_ok:
         out["failed"].append(
-            f"final contraction ({seq[-1]['depth_pct']:.2f}%) exceeds {max_final_contraction_pct}%"
+            f"final contraction ({seq[-1]['depth_pct']:.2f}%) exceeds "
+            f"the explicitly configured {max_final_contraction_pct}% limit"
         )
     if require_volume_dry_up and not vol_dry:
         out["failed"].append("volume has not dried up sufficiently on the right side")
