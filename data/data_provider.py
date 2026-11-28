@@ -499,9 +499,6 @@ class DataProvider:
             # while leaving its durable candles and existing watchlist card intact.
             raise
 
-    def get_ohlcv_dataframe(self) -> pd.DataFrame:
-        return self.storage.get_candles_df(self.symbol)
-
     def _persist_earnings_events(self, frame: pd.DataFrame) -> None:
         """Backfill durable earnings events without rewriting unchanged quarters."""
         if frame is None or frame.empty or "period" not in frame.columns:
