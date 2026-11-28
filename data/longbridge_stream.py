@@ -195,15 +195,24 @@ class LongbridgeRealtimeClient:
                         continue
                     try:
                         order = float(_value(item, "timestamp") or 0)
-                        if not math.isfinite(order):
-                            order = 0.0
-                    except (TypeError, ValueError):
-                        order = 0.0
+                        volume = int(_value(item, "volume") or 0)
+                    except (TypeError, ValueError, OverflowError):
+                        continue
+                    if not math.isfinite(order) or order <= 0 or volume <= 0:
+                        continue
                     valid_trades.append((order, item, price))
                 if not valid_trades:
                     return
 
                 _, latest_trade, price = max(valid_trades, key=lambda item: item[0])
+                latest_session = _session_label(_value(latest_trade, "trade_session"))
+                # The first subscription push may contain recent executions
+                # from several sessions. Count only records belonging to the
+                # newest execution's session, never mix pre/regular/post ticks.
+                session_trade_count = sum(
+                    1 for _, item, _ in valid_trades
+                    if _session_label(_value(item, "trade_session")) == latest_session
+                )
                 payload = {
                     "symbol": display_symbol,
                     "raw_symbol": symbol,
@@ -212,11 +221,11 @@ class LongbridgeRealtimeClient:
                     "timestamp": _value(latest_trade, "timestamp"),
                     "volume": None,
                     "current_volume": None,
-                    "trade_session": _session_label(_value(latest_trade, "trade_session")),
+                    "trade_session": latest_session,
                     "trade_status": None,
                     "tag": None,
                     "source": "longbridge_trade_websocket",
-                    "trade_count_delta": len(valid_trades),
+                    "trade_count_delta": session_trade_count,
                     "trade_count_sequence": _value(event, "sequence"),
                 }
                 log.info(
