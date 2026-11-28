@@ -17,6 +17,21 @@ class PermanentDataCacheTests(unittest.TestCase):
     def setUp(self):
         self.storage = StorageManager(":memory:")
 
+    def test_corrupt_or_non_object_event_payloads_are_skipped(self):
+        self.storage.add_event("AAPL", "news", "2026-11-28T12:00:00", {"title": "valid"})
+        with self.storage._get_conn() as conn:
+            conn.execute(
+                "INSERT INTO events(symbol, type, timestamp, payload) VALUES (?, ?, ?, ?)",
+                ("AAPL", "news", "2026-11-28T12:01:00", "{broken"),
+            )
+            conn.execute(
+                "INSERT INTO events(symbol, type, timestamp, payload) VALUES (?, ?, ?, ?)",
+                ("AAPL", "news", "2026-11-28T12:02:00", "[]"),
+            )
+        events = self.storage.get_events("AAPL", "news", limit=10)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["payload"]["title"], "valid")
+
     def test_watchlist_cards_round_trip_numpy_and_pandas_scalars(self):
         card = {
             "symbol": "AAPL",
