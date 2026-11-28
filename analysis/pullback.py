@@ -9,8 +9,8 @@ above both its open and the previous close. The setup remains independent of VCP
 """
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
-
 
 from analysis.frame_utils import ordered_frame
 
