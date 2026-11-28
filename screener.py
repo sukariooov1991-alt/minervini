@@ -448,9 +448,32 @@ class DailyScreener:
                         )
                         ad = accumulation_distribution_summary(df)
 
+                        quarterly_eps_growth_history: list[float | None] = []
+                        quarterly_revenue_growth_history: list[float | None] = []
+                        prior_eps_growth_pct = None
                         try:
                             fdf = self._get_provider(sym).get_fundamentals_dataframe()
                             latest = fdf.iloc[0].to_dict() if not fdf.empty else {}
+                            if not fdf.empty and "eps_growth_pct" in fdf.columns:
+                                for value in fdf["eps_growth_pct"].head(4):
+                                    try:
+                                        number = float(value)
+                                        quarterly_eps_growth_history.append(
+                                            number if math.isfinite(number) else None
+                                        )
+                                    except (TypeError, ValueError):
+                                        quarterly_eps_growth_history.append(None)
+                                if len(fdf) > 1:
+                                    prior_eps_growth_pct = fdf.iloc[1].get("eps_growth_pct")
+                            if not fdf.empty and "revenue_growth_pct" in fdf.columns:
+                                for value in fdf["revenue_growth_pct"].head(4):
+                                    try:
+                                        number = float(value)
+                                        quarterly_revenue_growth_history.append(
+                                            number if math.isfinite(number) else None
+                                        )
+                                    except (TypeError, ValueError):
+                                        quarterly_revenue_growth_history.append(None)
                             if fdf.empty:
                                 failures.append({
                                     "symbol": sym,
@@ -482,6 +505,7 @@ class DailyScreener:
                                     latest.get("eps_year_ago"),
                                     latest.get("revenue_current"),
                                     latest.get("revenue_year_ago"),
+                                    prior_eps_growth_pct=prior_eps_growth_pct,
                                 )
                                 fundamental_status = "PASS" if earnings["passed"] else "FAIL"
                         except Exception as exc:
@@ -584,6 +608,10 @@ class DailyScreener:
                             "distribution": ad.get("distribution", False),
                             "earnings_status": fundamental_status,
                             "earnings_passed": bool(earnings.get("passed", False)),
+                            "prior_eps_growth_pct": prior_eps_growth_pct,
+                            "eps_growth_accelerating": earnings.get("accelerating"),
+                            "quarterly_eps_growth_history_pct": quarterly_eps_growth_history,
+                            "quarterly_revenue_growth_history_pct": quarterly_revenue_growth_history,
                             "market_favorable": market_favorable,
                             "market_regime": market_status.get("regime", "UNKNOWN"),
                             "watchlist_eligible": bool(

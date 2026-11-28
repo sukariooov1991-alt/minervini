@@ -11,7 +11,7 @@ def check_earnings(
     min_eps_growth_pct: float = 20.0,
     min_revenue_growth_pct: float | None = None,
     require_acceleration: bool = False,
-    prior_eps_growth_pct: float = None,
+    prior_eps_growth_pct: float | None = None,
 ) -> dict:
     def to_float(val):
         try:
@@ -28,10 +28,13 @@ def check_earnings(
     rc, ry = to_float(revenue_current), to_float(revenue_year_ago)
     eg, rg = growth(ec, ey), growth(rc, ry)
 
-    accel_ok = True
-    if require_acceleration:
-        peg = to_float(prior_eps_growth_pct)
-        accel_ok = bool(pd.notna(eg) and pd.notna(peg) and eg > peg)
+    prior_growth = to_float(prior_eps_growth_pct)
+    accelerating = (
+        bool(math.isfinite(eg) and math.isfinite(prior_growth) and eg > prior_growth)
+        if math.isfinite(eg) and math.isfinite(prior_growth)
+        else None
+    )
+    accel_ok = bool(not require_acceleration or accelerating is True)
 
     # Minervini discusses strong sales growth but does not set one universal
     # percentage threshold for every industry. By default, require sales growth
@@ -60,7 +63,7 @@ def check_earnings(
         "eps_growth_pct": eg,
         "revenue_growth_pct": rg,
         "revenue_growth_ok": revenue_growth_ok,
-        "accelerating": accel_ok,
+        "accelerating": accelerating,
     }
 
 
