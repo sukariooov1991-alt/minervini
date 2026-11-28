@@ -19,6 +19,7 @@ from analysis.accumulation_distribution import accumulation_distribution_summary
 from analysis.earnings import check_earnings
 from analysis.market_filter import check_market_regime
 from data.data_provider import DataProvider
+from data.trade_levels import build_trade_levels
 from data.market_time import MarketTime
 from data.storage_manager import StorageManager
 from data.sp500_symbols import SP500_SYMBOLS
@@ -42,6 +43,26 @@ def _missing_fundamental_fields(values: dict) -> list[str]:
         except (TypeError, ValueError):
             missing.append(field)
     return missing
+
+
+def _entry_ready_from_plan(
+    trend_template_passed: bool,
+    accumulation_passed: bool,
+    earnings_passed: bool,
+    entry_confirmation_passed: bool,
+    market_favorable: bool,
+    plan: dict,
+) -> bool:
+    """Apply every stock, setup, market, and trade-plan gate to final entry readiness."""
+    return bool(
+        trend_template_passed
+        and accumulation_passed
+        and earnings_passed
+        and entry_confirmation_passed
+        and market_favorable
+        and plan.get("status") == "جاهز"
+        and plan.get("within_entry_range") is True
+    )
 
 
 class DailyScreener:
@@ -483,6 +504,52 @@ class DailyScreener:
                                 "phase": "analysis_error",
                             })
 
+                        # Final entry readiness must include the actual trade plan.
+                        # A confirmed setup alone is not an executable entry when
+                        # the structural stop, 10% risk cap, targets, or buy range fail.
+                        use_vcp_entry = bool(vcp.get("passed") and br)
+                        use_pullback_entry = bool(pb.get("passed", False) and not use_vcp_entry)
+                        active_pivot = (
+                            pivot_val if use_vcp_entry
+                            else pb.get("entry_trigger_price") if use_pullback_entry
+                            else None
+                        )
+                        active_low = (
+                            vcp.get("final_low") if use_vcp_entry
+                            else pb.get("support_low") if use_pullback_entry
+                            else None
+                        )
+                        last_close = float(
+                            pd.to_numeric(df["close"], errors="coerce").dropna().iloc[-1]
+                        )
+                        trade_plan = (
+                            build_trade_levels(
+                                symbol=sym,
+                                current_price=last_close,
+                                pivot_price=active_pivot,
+                                candles_df=df,
+                                final_low=active_low,
+                            ).to_dict()
+                            if entry_confirmation_passed
+                            else {
+                                "pivot_price": None,
+                                "final_low": None,
+                                "entry_zones": [],
+                                "targets": [],
+                                "shared_stop_loss": None,
+                                "status": "بانتظار تأكيد نموذج الدخول",
+                                "within_entry_range": None,
+                            }
+                        )
+                        entry_ready = _entry_ready_from_plan(
+                            tt["passed"],
+                            bool(ad.get("accumulation", False)),
+                            bool(earnings.get("passed", False)),
+                            entry_confirmation_passed,
+                            market_favorable,
+                            trade_plan,
+                        )
+
                         provider_source = (
                             self._get_provider(sym).last_source if update
                             else "Stored daily data"
@@ -498,8 +565,16 @@ class DailyScreener:
                             "pullback_passed": bool(pb.get("passed", False)),
                             "pullback_candidate": bool(pb.get("candidate", False)),
                             "pullback_turning_up": bool(pb.get("turning_up", False)),
-                            "pivot_price": pivot_val,
-                            "final_low": vcp.get("final_low") if vcp.get("passed") else pb.get("support_low"),
+                            "pivot_price": active_pivot if entry_confirmation_passed else pivot_val,
+                            "final_low": active_low if entry_confirmation_passed else (
+                                vcp.get("final_low") if vcp.get("passed") else pb.get("support_low")
+                            ),
+                            "entry_zones": trade_plan.get("entry_zones", []),
+                            "targets": trade_plan.get("targets", []),
+                            "shared_stop_loss": trade_plan.get("shared_stop_loss"),
+                            "trade_plan_status": trade_plan.get("status"),
+                            "within_entry_range": trade_plan.get("within_entry_range"),
+                            "entry_ready": entry_ready,
                             "pullback_entry_price": pb.get("entry_trigger_price"),
                             "pullback_final_low": pb.get("support_low"),
                             "entry_confirmation_passed": entry_confirmation_passed,
@@ -520,12 +595,7 @@ class DailyScreener:
                                 vcp.get("passed", False)
                                 or pb.get("candidate", False)
                             ),
-                            "passed_all_filters": bool(
-                                entry_confirmation_passed
-                                and ad.get("accumulation", False)
-                                and earnings.get("passed", False)
-                                and market_favorable
-                            ),
+                            "passed_all_filters": entry_ready,
                             "screen_date": MarketTime.now().date().isoformat(),
                         }
                         # Publish an eligible candidate immediately after its
