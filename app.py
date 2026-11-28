@@ -368,34 +368,53 @@ class ScanController:
         # sessions. It never runs a stock scan or changes watchlist eligibility.
         self._daily_history_stop = threading.Event()
         self._daily_history_scheduler = None
+        self._research_scheduler = None
         if self._background_workers_enabled:
             self._daily_history_scheduler = threading.Thread(
                 target=self._daily_history_scheduler_loop,
                 name="daily-history-refresh-scheduler",
                 daemon=True,
             )
+            self._research_scheduler = threading.Thread(
+                target=self._research_scheduler_loop,
+                name="quarterly-fundamentals-news-scheduler",
+                daemon=True,
+            )
             self._daily_history_scheduler.start()
+            self._research_scheduler.start()
+
+    def _research_scheduler_loop(self) -> None:
+        """Refresh durable fundamentals/news independently of daily OHLCV updates."""
+        last_research_refresh = time.monotonic() - 4 * 3600
+        while not self._daily_history_stop.is_set():
+            elapsed = time.monotonic() - last_research_refresh
+            if elapsed < 4 * 3600:
+                self._daily_history_stop.wait(min(300, max(30, 4 * 3600 - elapsed)))
+                continue
+            try:
+                research_screener = DailyScreener(
+                    db_path=self.db_path,
+                    output_path=self.output_path,
+                    symbols=SP500_SYMBOLS,
+                )
+                research_failures = research_screener.refresh_universe_research_data()
+                last_research_refresh = time.monotonic()
+                log.info(
+                    "Background news/earnings refresh checked: symbols=%s news_failures=%s fundamentals_failures=%s",
+                    len(SP500_SYMBOLS),
+                    len(research_failures.get("news", [])),
+                    len(research_failures.get("fundamentals", [])),
+                )
+            except Exception:
+                log.exception("Background research refresh scheduler failed")
+                last_research_refresh = time.monotonic()
+                self._daily_history_stop.wait(60)
 
     def _daily_history_scheduler_loop(self) -> None:
-        """Refresh durable research caches and the rolling 300-bar OHLCV universe."""
-        last_research_refresh = time.monotonic() - 4 * 3600
+        """Refresh only the rolling 300-bar OHLCV universe after completed sessions."""
         while not self._daily_history_stop.is_set():
             try:
                 now_et = MarketTime.now()
-                if time.monotonic() - last_research_refresh >= 4 * 3600:
-                    research_screener = DailyScreener(
-                        db_path=self.db_path,
-                        output_path=self.output_path,
-                        symbols=SP500_SYMBOLS,
-                    )
-                    research_failures = research_screener.refresh_universe_research_data()
-                    last_research_refresh = time.monotonic()
-                    log.info(
-                        "Background news/earnings refresh checked: symbols=%s news_failures=%s fundamentals_failures=%s",
-                        len(SP500_SYMBOLS),
-                        len(research_failures.get("news", [])),
-                        len(research_failures.get("fundamentals", [])),
-                    )
                 market_close = get_us_equity_market_close(now_et.date())
                 if market_close is None:
                     self._daily_history_stop.wait(300)
