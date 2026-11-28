@@ -42,8 +42,8 @@ def check_pullback(df: pd.DataFrame) -> dict:
     recent_close = close.iloc[-6:].to_numpy(dtype=float)
     recent_low = low.iloc[-6:].to_numpy(dtype=float)
     if (
-        not all(pd.notna(value) and abs(float(value)) != float("inf") for value in recent_close)
-        or not all(pd.notna(value) and abs(float(value)) != float("inf") for value in recent_low)
+        not np.isfinite(recent_close).all()
+        or not np.isfinite(recent_low).all()
         or (recent_close <= 0).any()
         or (recent_low <= 0).any()
     ):
@@ -64,7 +64,7 @@ def check_pullback(df: pd.DataFrame) -> dict:
         current_open = float(pd.to_numeric(x["open"].iloc[-1], errors="coerce"))
         turning_up = bool(
             pd.notna(current_open)
-            and abs(current_open) != float("inf")
+            and np.isfinite(current_open)
             and current_open > 0
             and current_close > current_open
             and current_close > previous_close
