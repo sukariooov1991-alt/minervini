@@ -291,6 +291,8 @@ class ScanController:
         # Preserve the evolving session OHLC between WebSocket pushes. Daily
         # history in SQLite is not rewritten on every quote tick.
         self._live_candles: dict[str, dict[str, Any]] = {}
+        self._trade_count_sequences: dict[str, int] = {}
+        self._trade_count_sessions: dict[str, str] = {}
         try:
             # Restore cards before Flask can serve the first /api/state or SSE snapshot.
             self._cards = {
@@ -872,7 +874,8 @@ class ScanController:
             return
         # Quote.last_done is the authoritative live stock price for the card.
         # Volume-only Quote pushes carry no price and must not replace it.
-        raw_price = quote.get("last_done")
+        is_trade_push = quote.get("source") == "longbridge_trade_websocket"
+        raw_price = None if is_trade_push else quote.get("last_done")
         with self._lock:
             existing_card = self._cards.get(sym)
             if existing_card is None:
@@ -939,6 +942,20 @@ class ScanController:
             self._ws_connected = True
             card = self._cards.get(sym)
             if card is not None:
+                if quote.get("source") == "longbridge_trade_websocket":
+                    try:
+                        sequence = int(quote.get("trade_count_sequence"))
+                        delta = int(quote.get("trade_count_delta") or 0)
+                    except (TypeError, ValueError, OverflowError):
+                        sequence, delta = 0, 0
+                    session_key = str(quote.get("trade_session") or "regular")
+                    if self._trade_count_sessions.get(sym) != session_key:
+                        card["trade_count"] = 0
+                        self._trade_count_sequences.pop(sym, None)
+                        self._trade_count_sessions[sym] = session_key
+                    if sequence > self._trade_count_sequences.get(sym, 0) and delta > 0:
+                        card["trade_count"] = int(card.get("trade_count") or 0) + delta
+                        self._trade_count_sequences[sym] = sequence
                 card.update({
                     "current_price": round(price, 4),
                     "price_source": (
@@ -951,6 +968,11 @@ class ScanController:
             should_log = now_mono - self._ws_last_log_at.get(sym, 0.0) >= 15.0
             if should_log:
                 self._ws_last_log_at[sym] = now_mono
+            # Trade pushes update only the execution counter. They must not
+            # overwrite the Quote price or trigger a second technical recalculation.
+            if is_trade_push:
+                self._notify_state_changed_locked()
+                return
             # Enqueue while holding the same lock as immediate price
             # publication. Concurrent SDK callbacks therefore enter the
             # per-symbol FIFO in exactly the order their card updates are applied.
@@ -1321,6 +1343,8 @@ class ScanController:
                         # calculating. Do not leave an orphaned live candle or
                         # volume/order state behind after the queued tick exits.
                         self._live_candles.pop(sym, None)
+                        self._trade_count_sequences.pop(sym, None)
+                        self._trade_count_sessions.pop(sym, None)
                         getattr(self, "_live_volume_sequence", {}).pop(sym, None)
                         getattr(self, "_live_volume_timestamp", {}).pop(sym, None)
                         self._latest_quote_timestamp.pop(sym, None)
@@ -1376,6 +1400,7 @@ class ScanController:
                     )
                     card.update({
                         "current_price": round(price, 4),
+                        "trading_volume": live_bar.get("volume"),
                         "price_source": (
                             "Longbridge WebSocket" if is_price_tick
                             else card.get("price_source", "Stored daily data")
@@ -2082,6 +2107,8 @@ class ScanController:
         with self._state_cv:
             self._cards.pop(clean, None)
             self._live_candles.pop(clean, None)
+            self._trade_count_sequences.pop(clean, None)
+            self._trade_count_sessions.pop(clean, None)
             self._latest_quote_timestamp.pop(clean, None)
             self._processed_quote_timestamp.pop(clean, None)
             getattr(self, "_live_volume_sequence", {}).pop(clean, None)
