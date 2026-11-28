@@ -89,6 +89,18 @@ class VCPSourceAlignmentTests(unittest.TestCase):
         frame.loc[50, "volume"] = 100.0
         self.assertFalse(check_breakout(frame, pivot=100.0))
 
+    def test_breakout_does_not_require_unsupported_close_position_or_price_buffer(self):
+        frame = pd.DataFrame({
+            "high": [110.0] * 51,
+            "low": [90.0] * 51,
+            "close": [100.1] * 51,
+            "volume": [100.0] * 50 + [101.0],
+        })
+
+        self.assertTrue(check_breakout(frame, pivot=100.0))
+        self.assertFalse(check_breakout(frame, pivot=100.0, min_close_pos=0.65))
+        self.assertFalse(check_breakout(frame, pivot=100.0, breakout_buffer_pct=0.25))
+
 
 if __name__ == "__main__":
     unittest.main()
