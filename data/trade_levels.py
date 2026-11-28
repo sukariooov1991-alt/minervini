@@ -198,14 +198,12 @@ def default_shared_stop_loss(
     if anchor is None or not np.isfinite(anchor) or anchor <= 0:
         return None
 
-    # Prefer the setup's structural low. If it is unavailable, use one ATR
-    # below the anchor; never invent a percentage-based volatility estimate.
-    if final_low is not None and np.isfinite(final_low) and 0 < float(final_low) < anchor:
-        stop_val = float(final_low) * 0.995
-    elif atr_val is not None and np.isfinite(atr_val) and atr_val > 0:
-        stop_val = anchor - float(atr_val)
-    else:
+    # A valid stop must come from the actual setup's structural low.
+    # Do not substitute an ATR-derived stop when the setup has no structural
+    # invalidation point; such a trade plan remains incomplete.
+    if final_low is None or not np.isfinite(final_low) or not 0 < float(final_low) < anchor:
         return None
+    stop_val = float(final_low)
 
     if not np.isfinite(stop_val) or stop_val <= 0:
         return None
@@ -329,7 +327,10 @@ def build_trade_levels(
         else:
             notes.append("يوجد هدف غير صالح أو لا يتجاوز منطقة دخوله.")
     if not stop_beyond_entries:
-        notes.append("وقف الخسارة غير صالح أو ليس أسفل جميع مناطق الدخول.")
+        if low_p is None or (piv_p is not None and low_p >= piv_p):
+            notes.append("لا يوجد قاع هيكلي صالح للنموذج؛ لا يتم اختراع وقف خسارة بديل.")
+        else:
+            notes.append("وقف الخسارة غير صالح أو ليس أسفل جميع مناطق الدخول.")
     elif not stop_within_max_loss:
         notes.append(
             f"أعلى نسبة مخاطرة بين مناطق الدخول إلى الوقف تبلغ {stop_risk_pct:.2f}%؛ "
