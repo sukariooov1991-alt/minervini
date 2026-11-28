@@ -42,7 +42,7 @@ class VCPSourceAlignmentTests(unittest.TestCase):
         # The final contraction is quieter than the 50-day average, but the
         # only exceptionally quiet day occurs before that contraction begins.
         frame.loc[83, "volume"] = 100.0
-        frame.loc[85:87, "volume"] = 500.0
+        frame.loc[85:87, "volume"] = 400.0
 
         result = self._check_with_patched_structure(frame)
 
