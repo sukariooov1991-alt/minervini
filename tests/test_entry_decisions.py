@@ -248,6 +248,35 @@ class EntryDecisionTests(unittest.TestCase):
         self.assertFalse(result["passed"])
         self.assertIsNone(result["entry_trigger_price"])
 
+    def test_trade_plan_without_structural_low_does_not_fabricate_an_atr_stop(self):
+        frame = pd.DataFrame({
+            "high": [101.0 + i * 0.1 for i in range(60)],
+            "low": [99.0 + i * 0.1 for i in range(60)],
+            "close": [100.0 + i * 0.1 for i in range(60)],
+        })
+        plan = build_trade_levels("TEST", 100.0, 100.0, frame, final_low=None)
+        self.assertNotEqual(plan.status, "جاهز")
+        self.assertIsNone(plan.shared_stop_loss)
+        self.assertEqual(plan.targets, [])
+        self.assertTrue(any("قاع هيكلي" in note for note in plan.notes))
+
+    def test_default_earnings_gate_does_not_impose_a_universal_ten_percent_sales_threshold(self):
+        modest_sales_growth = check_earnings(
+            eps_current=12.0,
+            eps_year_ago=10.0,
+            revenue_current=105.0,
+            revenue_year_ago=100.0,
+        )
+        declining_sales = check_earnings(
+            eps_current=12.0,
+            eps_year_ago=10.0,
+            revenue_current=95.0,
+            revenue_year_ago=100.0,
+        )
+        self.assertTrue(modest_sales_growth["passed"])
+        self.assertAlmostEqual(modest_sales_growth["revenue_growth_pct"], 5.0)
+        self.assertFalse(declining_sales["passed"])
+
     def test_trade_plan_without_atr_does_not_fabricate_targets_or_stop(self):
         frame = pd.DataFrame({
             "high": [101.0 + i * 0.1 for i in range(10)],
