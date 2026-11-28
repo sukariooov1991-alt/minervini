@@ -124,7 +124,10 @@ class LongbridgeQuoteTests(unittest.TestCase):
 
         payload = captured["ticks"][0]
         self.assertEqual(payload["last_done"], 123.55)
-        self.assertEqual(payload["timestamp"], 101)
+        self.assertEqual(
+            payload["timestamp"],
+            datetime(2026, 11, 28, 15, 31, tzinfo=timezone.utc),
+        )
         self.assertEqual(payload["sequence"], 777)
         self.assertEqual(payload["trade_session"], "pre-market")
         self.assertEqual(payload["source"], "longbridge_trade_websocket")
