@@ -1,7 +1,10 @@
 import unittest
+import time
+from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import numpy as np
 import pandas as pd
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -13,6 +16,56 @@ from data.storage_manager import StorageManager
 class PermanentDataCacheTests(unittest.TestCase):
     def setUp(self):
         self.storage = StorageManager(":memory:")
+
+    def test_corrupt_or_non_object_event_payloads_are_skipped(self):
+        self.storage.add_event("AAPL", "news", "2026-11-28T12:00:00", {"title": "valid"})
+        with self.storage._get_conn() as conn:
+            conn.execute(
+                "INSERT INTO events(symbol, type, timestamp, payload) VALUES (?, ?, ?, ?)",
+                ("AAPL", "news", "2026-11-28T12:01:00", "{broken"),
+            )
+            conn.execute(
+                "INSERT INTO events(symbol, type, timestamp, payload) VALUES (?, ?, ?, ?)",
+                ("AAPL", "news", "2026-11-28T12:02:00", "[]"),
+            )
+        events = self.storage.get_events("AAPL", "news", limit=10)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["payload"]["title"], "valid")
+
+    def test_watchlist_cards_round_trip_numpy_and_pandas_scalars(self):
+        card = {
+            "symbol": "AAPL",
+            "flag": np.bool_(False),
+            "count": np.int64(17),
+            "values": np.array([1, 2, 3], dtype=np.int64),
+            "missing": pd.NA,
+        }
+        self.storage.save_watchlist_card(card)
+        restored = self.storage.load_watchlist_cards()[0]
+        self.assertIs(restored["flag"], False)
+        self.assertEqual(restored["count"], 17)
+        self.assertEqual(restored["values"], [1, 2, 3])
+        self.assertIsNone(restored["missing"])
+
+    def test_same_symbol_fundamentals_refresh_is_serialized_across_provider_instances(self):
+        first = DataProvider("AAPL", self.storage)
+        second = DataProvider("AAPL", self.storage)
+        calls = []
+
+        def fetch():
+            calls.append(True)
+            time.sleep(0.05)
+            return pd.DataFrame()
+
+        with patch.object(DataProvider, "_fetch_fundamentals_dataframe", side_effect=fetch):
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                results = list(pool.map(
+                    lambda provider: provider.get_fundamentals_dataframe(),
+                    [first, second],
+                ))
+
+        self.assertEqual(len(calls), 1)
+        self.assertTrue(all(frame.empty for frame in results))
 
     def test_daily_history_keeps_only_latest_300_completed_bars(self):
         dates = pd.bdate_range("2025-01-01", periods=305)

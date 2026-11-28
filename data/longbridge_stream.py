@@ -6,6 +6,7 @@ import math
 import logging
 import threading
 import time
+from datetime import datetime, timezone
 from typing import Any, Callable
 
 log = logging.getLogger(__name__)
@@ -23,6 +24,27 @@ def _valid_price(value: Any) -> float | None:
     except (TypeError, ValueError):
         return None
     return price if math.isfinite(price) and price > 0 else None
+
+
+def _timestamp_order(value: Any) -> float | None:
+    """Normalize SDK datetime timestamps and wire-format epoch seconds."""
+    if value is None:
+        return None
+    try:
+        if isinstance(value, datetime):
+            parsed = value
+        else:
+            try:
+                return_value = float(value)
+                return return_value if math.isfinite(return_value) and return_value > 0 else None
+            except (TypeError, ValueError):
+                parsed = datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        timestamp = float(parsed.timestamp())
+        return timestamp if math.isfinite(timestamp) and timestamp > 0 else None
+    except (TypeError, ValueError, OverflowError, OSError):
+        return None
 
 
 def _session_label(value: Any) -> str | None:
@@ -67,6 +89,8 @@ class LongbridgeRealtimeClient:
         self._sub_types: list[Any] = []
         self._last_message_monotonic: float | None = None
         self._symbol_last_message_monotonic: dict[str, float] = {}
+        self._symbol_last_quote_monotonic: dict[str, float] = {}
+        self._symbol_last_trade_monotonic: dict[str, float] = {}
         self._activity_lock = threading.Lock()
 
     def has_credentials(self) -> bool:
@@ -81,6 +105,18 @@ class LongbridgeRealtimeClient:
         """Return a snapshot of the last raw WebSocket push time per symbol."""
         with self._activity_lock:
             return dict(self._symbol_last_message_monotonic)
+
+    @property
+    def symbol_last_quote_monotonic(self) -> dict[str, float]:
+        """Return the last Quote callback time per symbol, excluding Trade pushes."""
+        with self._activity_lock:
+            return dict(self._symbol_last_quote_monotonic)
+
+    @property
+    def symbol_last_trade_monotonic(self) -> dict[str, float]:
+        """Return the last Trade callback time per symbol."""
+        with self._activity_lock:
+            return dict(self._symbol_last_trade_monotonic)
 
     def _normalize_symbol(self, symbol: str) -> str:
         s = str(symbol).upper().strip()
@@ -122,7 +158,9 @@ class LongbridgeRealtimeClient:
                 received_mono = time.monotonic()
                 self._last_message_monotonic = received_mono
                 with self._activity_lock:
-                    self._symbol_last_message_monotonic[self._denormalize_symbol(symbol)] = received_mono
+                    display_symbol = self._denormalize_symbol(symbol)
+                    self._symbol_last_message_monotonic[display_symbol] = received_mono
+                    self._symbol_last_quote_monotonic[display_symbol] = received_mono
                 if self.on_quote is None:
                     return
 
@@ -171,13 +209,15 @@ class LongbridgeRealtimeClient:
                     )
 
             def _handle_trades(symbol: str, event: Any) -> None:
-                # A PushTrades event may bundle several executions. Forward
-                # its newest valid execution into the same ordered tick pipeline.
+                # A PushTrades event may bundle several executions. Keep this
+                # callback separate from Quote price updates; it supplies only
+                # the observed execution count and trade-session metadata.
                 received_mono = time.monotonic()
                 self._last_message_monotonic = received_mono
                 display_symbol = self._denormalize_symbol(symbol)
                 with self._activity_lock:
                     self._symbol_last_message_monotonic[display_symbol] = received_mono
+                    self._symbol_last_trade_monotonic[display_symbol] = received_mono
                 if self.on_quote is None:
                     return
 
@@ -193,17 +233,26 @@ class LongbridgeRealtimeClient:
                     price = _valid_price(_value(item, "price"))
                     if price is None:
                         continue
+                    order = _timestamp_order(_value(item, "timestamp"))
                     try:
-                        order = float(_value(item, "timestamp") or 0)
-                        if not math.isfinite(order):
-                            order = 0.0
-                    except (TypeError, ValueError):
-                        order = 0.0
+                        volume = int(_value(item, "volume") or 0)
+                    except (TypeError, ValueError, OverflowError):
+                        continue
+                    if order is None or volume <= 0:
+                        continue
                     valid_trades.append((order, item, price))
                 if not valid_trades:
                     return
 
                 _, latest_trade, price = max(valid_trades, key=lambda item: item[0])
+                latest_session = _session_label(_value(latest_trade, "trade_session"))
+                # The first subscription push may contain recent executions
+                # from several sessions. Count only records belonging to the
+                # newest execution's session, never mix pre/regular/post ticks.
+                session_trade_count = sum(
+                    1 for _, item, _ in valid_trades
+                    if _session_label(_value(item, "trade_session")) == latest_session
+                )
                 payload = {
                     "symbol": display_symbol,
                     "raw_symbol": symbol,
@@ -212,11 +261,11 @@ class LongbridgeRealtimeClient:
                     "timestamp": _value(latest_trade, "timestamp"),
                     "volume": None,
                     "current_volume": None,
-                    "trade_session": _session_label(_value(latest_trade, "trade_session")),
+                    "trade_session": latest_session,
                     "trade_status": None,
                     "tag": None,
                     "source": "longbridge_trade_websocket",
-                    "trade_count_delta": len(valid_trades),
+                    "trade_count_delta": session_trade_count,
                     "trade_count_sequence": _value(event, "sequence"),
                 }
                 log.info(
@@ -450,6 +499,8 @@ class LongbridgeRealtimeClient:
             self._last_message_monotonic = None
             with self._activity_lock:
                 self._symbol_last_message_monotonic.clear()
+                self._symbol_last_quote_monotonic.clear()
+                self._symbol_last_trade_monotonic.clear()
             if ctx is not None and hasattr(ctx, "close"):
                 try:
                     ctx.close()

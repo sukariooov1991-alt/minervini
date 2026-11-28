@@ -11,7 +11,7 @@ import pandas as pd
 
 from app import ScanController, _latest_realtime_activity, _quote_timestamp_iso, _quote_timestamp_order, _stable_pullback_levels, _realtime_accumulation_status, _mark_card_ineligible
 from data.trade_levels import compute_atr
-from data.market_time import MarketTime
+
 
 
 class RealtimeCandleTests(unittest.TestCase):
@@ -298,7 +298,7 @@ class RealtimeCandleTests(unittest.TestCase):
         reading = controller._build_smart_reading_from_card(
             card, live, live_candle_included=True
         )
-        self.assertIn("ATR(14) يقارب 2.00", reading)
+        self.assertIn("متوسط المدى الحقيقي (14) يقارب 2.00", reading)
 
     def test_watchdog_uses_new_subscription_time_after_quiet_reconnect(self):
         self.assertEqual(_latest_realtime_activity(100.0, 200.0), 200.0)
@@ -463,7 +463,7 @@ class RealtimeCandleTests(unittest.TestCase):
         session = date(2026, 11, 26)
 
         first = controller._merge_live_candle("AAPL", None, 100.0, 1000.0, session)
-        second = controller._merge_live_candle("AAPL", None, 101.0, 1200.0, session)
+        controller._merge_live_candle("AAPL", None, 101.0, 1200.0, session)
         third = controller._merge_live_candle("AAPL", None, 99.0, 1100.0, session)
 
         self.assertEqual(first["open"], 100.0)
@@ -488,7 +488,7 @@ class RealtimeCandleTests(unittest.TestCase):
         )
 
         self.assertIsNotNone(expected_atr)
-        self.assertIn(f"ATR(14) يقارب {expected_atr:.2f}", reading)
+        self.assertIn(f"متوسط المدى الحقيقي (14) يقارب {expected_atr:.2f}", reading)
 
     def test_startup_revalidation_clears_obsolete_pullback_entry_levels(self):
         controller = ScanController.__new__(ScanController)

@@ -1,5 +1,6 @@
 import unittest
 import sys
+from datetime import datetime, timezone
 from types import ModuleType, SimpleNamespace
 from unittest.mock import patch
 
@@ -77,7 +78,7 @@ class LongbridgeQuoteTests(unittest.TestCase):
         self.assertEqual(payload["trade_session"], "pre-market")
 
 
-    def test_trade_push_forwards_the_latest_execution_as_a_price_tick(self):
+    def test_trade_push_forwards_latest_execution_and_batch_count(self):
         captured = {}
 
         class FakeConfig:
@@ -115,17 +116,24 @@ class LongbridgeQuoteTests(unittest.TestCase):
         captured["trades_callback"]("AAPL.US", SimpleNamespace(
             sequence=777,
             trades=[
-                SimpleNamespace(price="123.40", volume=5, timestamp=100, trade_session=1),
-                SimpleNamespace(price="123.55", volume=2, timestamp=101, trade_session=1),
+                SimpleNamespace(price="123.20", volume=8, timestamp=datetime(2026, 11, 28, 15, 29, tzinfo=timezone.utc), trade_session=2),
+                SimpleNamespace(price="123.40", volume=5, timestamp=datetime(2026, 11, 28, 15, 30, tzinfo=timezone.utc), trade_session=1),
+                SimpleNamespace(price="123.55", volume=2, timestamp=datetime(2026, 11, 28, 15, 31, tzinfo=timezone.utc), trade_session=1),
             ],
         ))
 
         payload = captured["ticks"][0]
         self.assertEqual(payload["last_done"], 123.55)
-        self.assertEqual(payload["timestamp"], 101)
+        self.assertEqual(
+            payload["timestamp"],
+            datetime(2026, 11, 28, 15, 31, tzinfo=timezone.utc),
+        )
         self.assertEqual(payload["sequence"], 777)
         self.assertEqual(payload["trade_session"], "pre-market")
         self.assertEqual(payload["source"], "longbridge_trade_websocket")
+        self.assertEqual(payload["trade_count_delta"], 2)
+        self.assertEqual(payload["trade_count_sequence"], 777)
+        self.assertGreater(client.symbol_last_trade_monotonic["AAPL"], 0)
         self.assertIsNone(payload["volume"])
 
     def test_volume_only_push_is_forwarded_without_inventing_a_price(self):
@@ -360,6 +368,7 @@ class LongbridgeQuoteTests(unittest.TestCase):
         activity = client.symbol_last_message_monotonic
         self.assertIn("AAPL", activity)
         self.assertGreater(activity["AAPL"], 0)
+        self.assertGreater(client.symbol_last_quote_monotonic["AAPL"], 0)
 
     def test_resubscribe_verifies_quote_with_provider(self):
         quote_type = SimpleNamespace(name="Quote")

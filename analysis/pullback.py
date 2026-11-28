@@ -9,8 +9,8 @@ above both its open and the previous close. The setup remains independent of VCP
 """
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
-
 
 from analysis.frame_utils import ordered_frame
 
@@ -39,6 +39,15 @@ def check_pullback(df: pd.DataFrame) -> dict:
     low = pd.to_numeric(x["low"], errors="coerce")
     if len(x) < 6 or close.iloc[-6:].isna().any() or low.iloc[-6:].isna().any():
         return result
+    recent_close = close.iloc[-6:].to_numpy(dtype=float)
+    recent_low = low.iloc[-6:].to_numpy(dtype=float)
+    if (
+        not np.isfinite(recent_close).all()
+        or not np.isfinite(recent_low).all()
+        or (recent_close <= 0).any()
+        or (recent_low <= 0).any()
+    ):
+        return result
 
     # Look only at the five bars preceding the current/evolving candle when
     # identifying the pullback; the current candle is the potential turn-up.
@@ -53,7 +62,13 @@ def check_pullback(df: pd.DataFrame) -> dict:
 
     if "open" in x.columns and pd.notna(x["open"].iloc[-1]):
         current_open = float(pd.to_numeric(x["open"].iloc[-1], errors="coerce"))
-        turning_up = current_close > current_open and current_close > previous_close
+        turning_up = bool(
+            pd.notna(current_open)
+            and np.isfinite(current_open)
+            and current_open > 0
+            and current_close > current_open
+            and current_close > previous_close
+        )
     else:
         turning_up = current_close > previous_close
 

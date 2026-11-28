@@ -334,7 +334,15 @@ def build_trade_levels(
         and stop_risk_pct <= MAX_INITIAL_STOP_LOSS_PCT + 1e-9
     )
     stop_valid = stop_beyond_entries and stop_within_max_loss
-    has_complete_levels = entries_valid and targets_valid and stop_valid
+    reward_risk_valid = bool(
+        stop_beyond_entries
+        and targets_valid
+        and all(
+            (target - entry) / (entry - shared_stop) >= 2.0 - 1e-9
+            for entry, target in zip(entry_zones, targets)
+        )
+    )
+    has_complete_levels = entries_valid and targets_valid and stop_valid and reward_risk_valid
     if not entries_valid:
         notes.append("مستويات الدخول غير صالحة أو غير مرتبة.")
     if entries_valid and not targets_valid:
@@ -342,6 +350,8 @@ def build_trade_levels(
             notes.append("الأهداف غير متاحة لعدم توفر ATR صالح؛ لم يتم توليد أهداف تقديرية.")
         else:
             notes.append("يوجد هدف غير صالح أو لا يتجاوز منطقة دخوله.")
+    elif targets_valid and stop_beyond_entries and not reward_risk_valid:
+        notes.append("نسبة العائد إلى المخاطرة في أحد الأهداف أقل من 2R؛ لا تُعتمد خطة الدخول.")
     if not stop_beyond_entries:
         if stop_source is None and (atr_val is None or not np.isfinite(atr_val) or float(atr_val) <= 0):
             notes.append("لا يوجد قاع هيكلي صالح ولا تتوفر قيمة ATR صالحة؛ الفرصة تبقى معروضة لكن وقف الخسارة غير متاح.")

@@ -6,6 +6,7 @@ import math
 import sqlite3
 import uuid
 from contextlib import contextmanager
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable
 
@@ -169,12 +170,30 @@ class StorageManager:
         if not symbol:
             raise ValueError("watchlist card requires a symbol")
         def make_json_safe(value: Any) -> Any:
+            if value is pd.NA or value is pd.NaT:
+                return None
             if isinstance(value, float) and not math.isfinite(value):
                 return None
             if isinstance(value, dict):
                 return {str(key): make_json_safe(item) for key, item in value.items()}
             if isinstance(value, (list, tuple)):
                 return [make_json_safe(item) for item in value]
+            if isinstance(value, (datetime, date)):
+                return value.isoformat()
+            if isinstance(value, (str, int, float, bool)) or value is None:
+                return value
+            if hasattr(value, "tolist") and callable(value.tolist):
+                try:
+                    return make_json_safe(value.tolist())
+                except (TypeError, ValueError):
+                    pass
+            if hasattr(value, "item") and callable(value.item):
+                try:
+                    scalar = value.item()
+                    if scalar is not value:
+                        return make_json_safe(scalar)
+                except (TypeError, ValueError):
+                    pass
             return value
 
         payload = json.dumps(
@@ -445,8 +464,11 @@ class StorageManager:
         for r in rows:
             item = dict(r)
             try:
-                item["payload"] = json.loads(item["payload"])
-            except Exception:
-                pass
+                payload = json.loads(item["payload"])
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(payload, dict):
+                continue
+            item["payload"] = payload
             out.append(item)
         return out

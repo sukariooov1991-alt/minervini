@@ -248,17 +248,25 @@ class EntryDecisionTests(unittest.TestCase):
         self.assertFalse(result["passed"])
         self.assertIsNone(result["entry_trigger_price"])
 
-    def test_trade_plan_without_structural_low_does_not_fabricate_an_atr_stop(self):
+    def test_pullback_rejects_non_finite_or_non_positive_recent_prices(self):
+        frame = self._pullback_frame(98.1, 98.8)
+        frame.loc[frame.index[-1], "close"] = float("inf")
+        self.assertFalse(check_pullback(frame)["passed"])
+        frame.loc[frame.index[-1], "close"] = -1.0
+        self.assertFalse(check_pullback(frame)["passed"])
+
+    def test_trade_plan_uses_atr_fallback_when_structural_low_is_missing(self):
         frame = pd.DataFrame({
             "high": [101.0 + i * 0.1 for i in range(60)],
             "low": [99.0 + i * 0.1 for i in range(60)],
             "close": [100.0 + i * 0.1 for i in range(60)],
         })
+        atr = compute_atr(frame, period=14)
         plan = build_trade_levels("TEST", 100.0, 100.0, frame, final_low=None)
-        self.assertNotEqual(plan.status, "جاهز")
-        self.assertIsNone(plan.shared_stop_loss)
-        self.assertEqual(plan.targets, [])
-        self.assertTrue(any("قاع هيكلي" in note for note in plan.notes))
+        self.assertIsNotNone(atr)
+        self.assertEqual(plan.stop_source, "atr")
+        self.assertAlmostEqual(plan.shared_stop_loss, 100.0 - 2.0 * atr, places=4)
+        self.assertEqual(plan.status, "جاهز")
 
     def test_earnings_acceleration_is_reported_without_becoming_a_default_hard_gate(self):
         accelerating = check_earnings(

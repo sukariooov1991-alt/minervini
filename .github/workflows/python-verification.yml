@@ -24,10 +24,23 @@ jobs:
           python-version: "3.11"
           cache: pip
           cache-dependency-path: requirements.txt
-      - name: Install dependencies
+      - name: Install dependencies and static checker
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+          pip install pyflakes
+      - name: Check unused imports and dead local names
+        run: |
+          python -m pyflakes analysis data tests app.py screener.py gunicorn.conf.py
+      - name: Check dashboard JavaScript syntax
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          page = Path("index.html").read_text(encoding="utf-8")
+          script = page.split("<script>", 1)[1].split("</script>", 1)[0]
+          Path("/tmp/minervini-dashboard.js").write_text(script, encoding="utf-8")
+          PY
+          node --check /tmp/minervini-dashboard.js
       - name: Compile all Python modules
         run: |
           python -m compileall -q analysis data tests app.py screener.py gunicorn.conf.py

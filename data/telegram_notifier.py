@@ -17,6 +17,8 @@ from pathlib import Path
 from typing import Any
 from urllib import parse, request
 
+from data.trade_levels import MAX_INITIAL_STOP_LOSS_PCT
+
 
 class TelegramNotifier:
     def __init__(
@@ -84,6 +86,8 @@ class TelegramNotifier:
         entries = stock_item.get("entry_zones") or []
         targets = stock_item.get("targets") or []
         stop_loss = stock_item.get("shared_stop_loss")
+        plan_status = stock_item.get("trade_plan_status", stock_item.get("levels_status"))
+        within_entry_range = stock_item.get("within_entry_range")
 
         try:
             entry_values = [float(v) for v in entries]
@@ -98,10 +102,22 @@ class TelegramNotifier:
                 and all(a < b for a, b in zip(target_values, target_values[1:]))
                 and math.isfinite(stop_value)
                 and 0 < stop_value < entry_values[0]
+                and max((entry - stop_value) / entry * 100.0 for entry in entry_values)
+                    <= MAX_INITIAL_STOP_LOSS_PCT + 1e-9
+                and all(
+                    (target - entry) / (entry - stop_value) >= 2.0 - 1e-9
+                    for entry, target in zip(entry_values, target_values)
+                )
             )
         except (TypeError, ValueError):
             has_calculated_levels = False
-        return passed_all and shown_on_main and has_calculated_levels
+        return bool(
+            passed_all
+            and shown_on_main
+            and has_calculated_levels
+            and plan_status == "جاهز"
+            and within_entry_range is True
+        )
 
     @staticmethod
     def format_message(stock_item: dict[str, Any]) -> str:

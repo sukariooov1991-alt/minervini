@@ -516,7 +516,12 @@ class DailyScreener:
                                 )
                                 fundamental_status = "PASS" if earnings["passed"] else "FAIL"
                         except Exception as exc:
-                            log.exception("Fundamental data error for %s", sym)
+                            log.exception("Quarterly fundamentals fetch/calculation failed for %s", sym)
+                            failures.append({
+                                "symbol": sym,
+                                "error": f"Quarterly fundamentals fetch/calculation failed: {exc}",
+                                "phase": "fundamentals",
+                            })
                             if progress_callback:
                                 progress_callback({
                                     "phase": "خطأ في البيانات الأساسية",
@@ -529,11 +534,6 @@ class DailyScreener:
                                 })
                             earnings = {"passed": False, "error": str(exc)}
                             fundamental_status = "UNKNOWN"
-                            failures.append({
-                                "symbol": sym,
-                                "error": f"Fundamental data error: {exc}",
-                                "phase": "analysis_error",
-                            })
 
                         # Final entry readiness must include the actual trade plan.
                         # A confirmed setup alone is not an executable entry when

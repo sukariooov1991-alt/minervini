@@ -48,6 +48,14 @@ class MarketTimeState:
 # Exceptional exchange closures are deliberately explicit and auditable.
 EXTRA_CLOSURES: set[date] = set()
 EXTRA_EARLY_CLOSES: set[date] = set()
+# Official NYSE equity early closes immediately before Independence Day.
+# These dates are explicit because the exchange does not close early every year.
+INDEPENDENCE_EARLY_CLOSES: dict[int, date] = {
+    2023: date(2023, 7, 3),
+    2024: date(2024, 7, 3),
+    2025: date(2025, 7, 3),
+    2028: date(2028, 7, 3),
+}
 
 
 def _nth_weekday(year: int, month: int, weekday: int, occurrence: int) -> date:
@@ -109,13 +117,6 @@ def is_trading_day(day: date) -> bool:
     return day.weekday() < 5 and day not in us_equity_market_holidays(day.year)
 
 
-def _previous_trading_day(day: date) -> date:
-    cursor = day - timedelta(days=1)
-    while not is_trading_day(cursor):
-        cursor -= timedelta(days=1)
-    return cursor
-
-
 def us_equity_early_closes(year: int) -> set[date]:
     """Standard 13:00 ET early closes, plus explicitly configured exceptions."""
     thanksgiving = _nth_weekday(year, 11, 3, 4)
@@ -124,9 +125,11 @@ def us_equity_early_closes(year: int) -> set[date]:
     christmas_eve = date(year, 12, 24)
     if is_trading_day(christmas_eve):
         early.add(christmas_eve)
-    # The last trading day before the observed Independence Day closure.
-    independence_observed = _observed(date(year, 7, 4))
-    early.add(_previous_trading_day(independence_observed))
+    # Independence Day eves are early closes only when confirmed by the
+    # exchange's published calendar; do not infer this from the holiday alone.
+    independence_early_close = INDEPENDENCE_EARLY_CLOSES.get(year)
+    if independence_early_close is not None:
+        early.add(independence_early_close)
     return {day for day in early if is_trading_day(day)} | {
         day for day in EXTRA_EARLY_CLOSES if day.year == year and is_trading_day(day)
     }
