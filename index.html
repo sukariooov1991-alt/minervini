@@ -87,13 +87,6 @@
     .scan-message { margin-top: 8px; color: var(--muted); font-size: .82rem; }
     .btn-scan { background: var(--btn-start); }
     .btn-stop { background: var(--btn-stop); }
-    .btn-del {
-      background: transparent;
-      color: var(--stop);
-      border: 1px solid var(--stop);
-      padding: 4px 10px;
-      font-size: 0.8rem;
-    }
     .cards {
       display: flex;
       flex-direction: column;
@@ -359,7 +352,7 @@
           <div class="metrics" aria-label="بيانات التداول اللحظية">
             <div class="metric metric-price"><span class="metric-label">السعر اللحظي</span><strong class="metric-value live-price-value">—</strong><span class="metric-footnote price-sub"></span></div>
             <div class="metric metric-volume"><span class="metric-label">حجم التداول</span><strong class="metric-value live-volume-value">—</strong></div>
-            <div class="metric metric-trades"><span class="metric-label">عدد الصفقات</span><strong class="metric-value live-trades-value">—</strong><span class="metric-footnote">الصفقات المرصودة منذ بدء المتابعة</span></div>
+            <div class="metric metric-trades"><span class="metric-label">الصفقات المرصودة</span><strong class="metric-value live-trades-value">—</strong><span class="metric-footnote">تنفيذات واردة من لونجبريدج، وليست الإجمالي اليومي</span></div>
           </div>
           <section class="smart-reading-panel" hidden>
             <h3 class="smart-reading-title">القراءة الذكية للسهم</h3>
