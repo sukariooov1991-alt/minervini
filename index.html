@@ -574,12 +574,12 @@
         sessionEl.textContent = `حالة السوق: ${data.market_session || 'قبل الافتتاح'}`;
       }
 
-      // The market clock can change while the state version stays constant.
-      // Heartbeat snapshots must refresh the session badge even when no card,
-      // quote, or scan-progress state has changed.
-      if (snapshotVersion === lastAppliedSnapshotVersion) return;
-      lastAppliedSnapshotVersion = snapshotVersion;
+      // Render progress on every snapshot, including SSE heartbeats.
+      // This keeps the progress panel responsive if an event repeats a version.
       renderScanProgress(data);
+      const isNewSnapshot = snapshotVersion > lastAppliedSnapshotVersion;
+      if (!isNewSnapshot) return;
+      lastAppliedSnapshotVersion = snapshotVersion;
 
       // A missing cards field is an incomplete payload, not an instruction to
       // erase the watchlist. An explicit empty array remains authoritative.
@@ -619,11 +619,20 @@
       };
     }
 
-    fetch('/api/state', { cache: 'no-store' })
-      .then(r => r.ok ? r.json() : null)
-      .then(data => { if (data) applySnapshot(data); })
-      .catch((e) => console.error('[MINERVINI] Initial state request failed', e));
+    async function refreshStateSnapshot() {
+      try {
+        const response = await fetch('/api/state', { cache: 'no-store' });
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+        applySnapshot(await response.json());
+      } catch (error) {
+        console.warn('[MINERVINI] State polling failed; SSE remains active', error);
+      }
+    }
 
+    // SSE is the low-latency path; polling recovers updates if a mobile
+    // browser or proxy suspends/buffers the EventSource connection.
+    refreshStateSnapshot();
+    setInterval(refreshStateSnapshot, 3000);
     connectRealtimeStream();
   </script>
 </body>
