@@ -59,6 +59,21 @@ class TradeLevelsAtrFallbackTests(unittest.TestCase):
         self.assertEqual(plan.stop_source, "atr")
         self.assertLess(plan.shared_stop_loss, 100.0)
 
+    def test_targets_below_two_r_do_not_mark_the_plan_ready(self):
+        history = self._history()
+        plan = build_trade_levels(
+            symbol="TEST",
+            current_price=100.0,
+            pivot_price=100.0,
+            candles_df=history,
+            final_low=95.0,
+            target_calculator=lambda entries, *args: [
+                entry + (entry - 95.0) * 1.5 for entry in entries
+            ],
+        )
+        self.assertEqual(plan.status, "غير مكتمل")
+        self.assertTrue(any("أقل من 2R" in note for note in plan.notes))
+
     def test_missing_structural_low_and_missing_atr_leave_stop_unavailable(self):
         plan = build_trade_levels(
             symbol="TEST",
