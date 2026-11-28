@@ -176,6 +176,55 @@ def _latest_realtime_activity(
     return max(values) if values else None
 
 
+def _mark_card_ineligible(
+    card: dict[str, Any],
+    checked_at: str,
+    reason: str,
+    row: dict[str, Any] | None = None,
+    trend_failure: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Keep a watchlist card visible while marking its latest scan eligibility."""
+    if row is not None:
+        card["trend_template_passed"] = str(row.get("trend_template", "")).upper() == "PASS"
+        card["trend_conditions"] = dict(row.get("trend_conditions") or {})
+        card["accumulation_passed"] = bool(row.get("accumulation", False))
+        card["earnings_passed"] = bool(row.get("earnings_passed", False))
+        card["rs_rating"] = row.get("rs_rating", card.get("rs_rating"))
+        for item in card.get("filters", []):
+            name = str(item.get("name", ""))
+            if name.startswith("Trend Template — "):
+                condition = name.split("—", 1)[1].strip()
+                if condition in card["trend_conditions"]:
+                    item["passed"] = bool(card["trend_conditions"][condition])
+            elif name == "Accumulation":
+                item["passed"] = card["accumulation_passed"]
+            elif name == "Earnings Growth":
+                item["passed"] = card["earnings_passed"]
+    elif trend_failure is not None:
+        card["trend_template_passed"] = False
+        card["trend_conditions"] = dict(trend_failure.get("trend_conditions") or {})
+        card["rs_rating"] = trend_failure.get("rs_rating", card.get("rs_rating"))
+        for item in card.get("filters", []):
+            name = str(item.get("name", ""))
+            if name.startswith("Trend Template — "):
+                condition = name.split("—", 1)[1].strip()
+                if condition in card["trend_conditions"]:
+                    item["passed"] = bool(card["trend_conditions"][condition])
+
+    card.update({
+        "watchlist_eligible": False,
+        "entry_ready": False,
+        "passed_all_filters": False,
+        "last_scan_eligibility": "FAIL",
+        "last_scan_checked_at": checked_at,
+        "last_scan_eligibility_note": reason,
+        "status": f"غير مؤهل حالياً — {reason}؛ البطاقة محفوظة للمراقبة",
+        "stage": "المرحلة 1: متابعة عودة الأهلية",
+        "updated_at": checked_at,
+    })
+    return card
+
+
 def _stable_pullback_levels(
     card: dict[str, Any], pullback_info: dict[str, Any], enabled: bool
 ) -> tuple[float | None, float | None]:
@@ -1861,22 +1910,31 @@ class ScanController:
                 update=update, progress_callback=self._update_scan_progress,
                 batch_callback=publish_batch, stop_callback=self._stop_event.is_set, batch_size=5,
             )
-            removed: set[str] = set()
+            trend_template_failures = {
+                str(item.get("symbol", "")).upper().strip(): item
+                for item in market_status.pop("trend_template_failures", [])
+                if item.get("symbol")
+            }
+            checked_at = datetime.now(timezone.utc).isoformat()
+            ineligible_rows = {
+                str(row.get("symbol", "")).upper().strip(): row
+                for row in (
+                    result_df.to_dict(orient="records")
+                    if result_df is not None and not result_df.empty else []
+                )
+                if row.get("symbol") and not bool(row.get("watchlist_eligible", False))
+            }
+            retained_ineligible: set[str] = set()
             with self._state_cv:
                 self._market_status = market_status
                 if not self._stop_event.is_set():
-                    # A symbol absent from results is removable only when its
-                    # download and analysis completed successfully. A transient
-                    # provider/analysis failure is not evidence of lost eligibility.
+                    # A completed scan can change a card's eligibility, but
+                    # never deletes it. Users remove cards explicitly.
                     uncertain_symbols = {
                         str(item.get("symbol", "")).upper().strip()
                         for item in failures
                         if item.get("symbol")
                     }
-                    # Only remove a persisted card when that exact symbol was
-                    # fully evaluated in this scan. The result DataFrame contains
-                    # Trend-Template passes only, so absence from it is NOT proof
-                    # that a previously eligible symbol failed the strategy.
                     evaluated_symbols = {
                         str(symbol).upper().strip()
                         for symbol in (market_status.get("evaluated_symbols") or [])
@@ -1895,46 +1953,36 @@ class ScanController:
                             else []
                         )
                     }
-                    # A missing/incomplete result or an interrupted scan must
-                    # never turn into a mass deletion of the saved watchlist.
-                    removable_symbols = evaluated_symbols - uncertain_symbols
-                    removed = (set(self._cards) & removable_symbols) - eligible_symbols
+                    fully_checked = evaluated_symbols - uncertain_symbols
+                    retained_ineligible = (set(self._cards) & fully_checked) - eligible_symbols
                     log.info(
-                        "Watchlist reconciliation: evaluated=%s eligible=%s uncertain=%s removed=%s",
+                        "Watchlist reconciliation: evaluated=%s eligible=%s uncertain=%s retained_ineligible=%s removed=0",
                         len(evaluated_symbols), len(eligible_symbols),
-                        len(uncertain_symbols), len(removed),
+                        len(uncertain_symbols), len(retained_ineligible),
                     )
-                    for stale_symbol in sorted(removed):
-                        log.warning(
-                            "Watchlist reconciliation removing %s: fully_evaluated=true, "
-                            "eligible_in_current_scan=false",
-                            stale_symbol,
-                        )
-                        self._cards.pop(stale_symbol, None)
-                        self._live_candles.pop(stale_symbol, None)
-                        self._latest_quote_timestamp.pop(stale_symbol, None)
-                        self._processed_quote_timestamp.pop(stale_symbol, None)
-                        self._ws_seen_symbols.discard(stale_symbol)
-                        self._ws_last_log_at.pop(stale_symbol, None)
-                        try:
-                            self.storage.delete_watchlist_card(stale_symbol)
-                        except Exception:
-                            log.exception("Failed to delete stale persisted card for %s", stale_symbol)
-                    if removed:
-                        self._realtime_pending = deque(
-                            item for item in self._realtime_pending
-                            if str(item.get("symbol", "")).upper().strip() not in removed
-                        )
-                        if self._realtime_pending:
-                            self._realtime_event.set()
+                    for stale_symbol in sorted(retained_ineligible):
+                        row = ineligible_rows.get(stale_symbol)
+                        failure = trend_template_failures.get(stale_symbol)
+                        if row is not None:
+                            reasons = []
+                            if not bool(row.get("accumulation", False)):
+                                reasons.append("شرط التجميع غير مستوفى")
+                            if not bool(row.get("earnings_passed", False)):
+                                reasons.append("شرط نمو الأرباح/المبيعات غير مستوفى")
+                            reason = " و".join(reasons) or "شروط الأهلية غير مستوفاة"
                         else:
-                            self._realtime_event.clear()
+                            reason = "فشل شرط واحد أو أكثر من Trend Template"
+                        card = self._cards.get(stale_symbol)
+                        if card is None:
+                            continue
+                        _mark_card_ineligible(
+                            card, checked_at, reason, row=row, trend_failure=failure
+                        )
+                        try:
+                            self.storage.save_watchlist_card(card)
+                        except Exception:
+                            log.exception("Failed to persist ineligible watchlist card for %s", stale_symbol)
                 self._notify_state_changed_locked()
-            if removed and self.lb_client.has_credentials():
-                try:
-                    self.lb_client.unsubscribe(sorted(removed))
-                except Exception:
-                    log.exception("Failed to unsubscribe reconciled stale watchlist symbols")
             # One bulk subscription request for the complete current watchlist.
             # Existing subscriptions are retained; only genuinely new symbols
             # are sent to the already-running WebSocket context.
