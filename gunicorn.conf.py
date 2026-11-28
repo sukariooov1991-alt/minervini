@@ -10,6 +10,9 @@ def worker_exit(server, worker):
     # Release the process-owned Longbridge socket before a worker is replaced.
     try:
         from app import controller
+        stop_event = getattr(controller, "_daily_history_stop", None)
+        if stop_event is not None:
+            stop_event.set()
         controller.lb_client.close()
     except Exception:
-        worker.log.exception("Failed to close Longbridge quote context during worker exit")
+        worker.log.exception("Failed to stop background workers and close Longbridge context during worker exit")
