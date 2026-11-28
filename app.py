@@ -1324,16 +1324,12 @@ class ScanController:
                         pivot is not None and check_breakout(live_df, pivot=pivot)
                     )
                     pullback_passed = bool(pullback_info.get("passed", False))
-                    pullback_anchor = pullback_info.get("entry_trigger_price")
-                    pullback_low = pullback_info.get("support_low")
                 else:
                     completed_df = pd.DataFrame()
                     vcp_passed = False
                     pullback_passed = False
                     breakout_passed = False
                     pivot = None
-                    pullback_anchor = None
-                    pullback_low = None
                     pullback_info = {}
                     vcp_info = {}
 
@@ -1585,7 +1581,6 @@ class ScanController:
         """Build a technical, decision-oriented explanation; never expose feed/vendor metadata."""
         import numpy as np
 
-        sym = str(card.get("symbol") or "السهم")
         rs = card.get("rs_rating")
         regime = str(card.get("market_regime") or "غير محدد")
         within_range = card.get("within_entry_range")
