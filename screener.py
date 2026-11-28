@@ -274,6 +274,7 @@ class DailyScreener:
         download_failed_symbols: set[str] = set()
         scan_checkpoint_name = "daily_universe_update"
         if update:
+            log.info("STEP=MARKET_DATA_PHASE STATUS=STARTED symbols=%s", total)
             # Record per-symbol scan progress in SQLite for restart diagnostics.
             # The durable candle cache independently decides whether a provider
             # refresh is due, so completed symbols are still checked cheaply.
@@ -285,6 +286,8 @@ class DailyScreener:
                 # Checkpoints preserve restart visibility, but the cache itself
                 # decides whether this symbol needs a provider refresh. Always
                 # run ensure_daily_history so a stale cache cannot be skipped.
+                candle_started = time.monotonic()
+                log.info("STEP=DAILY_CANDLES STATUS=STARTED symbol=%s progress=%s/%s", sym, i, total)
                 try:
                     refreshed = self._get_provider(sym).ensure_daily_history(initial_period=period)
                     self.storage.mark_scan_symbol_completed(scan_checkpoint_name, sym)
@@ -300,12 +303,16 @@ class DailyScreener:
                         "new_rows=%s stored_candles=%s latest_date=%s source=%s",
                         sym, i, total, refreshed, cached_count, latest_date, source,
                     )
+                    log.info(
+                        "STEP=DAILY_CANDLES_TIMING STATUS=COMPLETED symbol=%s elapsed_seconds=%.3f",
+                        sym, time.monotonic() - candle_started,
+                    )
                 except Exception as exc:
                     download_failed_symbols.add(sym)
                     failures.append({"symbol": sym, "error": str(exc), "phase": "download"})
                     log.exception(
-                        "STEP=DAILY_CANDLES STATUS=FAILED symbol=%s progress=%s/%s reason=%s",
-                        sym, i, total, exc,
+                        "STEP=DAILY_CANDLES STATUS=FAILED symbol=%s progress=%s/%s elapsed_seconds=%.3f reason=%s",
+                        sym, i, total, time.monotonic() - candle_started, exc,
                     )
                     if progress_callback:
                         progress_callback({
@@ -341,14 +348,27 @@ class DailyScreener:
 
         # Breadth is computed after the universe refresh, so it reflects the
         # same stored dataset used by the cross-sectional stock analysis.
+        breadth_started = time.monotonic()
+        log.info("STEP=MARKET_BREADTH STATUS=STARTED")
         breadth_pct = self.compute_market_breadth(
             exclude_symbols=download_failed_symbols if update else None
         )
+        log.info(
+            "STEP=MARKET_BREADTH STATUS=COMPLETED elapsed_seconds=%.3f breadth_pct=%s",
+            time.monotonic() - breadth_started, breadth_pct,
+        )
+        market_started = time.monotonic()
+        log.info("STEP=MARKET_REGIME STATUS=STARTED symbol=%s", market_symbol)
         market_status = (
             {"market_favorable": True, "regime": "SKIPPED", "breadth_pct": breadth_pct,
              "reasons": ["market check disabled"]}
             if skip_market_check
             else self.check_market(market_symbol, period, breadth_pct=breadth_pct)
+        )
+        log.info(
+            "STEP=MARKET_REGIME STATUS=COMPLETED elapsed_seconds=%.3f regime=%s favorable=%s",
+            time.monotonic() - market_started, market_status.get("regime"),
+            market_status.get("market_favorable"),
         )
         market_favorable = bool(market_status.get("market_favorable", False))
         log.info(
@@ -417,6 +437,10 @@ class DailyScreener:
                         stopped = True
                         break
                     analysis_processed += 1
+                    log.info(
+                        "STEP=CANDIDATE_ANALYSIS_PROGRESS completed=%s total=%s symbol=%s batch=%s/%s",
+                        analysis_processed, total, sym, batch_no, len(batches),
+                    )
                     if progress_callback:
                         progress_callback({
                             "stage": "candidate_analysis",
