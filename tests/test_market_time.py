@@ -23,6 +23,11 @@ class MarketTimeTests(unittest.TestCase):
         self.assertIn(date(2026, 7, 3), us_equity_market_holidays(2026))
         # NYSE/Nasdaq list July 2, 2026 as a normal trading day, not an early close.
         self.assertEqual(get_us_equity_market_close(date(2026, 7, 2)), time(16, 0))
+        ny = ZoneInfo("America/New_York")
+        self.assertEqual(
+            MarketTime.state(datetime(2026, 7, 2, 14, 0, tzinfo=ny)).session,
+            MarketSession.REGULAR,
+        )
         # The published 2028 calendar explicitly lists July 3 as a 1pm close.
         self.assertEqual(get_us_equity_market_close(date(2028, 7, 3)), time(13, 0))
 
