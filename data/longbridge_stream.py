@@ -170,13 +170,79 @@ class LongbridgeRealtimeClient:
                         payload["symbol"], payload["last_done"],
                     )
 
+            def _handle_trades(symbol: str, event: Any) -> None:
+                # A PushTrades event may bundle several executions. Forward
+                # its newest valid execution into the same ordered tick pipeline.
+                received_mono = time.monotonic()
+                self._last_message_monotonic = received_mono
+                display_symbol = self._denormalize_symbol(symbol)
+                with self._activity_lock:
+                    self._symbol_last_message_monotonic[display_symbol] = received_mono
+                if self.on_quote is None:
+                    return
 
+                raw_trades = _value(event, "trades", None)
+                if raw_trades is None:
+                    raw_trades = _value(event, "trade", [])
+                try:
+                    trades = list(raw_trades or [])
+                except TypeError:
+                    trades = []
+                valid_trades = []
+                for item in trades:
+                    price = _valid_price(_value(item, "price"))
+                    if price is None:
+                        continue
+                    try:
+                        order = float(_value(item, "timestamp") or 0)
+                        if not math.isfinite(order):
+                            order = 0.0
+                    except (TypeError, ValueError):
+                        order = 0.0
+                    valid_trades.append((order, item, price))
+                if not valid_trades:
+                    return
+
+                _, latest_trade, price = max(valid_trades, key=lambda item: item[0])
+                payload = {
+                    "symbol": display_symbol,
+                    "raw_symbol": symbol,
+                    "last_done": price,
+                    "sequence": _value(event, "sequence"),
+                    "timestamp": _value(latest_trade, "timestamp"),
+                    "volume": None,
+                    "current_volume": None,
+                    "trade_session": _session_label(_value(latest_trade, "trade_session")),
+                    "trade_status": None,
+                    "tag": None,
+                    "source": "longbridge_trade_websocket",
+                }
+                log.info(
+                    "STEP=WEBSOCKET_TRADE_PUSH STATUS=RECEIVED symbol=%s price=%s timestamp=%s session=%s sequence=%s",
+                    display_symbol, price, payload["timestamp"],
+                    payload["trade_session"], payload["sequence"],
+                )
+                try:
+                    self.on_quote(payload)
+                except Exception:
+                    log.exception(
+                        "STEP=WEBSOCKET_TRADE_CALLBACK STATUS=FAILED symbol=%s price=%s",
+                        display_symbol, price,
+                    )
+
+            trade_sub_type = getattr(SubType, "Trade", None)
+            set_on_trades = getattr(ctx, "set_on_trades", None)
+            if trade_sub_type is None or not callable(set_on_trades):
+                raise RuntimeError(
+                    "Installed Longbridge SDK does not expose Trade push subscriptions."
+                )
             ctx.set_on_quote(_handle_quote)
+            ctx.set_on_trades(_handle_trades)
             self._ctx = ctx
-            self._sub_types = [SubType.Quote]
+            self._sub_types = [SubType.Quote, trade_sub_type]
             self._subscribed_symbols = []
             log.info(
-                "STEP=WEBSOCKET_CONNECT STATUS=SUCCESS overnight_enabled=%s push_types=Quote",
+                "STEP=WEBSOCKET_CONNECT STATUS=SUCCESS overnight_enabled=%s push_types=Quote,Trade",
                 enable_overnight,
             )
 
@@ -197,6 +263,12 @@ class LongbridgeRealtimeClient:
             if self._ctx is None:
                 self.connect()
 
+            required_types = {
+                str(getattr(value, "name", value)).split(".")[-1]
+                for value in self._sub_types
+            }
+            if not required_types:
+                raise RuntimeError("Longbridge subscription types are not configured.")
             active = set(self._subscribed_symbols)
             # The SDK exposes the provider's active subscription list. Reconcile
             # against it before deciding that a symbol is already subscribed;
@@ -215,11 +287,11 @@ class LongbridgeRealtimeClient:
                         }
                     active = {
                         symbol for symbol in active
-                        if {"Quote"}.issubset(actual_map.get(symbol, set()))
+                        if required_types.issubset(actual_map.get(symbol, set()))
                     }
                     active.update(
                         symbol for symbol, types in actual_map.items()
-                        if {"Quote"}.issubset(types)
+                        if required_types.issubset(types)
                     )
                     self._subscribed_symbols = sorted(active)
                 except Exception:
@@ -241,11 +313,12 @@ class LongbridgeRealtimeClient:
             except Exception:
                 log.exception(
                     "STEP=WEBSOCKET_SUBSCRIBE STATUS=FAILED requested=%s symbols=%s",
-                    len(missing), ",".join(self._denormalize_symbol(s) for s in missing),
+                    len(missing), ",".join(sorted(required_types)),
+                ",".join(self._denormalize_symbol(s) for s in missing),
                 )
                 raise
             log.info(
-                "STEP=WEBSOCKET_SUBSCRIBE STATUS=REQUEST_SENT requested=%s total_local=%s push_types=Quote symbols=%s",
+                "STEP=WEBSOCKET_SUBSCRIBE STATUS=REQUEST_SENT requested=%s total_local=%s push_types=%s symbols=%s",
                 len(missing), len(active | set(missing)),
                 ",".join(self._denormalize_symbol(s) for s in missing),
             )
@@ -273,7 +346,7 @@ class LongbridgeRealtimeClient:
                         )
                     else:
                         log.info(
-                            "STEP=WEBSOCKET_SUBSCRIBE_VERIFY STATUS=CONFIRMED symbols=%s push_types=Quote",
+                            "STEP=WEBSOCKET_SUBSCRIBE_VERIFY STATUS=CONFIRMED symbols=%s push_types=%s",
                             len(missing),
                         )
                     # Return unconfirmed symbols too: caller refreshes the
@@ -315,7 +388,7 @@ class LongbridgeRealtimeClient:
                     log.exception("STEP=WEBSOCKET_RESUBSCRIBE STATUS=UNSUBSCRIBE_FAILED symbol=%s", display)
                 try:
                     self._ctx.subscribe([symbol], self._sub_types)
-                    log.warning("STEP=WEBSOCKET_RESUBSCRIBE STATUS=SUBSCRIBE_SENT symbol=%s push_types=Quote", display)
+                    log.warning("STEP=WEBSOCKET_RESUBSCRIBE STATUS=SUBSCRIBE_SENT symbol=%s push_types=Quote,Trade", display)
                     verified = False
                     subscriptions = getattr(self._ctx, "subscriptions", None)
                     if callable(subscriptions):
@@ -327,7 +400,7 @@ class LongbridgeRealtimeClient:
                                 str(getattr(value, "name", value)).split(".")[-1]
                                 for value in raw_types
                             }
-                        verified = {"Quote"}.issubset(actual.get(symbol, set()))
+                        verified = required_types.issubset(actual.get(symbol, set()))
                     else:
                         log.error("STEP=WEBSOCKET_RESUBSCRIBE STATUS=UNVERIFIABLE symbol=%s reason=subscriptions_api_missing", display)
                     results[display] = verified
