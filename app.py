@@ -1372,7 +1372,6 @@ class ScanController:
                         watchlist_eligible
                         and entry_confirmation_passed
                         and market_favorable
-                        and plan.get("status") == "جاهز"
                         and plan.get("within_entry_range") is True
                     )
                     card.update({
@@ -1659,7 +1658,11 @@ class ScanController:
             sections.append("الأهداف السعرية المحسوبة للمناطق الخمس: " + "، ".join(fmt(x) for x in targets) + ".")
         else:
             sections.append("الأهداف: غير محددة بعد؛ لا يصح وضع أهداف رقمية قبل اكتمال نموذج الدخول ووجود ارتكاز صالح.")
-        sections.append(f"وقف الخسارة: {fmt(stop)}." if stop else "وقف الخسارة: غير محدد بعد؛ لا تعتمد صفقة دون مستوى إبطال فني واضح.")
+        if stop:
+            stop_kind = "وقف هيكلي" if card.get("stop_source") == "structural" else "وقف ATR بديل" if card.get("stop_source") == "atr" else "وقف"
+            sections.append(f"{stop_kind}: {fmt(stop)}.")
+        else:
+            sections.append("وقف الخسارة: غير متاح حالياً؛ تبقى فرصة التحليل والتنبيه قائمة، وتُعرض المخاطرة على أنها غير محسوبة.")
 
         market_text = {
             "CORRECTION_OR_DOWNTREND": "السوق العام في تصحيح أو اتجاه هابط، ما يرفع مخاطر نجاح الاختراقات.",
