@@ -3,12 +3,13 @@ import unittest
 import pandas as pd
 
 from analysis.market_filter import check_market_regime
+from analysis.accumulation_distribution import accumulation_distribution_summary
 from analysis.earnings import check_earnings
 from analysis.relative_strength import relative_strength_score
 from analysis.trend_template import check_trend_template
 from analysis.pullback import check_pullback
 from data.trade_levels import build_trade_levels, compute_atr
-from screener import DailyScreener
+from screener import DailyScreener, _entry_ready_from_plan
 
 
 class EntryDecisionTests(unittest.TestCase):
@@ -33,6 +34,43 @@ class EntryDecisionTests(unittest.TestCase):
         self.assertFalse(weak["market_favorable"])
         threshold = check_market_regime(index, breadth_pct=25.0)
         self.assertTrue(threshold["breadth_ok"])
+
+    def test_final_entry_readiness_requires_a_complete_plan_and_buy_range(self):
+        base = dict(
+            trend_template_passed=True,
+            accumulation_passed=True,
+            earnings_passed=True,
+            entry_confirmation_passed=True,
+            market_favorable=True,
+        )
+        self.assertTrue(_entry_ready_from_plan(
+            **base, plan={"status": "جاهز", "within_entry_range": True}
+        ))
+        self.assertFalse(_entry_ready_from_plan(
+            **base, plan={"status": "غير مكتمل", "within_entry_range": True}
+        ))
+        self.assertFalse(_entry_ready_from_plan(
+            **base, plan={"status": "جاهز", "within_entry_range": False}
+        ))
+        self.assertFalse(_entry_ready_from_plan(
+            **{**base, "market_favorable": False},
+            plan={"status": "جاهز", "within_entry_range": True},
+        ))
+
+    def test_accumulation_accepts_more_up_volume_without_an_arbitrary_25_percent_premium(self):
+        closes = [100.0]
+        moves = [1] * 11 + [-1] * 10 + [0] * 29
+        for move in moves:
+            closes.append(closes[-1] * (1.01 if move > 0 else 0.99 if move < 0 else 1.0))
+        frame = pd.DataFrame({
+            "close": closes,
+            "volume": [100_000.0] * len(closes),
+        })
+
+        result = accumulation_distribution_summary(frame)
+
+        self.assertAlmostEqual(result["up_down_volume_ratio"], 1.1, places=6)
+        self.assertTrue(result["accumulation"])
 
     def test_incomplete_fundamentals_are_detected_as_unknown_inputs(self):
         from screener import _missing_fundamental_fields
