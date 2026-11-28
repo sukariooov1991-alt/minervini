@@ -279,7 +279,7 @@
     async function stopScan() {
       try {
         await fetch('/api/scan/stop', { method: 'POST' });
-        document.getElementById('scanMessage').textContent = 'جارٍ إيقاف الفحص...';
+        document.getElementById('candidateDetails').textContent = 'جارٍ إيقاف الفحص...';
       } catch (e) {
         console.error('[MINERVINI] Stop scan failed', e);
       }
