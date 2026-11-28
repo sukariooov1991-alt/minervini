@@ -19,9 +19,12 @@ class MarketTimeTests(unittest.TestCase):
         self.assertFalse(is_trading_day(date(2026, 11, 28)))
         self.assertIn(date(2026, 6, 19), us_equity_market_holidays(2026))
 
-    def test_independence_day_observed_and_early_close(self):
+    def test_independence_day_holiday_and_year_specific_early_close(self):
         self.assertIn(date(2026, 7, 3), us_equity_market_holidays(2026))
-        self.assertEqual(get_us_equity_market_close(date(2026, 7, 2)), time(13, 0))
+        # NYSE/Nasdaq list July 2, 2026 as a normal trading day, not an early close.
+        self.assertEqual(get_us_equity_market_close(date(2026, 7, 2)), time(16, 0))
+        # The published 2028 calendar explicitly lists July 3 as a 1pm close.
+        self.assertEqual(get_us_equity_market_close(date(2028, 7, 3)), time(13, 0))
 
     def test_session_boundaries_and_dst_timezone(self):
         ny = ZoneInfo("America/New_York")
