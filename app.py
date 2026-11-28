@@ -216,10 +216,11 @@ def _mark_card_ineligible(
         "entry_ready": False,
         "passed_all_filters": False,
         "last_scan_eligibility": "FAIL",
+        "current_eligibility": "FAIL",
         "last_scan_checked_at": checked_at,
         "last_scan_eligibility_note": reason,
         "status": f"غير مؤهل حالياً — {reason}؛ البطاقة محفوظة للمراقبة",
-        "stage": "المرحلة 1: متابعة عودة الأهلية",
+        "stage": f"المرحلة 1: متابعة عودة الأهلية — {reason}",
         "updated_at": checked_at,
     })
     return card
@@ -1419,6 +1420,7 @@ class ScanController:
                         "accumulation_passed": accumulation_passed,
                         "earnings_passed": earnings_passed,
                         "watchlist_eligible": watchlist_eligible,
+                        "current_eligibility": "PASS" if watchlist_eligible else "FAIL",
                         "breakout_passed": breakout_passed,
                         "entry_ready": entry_ready,
                         "passed_all_filters": entry_ready,
