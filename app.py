@@ -25,6 +25,7 @@ from data.sp500_symbols import SP500_SYMBOLS
 from data.telegram_notifier import TelegramNotifier
 from screener import DailyScreener
 from analysis.vcp import check_vcp, check_breakout
+from analysis.accumulation_distribution import accumulation_distribution_summary
 from analysis.pullback import check_pullback
 from analysis.trend_template import check_trend_template
 import pandas as pd
@@ -59,6 +60,40 @@ def require_dashboard_access():
 
 
 MARKET_STATES = ["مفتوح", "بعد الإغلاق", "تداول ليلي", "قبل الافتتاح", "مغلق"]
+
+
+def _realtime_accumulation_status(
+    frame: pd.DataFrame,
+    previous_status: bool,
+    trade_session: str | None,
+) -> bool:
+    """Re-evaluate accumulation from the live daily candle during regular trading.
+
+    Outside the regular session, or when the live OHLCV window is incomplete,
+    retain the last validated status rather than turning missing data into FAIL.
+    """
+    if trade_session != "regular" or frame is None or frame.empty:
+        return bool(previous_status)
+    if not {"close", "volume"}.issubset(frame.columns):
+        return bool(previous_status)
+
+    close = pd.to_numeric(frame["close"], errors="coerce").tail(51)
+    volume = pd.to_numeric(frame["volume"], errors="coerce").tail(51)
+    if (
+        len(close) < 51
+        or len(volume) < 51
+        or close.isna().any()
+        or volume.isna().any()
+        or not all(math.isfinite(float(value)) for value in close)
+        or not all(math.isfinite(float(value)) for value in volume)
+        or (close <= 0).any()
+        or (volume < 0).any()
+        or float(volume.iloc[-1]) <= 0
+    ):
+        return bool(previous_status)
+
+    result = accumulation_distribution_summary(frame)
+    return bool(result.get("accumulation", False))
 
 
 def _quote_timestamp_order(value: Any) -> float | None:
@@ -1195,10 +1230,15 @@ class ScanController:
                 )
                 trend_template_passed = bool(tt_info.get("passed", False))
                 trend_conditions = dict(tt_info.get("conditions") or {})
-                accumulation_passed = bool(card_snapshot.get(
+                previous_accumulation = bool(card_snapshot.get(
                     "accumulation_passed",
                     next((item.get("passed", False) for item in card_snapshot.get("filters", []) if item.get("name") == "Accumulation"), False),
                 ))
+                accumulation_passed = _realtime_accumulation_status(
+                    live_df,
+                    previous_accumulation,
+                    quote.get("trade_session") or card_snapshot.get("price_session"),
+                )
                 earnings_passed = bool(card_snapshot.get(
                     "earnings_passed",
                     next((item.get("passed", False) for item in card_snapshot.get("filters", []) if item.get("name") == "Earnings Growth"), False),
@@ -1341,6 +1381,8 @@ class ScanController:
                         if name.startswith("Trend Template — "):
                             condition_name = name.split(" — ", 1)[1]
                             item["passed"] = bool(trend_conditions.get(condition_name, False))
+                        elif name == "Accumulation":
+                            item["passed"] = accumulation_passed
                         elif name == "VCP Pattern":
                             item["passed"] = vcp_passed
                         elif name in ("Breakout Confirmation", "VCP Breakout Confirmation"):
