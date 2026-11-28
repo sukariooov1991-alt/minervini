@@ -637,7 +637,6 @@ class ScanController:
             watchlist_eligible
             and entry_confirmation
             and market_favorable
-            and plan.get("status") == "جاهز"
             and plan.get("within_entry_range") is True
         )
         card.update({
@@ -655,6 +654,7 @@ class ScanController:
             "entry_zones": plan["entry_zones"],
             "targets": plan["targets"],
             "shared_stop_loss": plan["shared_stop_loss"],
+            "stop_source": plan.get("stop_source"),
             "levels_status": plan["status"],
             "within_entry_range": plan["within_entry_range"],
             "notes": plan["notes"],
@@ -1359,6 +1359,7 @@ class ScanController:
                         "entry_zones": [],
                         "targets": [],
                         "shared_stop_loss": None,
+                        "stop_source": None,
                         "status": "بانتظار نموذج الدخول",
                         "within_entry_range": None,
                         "notes": ["السهم مؤهل؛ المراقبة مستمرة حتى تحقق VCP أو Pullback."],
@@ -1404,6 +1405,7 @@ class ScanController:
                         "entry_zones": plan["entry_zones"],
                         "targets": plan["targets"],
                         "shared_stop_loss": plan["shared_stop_loss"],
+            "stop_source": plan.get("stop_source"),
                         "levels_status": plan["status"],
                         "within_entry_range": plan["within_entry_range"],
                         "notes": plan["notes"],
@@ -1770,6 +1772,7 @@ class ScanController:
                 "entry_zones": [],
                 "targets": [],
                 "shared_stop_loss": None,
+                "stop_source": None,
                 "status": "بانتظار نموذج الدخول",
                 "within_entry_range": None,
                 "notes": ["السهم مؤهل؛ المراقبة مستمرة حتى تحقق VCP أو Pullback."],
@@ -1779,7 +1782,6 @@ class ScanController:
         entry_ready = bool(
             entry_confirmation_passed
             and market_favorable
-            and plan.get("status") == "جاهز"
             and plan.get("within_entry_range") is True
         )
         if not setup_passed:
@@ -1815,6 +1817,7 @@ class ScanController:
             "entry_zones": plan["entry_zones"],
             "targets": plan["targets"],
             "shared_stop_loss": plan["shared_stop_loss"],
+            "stop_source": plan.get("stop_source"),
             "levels_status": plan["status"],
             "within_entry_range": plan["within_entry_range"],
             "notes": plan["notes"],
