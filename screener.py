@@ -6,6 +6,7 @@ import json
 import logging
 import math
 import os
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -253,14 +254,15 @@ class DailyScreener:
         total = len(self.symbols)
         processed = 0
         analysis_processed = 0
-        progress_total = total * 2
         stopped = False
 
         if progress_callback:
             progress_callback({
-                "phase": "فحص حالة السوق",
+                "stage": "market_data",
+                "phase": "فحص السوق وجلب البيانات",
                 "completed": 0,
-                "total": progress_total,
+                "total": total,
+                "percent": 0,
                 "batch": 0,
                 "batch_total": (total + batch_size - 1) // batch_size,
                 "current_symbol": market_symbol,
@@ -272,6 +274,7 @@ class DailyScreener:
         download_failed_symbols: set[str] = set()
         scan_checkpoint_name = "daily_universe_update"
         if update:
+            log.info("STEP=MARKET_DATA_PHASE STATUS=STARTED symbols=%s", total)
             # Record per-symbol scan progress in SQLite for restart diagnostics.
             # The durable candle cache independently decides whether a provider
             # refresh is due, so completed symbols are still checked cheaply.
@@ -283,6 +286,8 @@ class DailyScreener:
                 # Checkpoints preserve restart visibility, but the cache itself
                 # decides whether this symbol needs a provider refresh. Always
                 # run ensure_daily_history so a stale cache cannot be skipped.
+                candle_started = time.monotonic()
+                log.info("STEP=DAILY_CANDLES STATUS=STARTED symbol=%s progress=%s/%s", sym, i, total)
                 try:
                     refreshed = self._get_provider(sym).ensure_daily_history(initial_period=period)
                     self.storage.mark_scan_symbol_completed(scan_checkpoint_name, sym)
@@ -298,27 +303,33 @@ class DailyScreener:
                         "new_rows=%s stored_candles=%s latest_date=%s source=%s",
                         sym, i, total, refreshed, cached_count, latest_date, source,
                     )
+                    log.info(
+                        "STEP=DAILY_CANDLES_TIMING STATUS=COMPLETED symbol=%s elapsed_seconds=%.3f",
+                        sym, time.monotonic() - candle_started,
+                    )
                 except Exception as exc:
                     download_failed_symbols.add(sym)
                     failures.append({"symbol": sym, "error": str(exc), "phase": "download"})
                     log.exception(
-                        "STEP=DAILY_CANDLES STATUS=FAILED symbol=%s progress=%s/%s reason=%s",
-                        sym, i, total, exc,
+                        "STEP=DAILY_CANDLES STATUS=FAILED symbol=%s progress=%s/%s elapsed_seconds=%.3f reason=%s",
+                        sym, i, total, time.monotonic() - candle_started, exc,
                     )
                     if progress_callback:
                         progress_callback({
+                            "stage": "market_data",
                             "phase": "خطأ أثناء تحميل البيانات",
                             "completed": processed,
-                            "total": progress_total,
+                            "total": total,
                             "current_symbol": sym,
                             "error": str(exc),
                         })
                 processed = i
                 if progress_callback:
                     progress_callback({
-                        "phase": "تحميل البيانات",
+                        "stage": "market_data",
+                        "phase": "فحص السوق وجلب البيانات",
                         "completed": processed,
-                        "total": progress_total,
+                        "total": total,
                         "batch": (i - 1) // batch_size + 1,
                         "batch_total": (total + batch_size - 1) // batch_size,
                         "current_symbol": sym,
@@ -327,24 +338,53 @@ class DailyScreener:
             processed = total
             if progress_callback:
                 progress_callback({
-                    "phase": "تحميل البيانات",
+                    "stage": "market_data",
+                    "phase": "فحص السوق وجلب البيانات",
                     "completed": total,
-                    "total": progress_total,
+                    "total": total,
+                    "percent": 100,
                     "current_symbol": "",
                 })
 
         # Breadth is computed after the universe refresh, so it reflects the
         # same stored dataset used by the cross-sectional stock analysis.
+        breadth_started = time.monotonic()
+        log.info("STEP=MARKET_BREADTH STATUS=STARTED")
         breadth_pct = self.compute_market_breadth(
             exclude_symbols=download_failed_symbols if update else None
         )
+        log.info(
+            "STEP=MARKET_BREADTH STATUS=COMPLETED elapsed_seconds=%.3f breadth_pct=%s",
+            time.monotonic() - breadth_started, breadth_pct,
+        )
+        market_started = time.monotonic()
+        log.info("STEP=MARKET_REGIME STATUS=STARTED symbol=%s", market_symbol)
         market_status = (
             {"market_favorable": True, "regime": "SKIPPED", "breadth_pct": breadth_pct,
              "reasons": ["market check disabled"]}
             if skip_market_check
             else self.check_market(market_symbol, period, breadth_pct=breadth_pct)
         )
+        log.info(
+            "STEP=MARKET_REGIME STATUS=COMPLETED elapsed_seconds=%.3f regime=%s favorable=%s",
+            time.monotonic() - market_started, market_status.get("regime"),
+            market_status.get("market_favorable"),
+        )
         market_favorable = bool(market_status.get("market_favorable", False))
+        log.info(
+            "STEP=MARKET_DATA_PHASE STATUS=COMPLETED symbols=%s download_failures=%s regime=%s favorable=%s breadth_pct=%s",
+            total, len(download_failed_symbols), market_status.get("regime"),
+            market_favorable, market_status.get("breadth_pct"),
+        )
+        if progress_callback:
+            progress_callback({
+                "stage": "market_data",
+                "phase": "اكتمل فحص السوق وجلب البيانات",
+                "completed": total,
+                "total": total,
+                "percent": 100,
+                "current_symbol": "",
+            })
 
         # A stopped or failed download is never silently replaced by old stored
         # candles. Failed symbols are excluded from both RS ranking and analysis.
@@ -352,8 +392,23 @@ class DailyScreener:
             stopped = True
             rs, frames = {}, {}
         else:
+            if progress_callback:
+                progress_callback({
+                    "stage": "candidate_analysis",
+                    "phase": "تحليل الأسهم المرشحة",
+                    "completed": 0,
+                    "total": total,
+                    "percent": 0,
+                    "current_symbol": "",
+                })
+            rs_started = time.monotonic()
+            log.info("STEP=RS_RANKING STATUS=STARTED symbols=%s", total)
             rs, frames = self.compute_rs_ratings(
                 exclude_symbols=download_failed_symbols if update else None
+            )
+            log.info(
+                "STEP=RS_RANKING STATUS=COMPLETED elapsed_seconds=%.3f rated_symbols=%s",
+                time.monotonic() - rs_started, len(rs),
             )
 
         batches = [
@@ -367,9 +422,10 @@ class DailyScreener:
                     break
                 if progress_callback:
                     progress_callback({
-                        "phase": "تحميل الدفعة",
-                        "completed": total + analysis_processed,
-                        "total": progress_total,
+                        "stage": "candidate_analysis",
+                        "phase": "تحليل الأسهم المرشحة",
+                        "completed": analysis_processed,
+                        "total": total,
                         "batch": batch_no,
                         "batch_total": len(batches),
                         "batch_size": len(batch),
@@ -381,11 +437,16 @@ class DailyScreener:
                         stopped = True
                         break
                     analysis_processed += 1
+                    log.info(
+                        "STEP=CANDIDATE_ANALYSIS_PROGRESS completed=%s total=%s symbol=%s batch=%s/%s",
+                        analysis_processed, total, sym, batch_no, len(batches),
+                    )
                     if progress_callback:
                         progress_callback({
-                            "phase": "تحليل الدفعة",
-                            "completed": total + analysis_processed,
-                            "total": progress_total,
+                            "stage": "candidate_analysis",
+                            "phase": "تحليل الأسهم المرشحة",
+                            "completed": analysis_processed,
+                            "total": total,
                             "batch": batch_no,
                             "current_symbol": sym,
                         })
@@ -418,9 +479,14 @@ class DailyScreener:
                         })
                         continue
 
+                    symbol_started = time.monotonic()
+                    log.info("STEP=STOCK_ANALYSIS STATUS=STARTED symbol=%s index=%s/%s", sym, analysis_processed, total)
                     try:
                         rating = rs[sym]
+                        step_started = time.monotonic()
+                        log.info("STEP=TREND_TEMPLATE STATUS=STARTED symbol=%s", sym)
                         tt = check_trend_template(df, rating)
+                        log.info("STEP=TREND_TEMPLATE STATUS=COMPLETED symbol=%s elapsed_seconds=%.3f passed=%s", sym, time.monotonic() - step_started, tt.get("passed"))
                         if not tt["passed"]:
                             # Preserve the exact failed conditions for watchlist
                             # cards; a failed scan gate changes eligibility but
@@ -445,6 +511,8 @@ class DailyScreener:
                         # Exclude the current candle from pattern construction;
                         # breakout validation is performed against the latest candle.
                         base_df = df.iloc[:-1].copy()
+                        step_started = time.monotonic()
+                        log.info("STEP=PATTERN_ANALYSIS STATUS=STARTED symbol=%s", sym)
                         vcp = check_vcp(base_df)
                         pivot_val = vcp.get("pivot_price")
                         br = check_breakout(df, pivot=pivot_val) if vcp.get("passed") else False
@@ -454,10 +522,17 @@ class DailyScreener:
                             or pb.get("passed", False)
                         )
                         ad = accumulation_distribution_summary(df)
+                        log.info(
+                            "STEP=PATTERN_ANALYSIS STATUS=COMPLETED symbol=%s elapsed_seconds=%.3f vcp=%s pullback=%s accumulation=%s",
+                            sym, time.monotonic() - step_started, vcp.get("passed"),
+                            pb.get("passed"), ad.get("accumulation"),
+                        )
 
                         quarterly_eps_growth_history: list[float | None] = []
                         quarterly_revenue_growth_history: list[float | None] = []
                         prior_eps_growth_pct = None
+                        fundamentals_started = time.monotonic()
+                        log.info("STEP=FUNDAMENTALS STATUS=STARTED symbol=%s", sym)
                         try:
                             fdf = self._get_provider(sym).get_fundamentals_dataframe()
                             latest = fdf.iloc[0].to_dict() if not fdf.empty else {}
@@ -524,9 +599,10 @@ class DailyScreener:
                             })
                             if progress_callback:
                                 progress_callback({
+                                    "stage": "candidate_analysis",
                                     "phase": "خطأ في البيانات الأساسية",
-                                    "completed": total + analysis_processed,
-                                    "total": progress_total,
+                                    "completed": analysis_processed,
+                                    "total": total,
                                     "batch": batch_no,
                                     "batch_total": len(batches),
                                     "current_symbol": sym,
@@ -534,6 +610,10 @@ class DailyScreener:
                                 })
                             earnings = {"passed": False, "error": str(exc)}
                             fundamental_status = "UNKNOWN"
+                        log.info(
+                            "STEP=FUNDAMENTALS STATUS=COMPLETED symbol=%s elapsed_seconds=%.3f status=%s",
+                            sym, time.monotonic() - fundamentals_started, fundamental_status,
+                        )
 
                         # Final entry readiness must include the actual trade plan.
                         # A confirmed setup alone is not an executable entry when
@@ -553,6 +633,8 @@ class DailyScreener:
                         last_close = float(
                             pd.to_numeric(df["close"], errors="coerce").dropna().iloc[-1]
                         )
+                        plan_started = time.monotonic()
+                        log.info("STEP=TRADE_PLAN STATUS=STARTED symbol=%s", sym)
                         trade_plan = (
                             build_trade_levels(
                                 symbol=sym,
@@ -571,6 +653,10 @@ class DailyScreener:
                                 "status": "بانتظار تأكيد نموذج الدخول",
                                 "within_entry_range": None,
                             }
+                        )
+                        log.info(
+                            "STEP=TRADE_PLAN STATUS=COMPLETED symbol=%s elapsed_seconds=%.3f status=%s",
+                            sym, time.monotonic() - plan_started, trade_plan.get("status"),
                         )
                         entry_ready = _entry_ready_from_plan(
                             tt["passed"],
@@ -661,12 +747,19 @@ class DailyScreener:
                             row["watchlist_eligible"], row["setup_passed"],
                             row["passed_all_filters"],
                         )
+                        log.info(
+                            "STEP=STOCK_ANALYSIS_TIMING STATUS=COMPLETED symbol=%s elapsed_seconds=%.3f",
+                            sym, time.monotonic() - symbol_started,
+                        )
                         # Missing fundamentals remain uncertain and therefore
                         # are deliberately excluded from destructive reconciliation.
                         if fundamental_status != "UNKNOWN":
                             evaluated_symbols.add(sym)
                     except Exception as exc:
-                        log.exception("Unexpected analysis error for symbol %s", sym)
+                        log.exception(
+                            "STEP=STOCK_ANALYSIS STATUS=FAILED symbol=%s elapsed_seconds=%.3f",
+                            sym, time.monotonic() - symbol_started,
+                        )
                         failures.append({
                             "symbol": sym,
                             "error": str(exc),
@@ -674,9 +767,10 @@ class DailyScreener:
                         })
                         if progress_callback:
                             progress_callback({
+                                "stage": "candidate_analysis",
                                 "phase": "خطأ أثناء تحليل السهم",
-                                "completed": total + analysis_processed,
-                                "total": progress_total,
+                                "completed": analysis_processed,
+                                "total": total,
                                 "batch": batch_no,
                                 "batch_total": len(batches),
                                 "current_symbol": sym,
@@ -687,9 +781,10 @@ class DailyScreener:
                     break
                 if progress_callback:
                     progress_callback({
-                        "phase": "اكتملت الدفعة",
-                        "completed": total + analysis_processed,
-                        "total": progress_total,
+                        "stage": "candidate_analysis",
+                        "phase": "تحليل الأسهم المرشحة",
+                        "completed": analysis_processed,
+                        "total": total,
                         "batch": batch_no,
                         "batch_total": len(batches),
                         "current_symbol": "",
@@ -702,6 +797,20 @@ class DailyScreener:
             "trend_template_failures": trend_template_failures,
         }
         result = pd.DataFrame(rows)
+        log.info(
+            "STEP=CANDIDATE_ANALYSIS STATUS=%s analyzed=%s total=%s result_rows=%s failures=%s",
+            "STOPPED" if stopped else "COMPLETED", analysis_processed, total,
+            len(result), len(failures),
+        )
+        if progress_callback and not stopped:
+            progress_callback({
+                "stage": "candidate_analysis",
+                "phase": "اكتمل تحليل الأسهم المرشحة",
+                "completed": total,
+                "total": total,
+                "percent": 100,
+                "current_symbol": "",
+            })
         if not result.empty:
             result = result.sort_values(
                 ["passed_all_filters", "breakout", "vcp_passed", "rs_rating"],

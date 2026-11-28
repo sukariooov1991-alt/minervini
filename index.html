@@ -232,13 +232,21 @@
     // overwrite a newer watchlist snapshot and make visible cards disappear.
     let lastAppliedSnapshotVersion = -1;
     let lastRenderedCardCount = 0;
+    let scanProgressHideTimer = null;
+    let scanProgressDismissedPhase = null;
 
     async function startScan() {
+      if (scanProgressHideTimer) clearTimeout(scanProgressHideTimer);
+      scanProgressHideTimer = null;
+      scanProgressDismissedPhase = null;
       const message = document.getElementById('scanMessage');
       message.textContent = 'بدأ الفحص...';
       document.getElementById('scanProgress').classList.add('visible');
       document.getElementById('scanProgressFill').style.width = '0%';
       document.getElementById('scanPercent').textContent = '0%';
+      document.getElementById('scanProgressTrack').setAttribute('aria-valuenow', '0');
+      document.getElementById('scanDetails').textContent = 'جارٍ تجهيز فحص السوق والبيانات...';
+      document.getElementById('scanErrors').textContent = '';
       try {
         const response = await fetch('/api/scan/start', {
           method: 'POST',
@@ -266,40 +274,66 @@
     function renderScanProgress(data) {
       const p = data.scan_progress || {};
       const box = document.getElementById('scanProgress');
+      const terminal = ['completed', 'stopped', 'error'].includes(p.phase);
+      if (terminal && scanProgressDismissedPhase === p.phase) {
+        box.classList.remove('visible');
+        return;
+      }
       const hasProgress = Boolean(data.running || (p.phase && p.phase !== 'idle'));
       box.classList.toggle('visible', hasProgress);
       if (!hasProgress) return;
+
+      if (!terminal) {
+        if (scanProgressHideTimer) clearTimeout(scanProgressHideTimer);
+        scanProgressHideTimer = null;
+        scanProgressDismissedPhase = null;
+      }
+
       const percent = Math.max(0, Math.min(100, Number(p.percent) || 0));
       document.getElementById('scanProgressFill').style.width = percent + '%';
       document.getElementById('scanPercent').textContent = percent + '%';
       document.getElementById('scanProgressTrack').setAttribute('aria-valuenow', String(percent));
       const labels = {
         starting: 'بدأ الفحص...',
-        'فحص حالة السوق': 'جارٍ فحص حالة السوق قبل الأسهم...',
-        'تحميل الدفعة': 'جارٍ تحميل دفعة جديدة...',
-        'تحميل البيانات': 'جارٍ تحميل بيانات الأسهم...',
-        'تحليل الدفعة': 'جارٍ تحليل الدفعة...',
-        'اكتملت الدفعة': 'اكتملت الدفعة، جارٍ الانتقال للتالية...',
-        'توقف مؤقت بسبب حد Yahoo': 'توقف التحميل مؤقتاً بسبب حد Yahoo',
+        'فحص السوق وجلب البيانات': 'جارٍ فحص السوق وجلب بيانات الأسهم...',
+        'خطأ أثناء تحميل البيانات': 'تعذر تحميل بيانات سهم؛ يستمر الفحص لبقية الأسهم',
+        'اكتمل فحص السوق وجلب البيانات': 'تم الانتهاء من فحص السوق وجلب البيانات',
+        'تحليل الأسهم المرشحة': 'جارٍ تحليل الأسهم المرشحة...',
+        'خطأ في البيانات الأساسية': 'تعذر جلب بعض البيانات الأساسية؛ يستمر التحليل',
+        'خطأ أثناء تحليل السهم': 'حدث خطأ في تحليل سهم؛ يستمر الفحص',
+        'اكتمل تحليل الأسهم المرشحة': 'انتهى تحليل الأسهم بنجاح',
         completed: 'انتهى الفحص بنجاح',
         stopped: 'تم إيقاف الفحص',
         error: 'انتهى الفحص مع وجود خطأ'
       };
-      document.getElementById('scanMessage').textContent = labels[p.phase] || (data.running ? 'الفحص جارٍ...' : 'انتهى الفحص');
+      document.getElementById('scanMessage').textContent =
+        labels[p.phase] || (data.running ? 'الفحص جارٍ...' : 'انتهى الفحص');
+
       const total = Number(p.total) || 0;
       const completed = Number(p.completed) || 0;
-      const symbolTotal = Math.floor(total / 2);
-      const downloaded = Math.min(symbolTotal, completed);
-      const analyzed = Math.max(0, Math.min(symbolTotal, completed - symbolTotal));
-      let details = total
-        ? 'تحميل البيانات: ' + downloaded + '/' + symbolTotal + ' — تحليل الأسهم: ' + analyzed + '/' + symbolTotal + ' — الدفعة ' + (p.batch || 1)
-        : '';
+      let details = '';
+      if (p.stage === 'market_data') {
+        details = 'فحص السوق وجلب البيانات: ' + completed + '/' + total;
+      } else if (p.stage === 'candidate_analysis') {
+        details = 'تحليل الأسهم المرشحة: ' + completed + '/' + total;
+      }
+      if (p.batch) details += (details ? ' — ' : '') + 'الدفعة ' + p.batch;
       if (p.batch_total) details += ' — إجمالي الدفعات: ' + p.batch_total;
       if (p.current_symbol) details += (details ? ' — ' : '') + 'السهم: ' + p.current_symbol;
       if (p.error) details += (details ? '\n' : '') + 'خطأ: ' + p.error;
       document.getElementById('scanDetails').textContent = details;
+
       const errors = Array.isArray(data.scan_errors) ? data.scan_errors : [];
-      document.getElementById('scanErrors').textContent = errors.slice(-5).map(e => e.symbol + ' [' + e.phase + ']: ' + e.message).join('\n');
+      document.getElementById('scanErrors').textContent =
+        errors.slice(-5).map(e => e.symbol + ' [' + e.phase + ']: ' + e.message).join('\n');
+
+      if (terminal && !scanProgressHideTimer) {
+        scanProgressHideTimer = setTimeout(() => {
+          scanProgressDismissedPhase = p.phase;
+          box.classList.remove('visible');
+          scanProgressHideTimer = null;
+        }, 2500);
+      }
     }
 
     async function deleteCard(event, sym) {
