@@ -1959,34 +1959,67 @@ class ScanController:
             def publish_batch(rows: list[dict[str, Any]], market_status: dict[str, Any]) -> None:
                 qualified = []
                 for row in rows:
-                    if not row.get("watchlist_eligible"): continue
+                    symbol = str(row.get("symbol") or "").upper().strip()
+                    if not row.get("watchlist_eligible"):
+                        continue
+                    log.info(
+                        "STEP=WATCHLIST_CANDIDATE STATUS=ELIGIBLE symbol=%s trend_template=%s accumulation=%s earnings=%s",
+                        symbol, row.get("trend_template"), row.get("accumulation"),
+                        row.get("earnings_passed"),
+                    )
                     try:
-                        card = self._evaluate_candidate(row, bool(market_status.get("market_favorable", False)))
-                        if card: qualified.append(card)
+                        card = self._evaluate_candidate(
+                            row, bool(market_status.get("market_favorable", False))
+                        )
+                        if card is None:
+                            log.error(
+                                "STEP=WATCHLIST_CARD STATUS=SKIPPED symbol=%s reason=card_builder_returned_none",
+                                symbol,
+                            )
+                            continue
+                        qualified.append(card)
                     except Exception:
-                        log.exception("Candidate card construction failed for %s", row.get("symbol"))
-                if not qualified: return
+                        log.exception(
+                            "STEP=WATCHLIST_CARD STATUS=BUILD_FAILED symbol=%s", symbol
+                        )
+                if not qualified:
+                    return
+                published = []
                 with self._state_cv:
                     for card in qualified:
                         symbol = str(card["symbol"]).upper()
                         self._cards[symbol] = card
+                        persisted = False
                         try:
                             self.storage.save_watchlist_card(card)
+                            persisted = True
                         except Exception:
-                            log.exception("Failed to persist watchlist card for %s", symbol)
+                            log.exception(
+                                "STEP=WATCHLIST_CARD STATUS=PERSIST_FAILED symbol=%s", symbol
+                            )
+                        published.append((symbol, persisted))
                     self._notify_state_changed_locked()
+                    log.info(
+                        "STEP=WATCHLIST_PUBLISH STATUS=VISIBLE count=%s total_cards=%s symbols=%s",
+                        len(published), len(self._cards),
+                        ",".join(symbol for symbol, _ in published),
+                    )
+                for symbol, persisted in published:
+                    log.info(
+                        "STEP=WATCHLIST_PUBLISH STATUS=RESULT symbol=%s in_memory=true persisted=%s",
+                        symbol, persisted,
+                    )
                 for card in qualified:
-                    # The card is already visible. Subscribe this new symbol
-                    # on the existing shared WebSocket now, rather than waiting
-                    # for the entire universe scan to finish.
                     self._subscribe_watchlist_symbols(
                         [str(card["symbol"])],
                         context="newly eligible candidate",
                     )
                     if not card.get("entry_ready"):
                         continue
-                    try: self.notifier.send_stock_appearance_alert(card)
-                    except Exception: log.exception("Telegram alert failed for %s", card.get("symbol"))
+                    try:
+                        self.notifier.send_stock_appearance_alert(card)
+                    except Exception:
+                        log.exception("Telegram alert failed for %s", card.get("symbol"))
             log.info("STEP=SCREENER STATUS=STARTED symbols=%s", len(screener.symbols))
             result_df, failures, market_status = screener.run_screen(
                 update=update, progress_callback=self._update_scan_progress,
