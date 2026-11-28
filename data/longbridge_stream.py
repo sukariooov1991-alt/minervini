@@ -312,14 +312,15 @@ class LongbridgeRealtimeClient:
                 self._ctx.subscribe(missing, self._sub_types)
             except Exception:
                 log.exception(
-                    "STEP=WEBSOCKET_SUBSCRIBE STATUS=FAILED requested=%s symbols=%s",
+                    "STEP=WEBSOCKET_SUBSCRIBE STATUS=FAILED requested=%s push_types=%s symbols=%s",
                     len(missing), ",".join(sorted(required_types)),
-                ",".join(self._denormalize_symbol(s) for s in missing),
+                    ",".join(self._denormalize_symbol(s) for s in missing),
                 )
                 raise
             log.info(
                 "STEP=WEBSOCKET_SUBSCRIBE STATUS=REQUEST_SENT requested=%s total_local=%s push_types=%s symbols=%s",
                 len(missing), len(active | set(missing)),
+                ",".join(sorted(required_types)),
                 ",".join(self._denormalize_symbol(s) for s in missing),
             )
 
@@ -335,7 +336,7 @@ class LongbridgeRealtimeClient:
                         }
                     confirmed = {
                         symbol for symbol, types in actual_map.items()
-                        if {"Quote"}.issubset(types)
+                        if required_types.issubset(types)
                     }
                     unconfirmed = [symbol for symbol in missing if symbol not in confirmed]
                     self._subscribed_symbols = sorted(active | (confirmed & set(desired)))
@@ -347,7 +348,7 @@ class LongbridgeRealtimeClient:
                     else:
                         log.info(
                             "STEP=WEBSOCKET_SUBSCRIBE_VERIFY STATUS=CONFIRMED symbols=%s push_types=%s",
-                            len(missing),
+                            len(missing), ",".join(sorted(required_types)),
                         )
                     # Return unconfirmed symbols too: caller refreshes the
                     # watchdog baseline, and the next watchdog pass retries them.
@@ -378,6 +379,10 @@ class LongbridgeRealtimeClient:
                 return {}
             if self._ctx is None:
                 self.connect()
+            required_types = {
+                str(getattr(value, "name", value)).split(".")[-1]
+                for value in self._sub_types
+            }
             results: dict[str, bool] = {}
             for symbol in targets:
                 display = self._denormalize_symbol(symbol)
@@ -406,10 +411,10 @@ class LongbridgeRealtimeClient:
                     results[display] = verified
                     if verified:
                         self._subscribed_symbols = sorted(set(self._subscribed_symbols) | {symbol})
-                        log.info("STEP=WEBSOCKET_RESUBSCRIBE STATUS=CONFIRMED symbol=%s push_types=Quote", display)
+                        log.info("STEP=WEBSOCKET_RESUBSCRIBE STATUS=CONFIRMED symbol=%s push_types=%s", display, ",".join(sorted(required_types)))
                     else:
                         self._subscribed_symbols = [item for item in self._subscribed_symbols if item != symbol]
-                        log.error("STEP=WEBSOCKET_RESUBSCRIBE STATUS=NOT_CONFIRMED symbol=%s expected=Quote", display)
+                        log.error("STEP=WEBSOCKET_RESUBSCRIBE STATUS=NOT_CONFIRMED symbol=%s expected=%s", display, ",".join(sorted(required_types)))
                 except Exception:
                     results[display] = False
                     log.exception("STEP=WEBSOCKET_RESUBSCRIBE STATUS=FAILED symbol=%s", display)
