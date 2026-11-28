@@ -463,8 +463,11 @@ class StorageManager:
         for r in rows:
             item = dict(r)
             try:
-                item["payload"] = json.loads(item["payload"])
-            except Exception:
-                pass
+                payload = json.loads(item["payload"])
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(payload, dict):
+                continue
+            item["payload"] = payload
             out.append(item)
         return out
