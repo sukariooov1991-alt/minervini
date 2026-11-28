@@ -1,5 +1,6 @@
 import unittest
 import sys
+from datetime import datetime, timezone
 from types import ModuleType, SimpleNamespace
 from unittest.mock import patch
 
@@ -115,9 +116,9 @@ class LongbridgeQuoteTests(unittest.TestCase):
         captured["trades_callback"]("AAPL.US", SimpleNamespace(
             sequence=777,
             trades=[
-                SimpleNamespace(price="123.20", volume=8, timestamp=99, trade_session=2),
-                SimpleNamespace(price="123.40", volume=5, timestamp=100, trade_session=1),
-                SimpleNamespace(price="123.55", volume=2, timestamp=101, trade_session=1),
+                SimpleNamespace(price="123.20", volume=8, timestamp=datetime(2026, 11, 28, 15, 29, tzinfo=timezone.utc), trade_session=2),
+                SimpleNamespace(price="123.40", volume=5, timestamp=datetime(2026, 11, 28, 15, 30, tzinfo=timezone.utc), trade_session=1),
+                SimpleNamespace(price="123.55", volume=2, timestamp=datetime(2026, 11, 28, 15, 31, tzinfo=timezone.utc), trade_session=1),
             ],
         ))
 
