@@ -282,6 +282,7 @@ class ScanController:
         self._instance_id = uuid.uuid4().hex
         self._stop_event = threading.Event()
         self._running = False
+        self._scan_progress_by_stage: dict[str, dict[str, Any]] = {}
         self._market_session_label = self._detect_market_session()
         self._market_status: dict[str, Any] = {
             "regime": "UNKNOWN",
@@ -1924,10 +1925,14 @@ class ScanController:
         completed = int(progress.get("completed") or 0)
         with self._state_cv:
             calculated_percent = min(100, int(completed * 100 / total)) if total else 0
-            self._scan_progress = {
+            normalized_progress = {
                 **progress,
                 "percent": min(100, max(0, int(progress.get("percent", calculated_percent)))),
             }
+            self._scan_progress = normalized_progress
+            stage = str(progress.get("stage") or "unknown")
+            if stage in {"market_data", "candidate_analysis"}:
+                self._scan_progress_by_stage[stage] = dict(normalized_progress)
             log.info(
                 "STEP=SCAN_PROGRESS stage=%s phase=%s completed=%s total=%s percent=%s current_symbol=%s",
                 progress.get("stage", "unknown"), progress.get("phase", "unknown"),
@@ -2186,13 +2191,25 @@ class ScanController:
             self._running = True
             self._last_error = None
             self._scan_errors = []
-            self._scan_progress = {
+            initial_market_progress = {
                 "stage": "market_data",
                 "phase": "فحص السوق وجلب البيانات",
                 "completed": 0,
                 "total": len(symbols or SP500_SYMBOLS),
                 "percent": 0,
                 "current_symbol": "",
+            }
+            self._scan_progress = initial_market_progress
+            self._scan_progress_by_stage = {
+                "market_data": dict(initial_market_progress),
+                "candidate_analysis": {
+                    "stage": "candidate_analysis",
+                    "phase": "بانتظار بدء تحليل الأسهم المرشحة",
+                    "completed": 0,
+                    "total": len(symbols or SP500_SYMBOLS),
+                    "percent": 0,
+                    "current_symbol": "",
+                },
             }
             log.info("STEP=SCAN_REQUEST STATUS=ACCEPTED symbols=%s", len(symbols or SP500_SYMBOLS))
             self._notify_state_changed_locked()
@@ -2281,6 +2298,7 @@ class ScanController:
                 "market_status": self._market_status,
                 "last_error": self._last_error,
                 "scan_progress": self._scan_progress,
+                "scan_progress_by_stage": copy.deepcopy(getattr(self, "_scan_progress_by_stage", {})),
                 "scan_errors": list(self._scan_errors),
                 # Nested filter rows/lists are mutated by realtime workers;
                 # return detached card snapshots before Flask serializes them.
