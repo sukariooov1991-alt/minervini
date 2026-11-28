@@ -216,6 +216,8 @@ class LongbridgeRealtimeClient:
                     "trade_status": None,
                     "tag": None,
                     "source": "longbridge_trade_websocket",
+                    "trade_count_delta": len(valid_trades),
+                    "trade_count_sequence": _value(event, "sequence"),
                 }
                 log.info(
                     "STEP=WEBSOCKET_TRADE_PUSH STATUS=RECEIVED symbol=%s price=%s timestamp=%s session=%s sequence=%s",
