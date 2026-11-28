@@ -950,7 +950,9 @@ class ScanController:
                         sequence, delta = 0, 0
                     session_key = str(quote.get("trade_session") or "regular")
                     if self._trade_count_sessions.get(sym) != session_key:
-                        card["trade_count"] = 0
+                        # Do not display a fabricated zero before the first
+                        # sequence-verifiable execution arrives for this session.
+                        card["trade_count"] = None
                         self._trade_count_sequences.pop(sym, None)
                         self._trade_count_sessions[sym] = session_key
                     if sequence > self._trade_count_sequences.get(sym, 0) and delta > 0:
