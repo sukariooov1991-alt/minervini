@@ -6,6 +6,7 @@ import math
 import logging
 import threading
 import time
+from datetime import datetime, timezone
 from typing import Any, Callable
 
 log = logging.getLogger(__name__)
@@ -23,6 +24,27 @@ def _valid_price(value: Any) -> float | None:
     except (TypeError, ValueError):
         return None
     return price if math.isfinite(price) and price > 0 else None
+
+
+def _timestamp_order(value: Any) -> float | None:
+    """Normalize SDK datetime timestamps and wire-format epoch seconds."""
+    if value is None:
+        return None
+    try:
+        if isinstance(value, datetime):
+            parsed = value
+        else:
+            try:
+                return_value = float(value)
+                return return_value if math.isfinite(return_value) and return_value > 0 else None
+            except (TypeError, ValueError):
+                parsed = datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        timestamp = float(parsed.timestamp())
+        return timestamp if math.isfinite(timestamp) and timestamp > 0 else None
+    except (TypeError, ValueError, OverflowError, OSError):
+        return None
 
 
 def _session_label(value: Any) -> str | None:
@@ -210,12 +232,12 @@ class LongbridgeRealtimeClient:
                     price = _valid_price(_value(item, "price"))
                     if price is None:
                         continue
+                    order = _timestamp_order(_value(item, "timestamp"))
                     try:
-                        order = float(_value(item, "timestamp") or 0)
                         volume = int(_value(item, "volume") or 0)
                     except (TypeError, ValueError, OverflowError):
                         continue
-                    if not math.isfinite(order) or order <= 0 or volume <= 0:
+                    if order is None or volume <= 0:
                         continue
                     valid_trades.append((order, item, price))
                 if not valid_trades:
