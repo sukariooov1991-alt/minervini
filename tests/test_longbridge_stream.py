@@ -40,7 +40,6 @@ class LongbridgeQuoteTests(unittest.TestCase):
         class FakeSubType:
             Quote = object()
             Trade = object()
-            Trade = object()
 
         class FakeContext:
             def __init__(self, config):
@@ -48,9 +47,6 @@ class LongbridgeQuoteTests(unittest.TestCase):
 
             def set_on_quote(self, callback):
                 captured["callback"] = callback
-
-            def set_on_trades(self, callback):
-                captured["trades_callback"] = callback
 
             def set_on_trades(self, callback):
                 captured["trades_callback"] = callback
@@ -92,7 +88,6 @@ class LongbridgeQuoteTests(unittest.TestCase):
         class FakeSubType:
             Quote = object()
             Trade = object()
-            Trade = object()
 
         class FakeContext:
             def __init__(self, config):
@@ -100,9 +95,6 @@ class LongbridgeQuoteTests(unittest.TestCase):
 
             def set_on_quote(self, callback):
                 captured["callback"] = callback
-
-            def set_on_trades(self, callback):
-                captured["trades_callback"] = callback
 
             def set_on_trades(self, callback):
                 captured["trades_callback"] = callback
