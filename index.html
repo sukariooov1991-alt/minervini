@@ -107,10 +107,8 @@
       border-bottom: 1px solid var(--card-border);
     }
     .symbol { display:block; font-size:clamp(1.15rem,4vw,1.65rem); font-weight:800; }
-    .price-block { display:none; }
-    .price-label,.header-label { display:block; color:var(--muted); font-size:.76rem; font-weight:700; margin-bottom:3px; }
-    .price-text { display:block; color:var(--text); font-size:1.12rem; font-weight:700; font-variant-numeric:tabular-nums; white-space:nowrap; }
-    .price-sub { display:block; color:var(--muted); font-size:.65rem; white-space:nowrap; }
+     .header-label { display:block; color:var(--muted); font-size:.76rem; font-weight:700; margin-bottom:3px; }
+    .metric-footnote { display:block; margin-top:4px; color:var(--muted); font-size:.58rem; line-height:1.35; white-space:normal; overflow-wrap:anywhere; }
     .status-badge,.stage-badge { display:block; min-width:0; padding:7px 9px; border-radius:999px; text-align:center; font-size:.78rem; font-weight:700; line-height:1.25; }
     .status-badge { color:#fcd28b; background:#704516; }
     .status-badge.ready { color:#bbf7d0; background:#14532d; }
@@ -120,6 +118,7 @@
     .card-actions { display:flex; align-items:center; justify-content:flex-end; gap:7px; }
     .btn-smart { min-height:34px; padding:6px 10px; background:#17365f; border:1px solid #2d5b91; color:#dbeafe; font-size:.78rem; white-space:nowrap; }
     .btn-del { display:grid; place-items:center; width:34px; min-height:34px; padding:4px; color:#fca5a5; background:rgba(127,37,37,.12); border:1px solid rgba(239,68,68,.35); font-size:1rem; }
+    .btn-smart { border-radius:8px; }
     .metrics { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:7px; padding:10px 12px 0; }
     .metric { min-width:0; padding:9px 7px; border:1px solid var(--card-border); border-radius:9px; background:#0d131d; text-align:center; }
     .metric-label { display:block; color:var(--muted); font-size:.7rem; margin-bottom:4px; }
@@ -160,13 +159,11 @@
         gap:8px 9px; padding:10px 10px;
       }
       .symbol { grid-area:symbol; font-size:1.08rem; }
-      .price-block { display:none; }
       .card-actions { grid-area:actions; }
       .status-wrap { grid-area:status; min-width:0; }
       .stage-wrap { grid-area:stage; min-width:0; }
-      .price-text { font-size:.94rem; }
-      .price-label,.header-label { font-size:.64rem; margin-bottom:2px; }
-      .price-sub { font-size:.58rem; white-space:normal; }
+      .header-label { font-size:.64rem; margin-bottom:2px; }
+      .metric-footnote { font-size:.54rem; }
       .status-badge,.stage-badge { display:block; width:100%; padding:5px 7px; font-size:.68rem; line-height:1.35; white-space:normal; overflow-wrap:anywhere; }
       .card-actions { gap:4px; }
       .btn-smart { min-height:30px; padding:5px 7px; font-size:.68rem; }
@@ -187,7 +184,6 @@
     @media(max-width:360px) {
       .card-header { gap:6px 7px; padding:9px 8px; }
       .symbol { font-size:1rem; }
-      .price-text { font-size:.88rem; }
       .status-badge,.stage-badge { font-size:.64rem; }
       .levels-table th,.levels-table td { font-size:.7rem; padding:6px 3px; }
       .stop-loss-summary { font-size:.68rem; }
@@ -315,8 +311,18 @@
 
     async function deleteCard(event, sym) {
       event.stopPropagation();
-      openCards.delete(sym);
-      await fetch(`/api/cards/${encodeURIComponent(sym)}`, { method: 'DELETE' });
+      if (!window.confirm('هل تريد حذف هذا السهم من قائمة المراقبة؟')) return;
+      try {
+        const response = await fetch(`/api/cards/${encodeURIComponent(sym)}`, { method: 'DELETE' });
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+        openCards.delete(sym);
+        const card = document.querySelector(`[data-symbol="${CSS.escape(sym)}"]`);
+        if (card) card.remove();
+        lastRenderedCardCount = document.getElementById('cardsContainer').children.length;
+      } catch (error) {
+        console.error('[MINERVINI] Card deletion failed', error);
+        window.alert('تعذر حذف السهم. حاول مرة أخرى.');
+      }
     }
 
     function toggleCard(sym) {
@@ -343,9 +349,6 @@
         el.innerHTML = `
           <div class="card-header" role="button" tabindex="0" aria-expanded="false">
             <div class="symbol"></div>
-            <div class="price-block">
-              <span class="price-label">السعر اللحظي</span><span class="price-text"></span><span class="price-sub"></span>
-            </div>
             <div class="status-wrap"><span class="header-label">الحالة</span><span class="status-badge"></span></div>
             <div class="stage-wrap"><span class="header-label">المرحلة</span><span class="stage-badge"></span></div>
             <div class="card-actions">
@@ -354,9 +357,9 @@
             </div>
           </div>
           <div class="metrics" aria-label="بيانات التداول اللحظية">
-            <div class="metric metric-price"><span class="metric-label">السعر اللحظي</span><strong class="metric-value live-price-value">—</strong></div>
+            <div class="metric metric-price"><span class="metric-label">السعر اللحظي</span><strong class="metric-value live-price-value">—</strong><span class="metric-footnote price-sub"></span></div>
             <div class="metric metric-volume"><span class="metric-label">حجم التداول</span><strong class="metric-value live-volume-value">—</strong></div>
-            <div class="metric metric-trades"><span class="metric-label">عدد الصفقات</span><strong class="metric-value live-trades-value">—</strong></div>
+            <div class="metric metric-trades"><span class="metric-label">عدد الصفقات</span><strong class="metric-value live-trades-value">—</strong><span class="metric-footnote">الصفقات المرصودة منذ بدء المتابعة</span></div>
           </div>
           <section class="smart-reading-panel" hidden>
             <h3 class="smart-reading-title">القراءة الذكية للسهم</h3>
@@ -427,7 +430,6 @@
           : null;
         const freshnessLimit = c.price_session === 'regular' ? 300 : 900;
         const isStaleQuote = quoteAgeSeconds !== null && quoteAgeSeconds > freshnessLimit;
-        setTextIfChanged(el.querySelector('.price-text'), c.current_price == null ? '—' : c.current_price);
         setTextIfChanged(el.querySelector('.live-price-value'), c.current_price == null ? '—' : c.current_price);
         const volumeValue = c.trading_volume;
         const formattedVolume = volumeValue == null ? '—' : new Intl.NumberFormat('ar-SA', { notation:'compact', maximumFractionDigits:2 }).format(Number(volumeValue));
@@ -435,18 +437,25 @@
         setTextIfChanged(el.querySelector('.live-trades-value'), c.trade_count == null ? '—' : new Intl.NumberFormat('ar-SA').format(Number(c.trade_count)));
         const isLivePrice = c.price_source === 'Longbridge WebSocket';
         const sourceLabel = isLivePrice
-          ? (isStaleQuote ? 'آخر سعر قديم من Longbridge' : 'آخر سعر من Longbridge')
+          ? (isStaleQuote ? 'آخر سعر قديم من لونجبريدج' : 'آخر سعر من لونجبريدج')
           : 'إغلاق يومي محفوظ';
-        const tagLabel = Number(c.price_tag) === 1 ? 'بيانات معدّلة بعد الإغلاق' : '';
+        const sessionLabels = {
+          regular: 'الجلسة الرئيسية',
+          'pre-market': 'ما قبل الافتتاح',
+          'post-market': 'ما بعد الإغلاق',
+          overnight: 'التداول الليلي'
+        };
+        const sessionLabel = sessionLabels[c.price_session] || '';
+        const tagLabel = Number(c.price_tag) === 1 ? 'بيانات مصححة بعد الإغلاق' : '';
         setTextIfChanged(el.querySelector('.price-sub'), [
           sourceLabel,
-          isLivePrice ? (c.price_session || 'regular') : '',
+          isLivePrice ? sessionLabel : '',
           priceUpdated ? (quoteDate ? 'وقت السعر ' : 'وقت الاستلام ') + priceUpdated : '',
           receivedUpdated ? 'وصل ' + receivedUpdated : '',
           tagLabel
         ].filter(Boolean).join(' • '));
         const status = el.querySelector('.status-badge');
-        setTextIfChanged(status, c.current_eligibility === 'FAIL' ? 'غير مؤهل حالياً' : (c.entry_ready ? 'جاهز' : (c.setup_passed && !c.entry_confirmation_passed ? 'انتظار التأكيد' : (c.setup_passed && !c.market_favorable ? 'السوق غير مناسب' : 'مراقبة'))));
+        setTextIfChanged(status, c.current_eligibility === 'FAIL' ? 'غير مؤهل حالياً' : (c.entry_ready ? 'جاهز للدخول' : (c.setup_passed && !c.entry_confirmation_passed ? 'بانتظار التأكيد' : (c.setup_passed && !c.market_favorable ? 'السوق غير ملائم' : 'مراقبة'))));
         status.classList.toggle('ready', Boolean(c.entry_ready));
         setTextIfChanged(el.querySelector('.stage-badge'), String(c.stage || 'تجميع بانتظار النموذج').replace(/^المرحلة\s*\d+\s*:\s*/, ''));
         const entries = Array.isArray(c.entry_zones) ? c.entry_zones : [];
@@ -469,7 +478,7 @@
           rows.dataset.signature = levelsSignature;
         }
         const stopValue = el.querySelector('.stop-loss-value');
-        setTextIfChanged(stopValue, c.shared_stop_loss == null ? (c.levels_status || 'غير متوفر') : String(c.shared_stop_loss) + (c.stop_source === 'atr' ? ' • وقف ATR' : c.stop_source === 'structural' ? ' • وقف هيكلي' : ''));
+        setTextIfChanged(stopValue, c.shared_stop_loss == null ? (c.levels_status || 'غير متوفر') : String(c.shared_stop_loss) + (c.stop_source === 'atr' ? ' • وقف حسب متوسط المدى الحقيقي' : c.stop_source === 'structural' ? ' • وقف أسفل القاع الهيكلي' : ''));
         setTextIfChanged(el.querySelector('.smart-reading-text'), c.smart_reading || 'لا تتوفر قراءة ذكية حالياً.');
 
         const filtersNode = el.querySelector('.filters-list');
@@ -495,11 +504,9 @@
         }
       }
 
-      for (const existing of Array.from(container.children)) {
-        if (!seen.has(existing.dataset.symbol)) {
-          existing.remove();
-        }
-      }
+      // Missing cards in a partial or stale snapshot are not deletion commands.
+      // A card leaves this page only after the user confirms manual deletion.
+      lastRenderedCardCount = container.children.length;
     }
 
     function applySnapshot(data) {
@@ -536,13 +543,14 @@
         return;
       }
       if (lastRenderedCardCount > 0 && data.cards.length === 0) {
-        console.warn('[MINERVINI] Server sent an empty watchlist snapshot', {
+        console.warn('[MINERVINI] Server sent an unexpected empty watchlist snapshot; preserving existing cards', {
           version: snapshotVersion, running: data.running,
           scanProgress: data.scan_progress
         });
+        return;
       }
       renderCards(data.cards);
-      lastRenderedCardCount = data.cards.length;
+      lastRenderedCardCount = document.getElementById('cardsContainer').children.length;
     }
 
     function connectRealtimeStream() {
