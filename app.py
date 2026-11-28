@@ -1920,10 +1920,17 @@ class ScanController:
         total = int(progress.get("total") or 0)
         completed = int(progress.get("completed") or 0)
         with self._state_cv:
+            calculated_percent = min(100, int(completed * 100 / total)) if total else 0
             self._scan_progress = {
                 **progress,
-                "percent": min(100, int(completed * 100 / total)) if total else 0,
+                "percent": min(100, max(0, int(progress.get("percent", calculated_percent)))),
             }
+            log.info(
+                "STEP=SCAN_PROGRESS stage=%s phase=%s completed=%s total=%s percent=%s current_symbol=%s",
+                progress.get("stage", "unknown"), progress.get("phase", "unknown"),
+                completed, total, self._scan_progress["percent"],
+                progress.get("current_symbol") or "-",
+            )
             if progress.get("error"):
                 self._scan_errors.append({
                     "symbol": str(progress.get("current_symbol") or "SYSTEM"),
@@ -1934,6 +1941,11 @@ class ScanController:
             self._notify_state_changed_locked()
 
     def run_once(self, symbols: list[str] | None = None, update: bool = True) -> None:
+        scan_started = time.monotonic()
+        log.info(
+            "STEP=SCAN_CYCLE STATUS=STARTED symbols=%s update_daily_data=%s",
+            len(symbols or SP500_SYMBOLS), update,
+        )
         with self._state_cv:
             self._running = True
             self._last_error = None
@@ -1975,9 +1987,15 @@ class ScanController:
                         continue
                     try: self.notifier.send_stock_appearance_alert(card)
                     except Exception: log.exception("Telegram alert failed for %s", card.get("symbol"))
+            log.info("STEP=SCREENER STATUS=STARTED symbols=%s", len(screener.symbols))
             result_df, failures, market_status = screener.run_screen(
                 update=update, progress_callback=self._update_scan_progress,
                 batch_callback=publish_batch, stop_callback=self._stop_event.is_set, batch_size=5,
+            )
+            log.info(
+                "STEP=SCREENER STATUS=RETURNED elapsed_seconds=%.3f result_rows=%s failures=%s",
+                time.monotonic() - scan_started,
+                0 if result_df is None else len(result_df), len(failures),
             )
             trend_template_failures = {
                 str(item.get("symbol", "")).upper().strip(): item
@@ -2092,7 +2110,10 @@ class ScanController:
                     failure.get("error", "No error detail supplied"),
                 )
         except Exception as exc:
-            log.exception("Scan cycle failed")
+            log.exception(
+                "STEP=SCAN_CYCLE STATUS=FAILED elapsed_seconds=%.3f",
+                time.monotonic() - scan_started,
+            )
             with self._state_cv:
                 self._last_error = str(exc)
                 self._notify_state_changed_locked()
@@ -2100,9 +2121,23 @@ class ScanController:
             with self._state_cv:
                 was_stopped = self._stop_event.is_set()
                 self._running = False
-                if was_stopped: self._scan_progress = {**self._scan_progress, "phase":"stopped"}
-                elif self._last_error: self._scan_progress = {**self._scan_progress, "phase":"error"}
-                else: self._scan_progress = {**self._scan_progress, "phase":"completed", "percent":100, "completed":self._scan_progress.get("total",0)}
+                if was_stopped:
+                    self._scan_progress = {**self._scan_progress, "phase": "stopped"}
+                elif self._last_error:
+                    self._scan_progress = {**self._scan_progress, "phase": "error"}
+                else:
+                    self._scan_progress = {
+                        **self._scan_progress,
+                        "stage": "completed",
+                        "phase": "completed",
+                        "percent": 100,
+                        "completed": self._scan_progress.get("total", 0),
+                    }
+                log.info(
+                    "STEP=SCAN_CYCLE STATUS=%s elapsed_seconds=%.3f last_error=%s",
+                    "STOPPED" if was_stopped else "FAILED" if self._last_error else "COMPLETED",
+                    time.monotonic() - scan_started, self._last_error or "-",
+                )
                 self._notify_state_changed_locked()
 
     def start_scan(self, symbols: list[str] | None = None, update: bool = True) -> bool:
@@ -2115,7 +2150,15 @@ class ScanController:
             self._running = True
             self._last_error = None
             self._scan_errors = []
-            self._scan_progress = {"phase": "starting", "completed": 0, "total": len(symbols or SP500_SYMBOLS) * 2, "percent": 0, "current_symbol": ""}
+            self._scan_progress = {
+                "stage": "market_data",
+                "phase": "فحص السوق وجلب البيانات",
+                "completed": 0,
+                "total": len(symbols or SP500_SYMBOLS),
+                "percent": 0,
+                "current_symbol": "",
+            }
+            log.info("STEP=SCAN_REQUEST STATUS=ACCEPTED symbols=%s", len(symbols or SP500_SYMBOLS))
             self._notify_state_changed_locked()
             t = threading.Thread(
                 target=self.run_once,
