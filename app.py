@@ -874,7 +874,8 @@ class ScanController:
             return
         # Quote.last_done is the authoritative live stock price for the card.
         # Volume-only Quote pushes carry no price and must not replace it.
-        raw_price = quote.get("last_done")
+        is_trade_push = quote.get("source") == "longbridge_trade_websocket"
+        raw_price = None if is_trade_push else quote.get("last_done")
         with self._lock:
             existing_card = self._cards.get(sym)
             if existing_card is None:
@@ -967,6 +968,11 @@ class ScanController:
             should_log = now_mono - self._ws_last_log_at.get(sym, 0.0) >= 15.0
             if should_log:
                 self._ws_last_log_at[sym] = now_mono
+            # Trade pushes update only the execution counter. They must not
+            # overwrite the Quote price or trigger a second technical recalculation.
+            if is_trade_push:
+                self._notify_state_changed_locked()
+                return
             # Enqueue while holding the same lock as immediate price
             # publication. Concurrent SDK callbacks therefore enter the
             # per-symbol FIFO in exactly the order their card updates are applied.
