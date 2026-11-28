@@ -399,7 +399,7 @@
           tagLabel
         ].filter(Boolean).join(' • '));
         const status = el.querySelector('.status-badge');
-        setTextIfChanged(status, c.entry_ready ? 'جاهز' : (c.setup_passed && !c.entry_confirmation_passed ? 'انتظار التأكيد' : (c.setup_passed && !c.market_favorable ? 'السوق غير مناسب' : 'مراقبة')));
+        setTextIfChanged(status, c.current_eligibility === 'FAIL' ? 'غير مؤهل حالياً' : (c.entry_ready ? 'جاهز' : (c.setup_passed && !c.entry_confirmation_passed ? 'انتظار التأكيد' : (c.setup_passed && !c.market_favorable ? 'السوق غير مناسب' : 'مراقبة'))));
         status.classList.toggle('ready', Boolean(c.entry_ready));
         setTextIfChanged(el.querySelector('.stage-badge'), String(c.stage || 'تجميع بانتظار النموذج').replace(/^المرحلة\s*\d+\s*:\s*/, ''));
         const entries = Array.isArray(c.entry_zones) ? c.entry_zones : [];

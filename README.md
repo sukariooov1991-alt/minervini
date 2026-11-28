@@ -51,6 +51,10 @@ The application distinguishes rules explicitly described by Mark Minervini from 
 - **Pullback:** Minervini waits for price to begin turning upward and does not buy while it is falling. Pullbacks can occur within a base, at a prior breakout level, or occasionally at the 20/50-day averages after a breakout. The source does not prescribe one universal numeric turn-up formula. Source: *Momentum Masters* (2015), Minervini interview, and *Trade Like a Stock Market Wizard*, Chapter 11.
 - **Risk:** establish a predetermined stop before entry; keep the maximum loss no greater than 10%; maintain at least a 2:1 win/loss ratio and aim for 3:1. Stop placement and profit-taking are tied to actual trading results and market conditions, not a universal ATR target formula. Source: *Trade Like a Stock Market Wizard*, Chapters 12–13.
 
+### Watchlist card lifecycle
+
+A completed scan can mark an existing card ineligible and show the failed filter reason, but it never automatically deletes the card or unsubscribes it. Cards remain visible for continued monitoring until the user explicitly removes them. Transient provider/analysis failures preserve the last known eligibility state.
+
 ### Explicit project heuristics (not presented as Minervini's exact rules)
 
 - RS rating is a percentile rank calculated among symbols with valid 253-close histories in this repository's fixed 493-symbol list, using a 40/20/20/20 weighted 63/126/189/252-session return score (253 closes are required for the full 252-session leg). Ranking is refused when valid-history coverage is below 80% of the eligible scan universe. The list is not auto-synchronized with S&P constituent changes, and this score is not the proprietary IBD RS Rating or a published Minervini-specific RS calculation. To avoid inflating ranks or market breadth from a small surviving subset during provider outages, both calculations require at least 80% coverage of the eligible scan universe; below that level the metric is UNKNOWN and affected symbols are retained as uncertain rather than treated as failed setups.

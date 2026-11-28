@@ -249,6 +249,7 @@ class DailyScreener:
         # Symbols are added only after their eligibility decision is complete.
         # This is separate from result rows, which intentionally omit TT failures.
         evaluated_symbols: set[str] = set()
+        trend_template_failures: list[dict] = []
         total = len(self.symbols)
         processed = 0
         analysis_processed = 0
@@ -421,9 +422,15 @@ class DailyScreener:
                         rating = rs[sym]
                         tt = check_trend_template(df, rating)
                         if not tt["passed"]:
-                            # A valid completed TT failure is a definitive
-                            # ineligibility result and can safely reconcile a card.
+                            # Preserve the exact failed conditions for watchlist
+                            # cards; a failed scan gate changes eligibility but
+                            # must not silently delete a user's saved card.
                             evaluated_symbols.add(sym)
+                            trend_template_failures.append({
+                                "symbol": sym,
+                                "rs_rating": rating,
+                                "trend_conditions": tt.get("conditions", {}),
+                            })
                             failed_conditions = [
                                 name for name, passed in tt.get("conditions", {}).items()
                                 if not passed
@@ -689,7 +696,11 @@ class DailyScreener:
                     })
 
         # Keep reconciliation metadata out of the result table/JSON rows.
-        market_status = {**market_status, "evaluated_symbols": sorted(evaluated_symbols)}
+        market_status = {
+            **market_status,
+            "evaluated_symbols": sorted(evaluated_symbols),
+            "trend_template_failures": trend_template_failures,
+        }
         result = pd.DataFrame(rows)
         if not result.empty:
             result = result.sort_values(
