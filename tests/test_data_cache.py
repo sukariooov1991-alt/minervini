@@ -1,4 +1,6 @@
 import unittest
+import time
+from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -13,6 +15,26 @@ from data.storage_manager import StorageManager
 class PermanentDataCacheTests(unittest.TestCase):
     def setUp(self):
         self.storage = StorageManager(":memory:")
+
+    def test_same_symbol_fundamentals_refresh_is_serialized_across_provider_instances(self):
+        first = DataProvider("AAPL", self.storage)
+        second = DataProvider("AAPL", self.storage)
+        calls = []
+
+        def fetch():
+            calls.append(True)
+            time.sleep(0.05)
+            return pd.DataFrame()
+
+        with patch.object(DataProvider, "_fetch_fundamentals_dataframe", side_effect=fetch):
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                results = list(pool.map(
+                    lambda provider: provider.get_fundamentals_dataframe(),
+                    [first, second],
+                ))
+
+        self.assertEqual(len(calls), 1)
+        self.assertTrue(all(frame.empty for frame in results))
 
     def test_daily_history_keeps_only_latest_300_completed_bars(self):
         dates = pd.bdate_range("2025-01-01", periods=305)
