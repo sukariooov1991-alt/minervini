@@ -406,7 +406,7 @@
         const targets = Array.isArray(c.targets) ? c.targets : [];
         const rows = el.querySelector('.levels-rows');
         const levelsSignature = JSON.stringify([
-          entries, targets, c.shared_stop_loss, c.levels_status
+          entries, targets, c.shared_stop_loss, c.stop_source, c.levels_status
         ]);
         if (rows.dataset.signature !== levelsSignature) {
           const fragment = document.createDocumentFragment();
@@ -422,7 +422,7 @@
           rows.dataset.signature = levelsSignature;
         }
         const stopValue = el.querySelector('.stop-loss-value');
-        setTextIfChanged(stopValue, c.shared_stop_loss == null ? (c.levels_status || 'غير متوفر') : c.shared_stop_loss);
+        setTextIfChanged(stopValue, c.shared_stop_loss == null ? (c.levels_status || 'غير متوفر') : String(c.shared_stop_loss) + (c.stop_source === 'atr' ? ' • وقف ATR' : c.stop_source === 'structural' ? ' • وقف هيكلي' : ''));
         setTextIfChanged(el.querySelector('.smart-text'), c.smart_reading || '');
 
         const filtersNode = el.querySelector('.filters-list');
