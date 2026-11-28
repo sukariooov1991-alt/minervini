@@ -117,6 +117,20 @@
     .stage-badge { color:#dbeafe; background:#17477a; }
     .btn-del { width:32px; min-height:34px; padding:4px; color:#f87171; background:transparent; border:1px solid transparent; font-size:1.1rem; }
     .btn-del:hover { border-color:var(--stop); }
+    .card-actions { display:flex; align-items:center; justify-content:flex-end; gap:7px; }
+    .btn-smart { min-height:34px; padding:6px 10px; background:#17365f; border:1px solid #2d5b91; color:#dbeafe; font-size:.78rem; white-space:nowrap; }
+    .btn-del { display:grid; place-items:center; width:34px; min-height:34px; padding:4px; color:#fca5a5; background:rgba(127,37,37,.12); border:1px solid rgba(239,68,68,.35); font-size:1rem; }
+    .metrics { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:7px; padding:10px 12px 0; }
+    .metric { min-width:0; padding:9px 7px; border:1px solid var(--card-border); border-radius:9px; background:#0d131d; text-align:center; }
+    .metric-label { display:block; color:var(--muted); font-size:.7rem; margin-bottom:4px; }
+    .metric-value { display:block; color:var(--text); font-size:clamp(.85rem,3vw,1.08rem); font-weight:800; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+    .metric-price .metric-value { color:#93c5fd; }
+    .metric-volume .metric-value { color:#86efac; }
+    .metric-trades .metric-value { color:#fdba74; }
+    .smart-reading-panel { margin:10px 12px 0; padding:11px; border:1px solid #29486b; border-radius:10px; background:rgba(23,54,95,.22); }
+    .smart-reading-panel[hidden] { display:none; }
+    .smart-reading-title { margin:0 0 7px; color:#bfdbfe; font-size:.88rem; }
+    .smart-reading-text { color:var(--text); font-size:.82rem; line-height:1.7; white-space:pre-line; }
     .trade-plan { padding:10px 12px 12px; }
     .trade-plan-title { margin:0 0 8px; font-size:.9rem; font-weight:800; text-align:left; }
     .levels-table { width:100%; border-collapse:separate; border-spacing:0; table-layout:fixed; overflow:hidden; border:1px solid #344153; border-radius:12px; font-variant-numeric:tabular-nums; }
@@ -141,19 +155,28 @@
     @media(max-width:520px) {
       .container { padding:9px; }
       .card-header {
-        position:relative; grid-template-columns:minmax(0,1fr) minmax(0,1fr) 28px;
-        grid-template-areas:"symbol price delete" "status stage stage";
+        position:relative; grid-template-columns:minmax(0,1fr) auto;
+        grid-template-areas:"symbol actions" "status stage";
         gap:8px 9px; padding:10px 10px;
       }
       .symbol { grid-area:symbol; font-size:1.08rem; }
-      .price-block { grid-area:price; text-align:center; }
+      .price-block { display:none; }
+      .card-actions { grid-area:actions; }
       .status-wrap { grid-area:status; min-width:0; }
       .stage-wrap { grid-area:stage; min-width:0; }
-      .btn-del { grid-area:delete; width:27px; min-height:30px; font-size:.9rem; align-self:start; }
       .price-text { font-size:.94rem; }
       .price-label,.header-label { font-size:.64rem; margin-bottom:2px; }
       .price-sub { font-size:.58rem; white-space:normal; }
       .status-badge,.stage-badge { display:block; width:100%; padding:5px 7px; font-size:.68rem; line-height:1.35; white-space:normal; overflow-wrap:anywhere; }
+      .card-actions { gap:4px; }
+      .btn-smart { min-height:30px; padding:5px 7px; font-size:.68rem; }
+      .btn-del { width:28px; min-height:30px; font-size:.9rem; }
+      .metrics { gap:5px; padding:8px 8px 0; }
+      .metric { padding:7px 4px; }
+      .metric-label { font-size:.61rem; }
+      .metric-value { font-size:.82rem; }
+      .smart-reading-panel { margin:8px 8px 0; padding:9px; }
+      .smart-reading-text { font-size:.75rem; }
       .trade-plan { padding:8px 8px 10px; }
       .trade-plan-title { margin-bottom:7px; font-size:.82rem; }
       .levels-table th,.levels-table td { padding:7px 5px; font-size:.76rem; line-height:1.25; }
@@ -321,12 +344,24 @@
           <div class="card-header" role="button" tabindex="0" aria-expanded="false">
             <div class="symbol"></div>
             <div class="price-block">
-              <span class="price-label">السعر</span><span class="price-text"></span><span class="price-sub"></span>
+              <span class="price-label">السعر اللحظي</span><span class="price-text"></span><span class="price-sub"></span>
             </div>
             <div class="status-wrap"><span class="header-label">الحالة</span><span class="status-badge"></span></div>
             <div class="stage-wrap"><span class="header-label">المرحلة</span><span class="stage-badge"></span></div>
-            <button class="btn-del" type="button" aria-label="حذف البطاقة" title="حذف">♜</button>
+            <div class="card-actions">
+              <button class="btn-smart" type="button" aria-expanded="false">القراءة الذكية</button>
+              <button class="btn-del" type="button" aria-label="حذف السهم من قائمة المراقبة" title="حذف السهم">🗑</button>
+            </div>
           </div>
+          <div class="metrics" aria-label="بيانات التداول اللحظية">
+            <div class="metric metric-price"><span class="metric-label">السعر اللحظي</span><strong class="metric-value live-price-value">—</strong></div>
+            <div class="metric metric-volume"><span class="metric-label">حجم التداول</span><strong class="metric-value live-volume-value">—</strong></div>
+            <div class="metric metric-trades"><span class="metric-label">عدد الصفقات</span><strong class="metric-value live-trades-value">—</strong></div>
+          </div>
+          <section class="smart-reading-panel" hidden>
+            <h3 class="smart-reading-title">القراءة الذكية للسهم</h3>
+            <div class="smart-reading-text"></div>
+          </section>
           <div class="trade-plan">
             <h3 class="trade-plan-title">خطة التداول</h3>
             <table class="levels-table" aria-label="خطة التداول">
@@ -336,9 +371,7 @@
             <div class="stop-loss-summary"><span class="stop-loss-label">وقف الخسارة</span><strong class="stop-loss-value">—</strong></div>
           </div>
           <div class="expanded">
-            <div class="section-title">أولاً: القراءة الذكية</div>
-            <div class="meta smart-text"></div>
-            <div class="section-title">ثانياً: الفلاتر</div>
+            <div class="section-title">تفاصيل شروط الاستراتيجية</div>
             <div class="filters-list"></div>
           </div>
         `;
@@ -347,6 +380,15 @@
           if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); toggleCard(sym); }
         });
         el.querySelector('.btn-del').addEventListener('click', (e) => deleteCard(e, sym));
+        el.querySelector('.btn-smart').addEventListener('click', (event) => {
+          event.stopPropagation();
+          const panel = el.querySelector('.smart-reading-panel');
+          const button = event.currentTarget;
+          const willOpen = panel.hidden;
+          panel.hidden = !willOpen;
+          button.setAttribute('aria-expanded', String(willOpen));
+          if (willOpen) panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        });
         container.appendChild(el);
       }
       return el;
@@ -386,6 +428,11 @@
         const freshnessLimit = c.price_session === 'regular' ? 300 : 900;
         const isStaleQuote = quoteAgeSeconds !== null && quoteAgeSeconds > freshnessLimit;
         setTextIfChanged(el.querySelector('.price-text'), c.current_price == null ? '—' : c.current_price);
+        setTextIfChanged(el.querySelector('.live-price-value'), c.current_price == null ? '—' : c.current_price);
+        const volumeValue = c.trading_volume;
+        const formattedVolume = volumeValue == null ? '—' : new Intl.NumberFormat('ar-SA', { notation:'compact', maximumFractionDigits:2 }).format(Number(volumeValue));
+        setTextIfChanged(el.querySelector('.live-volume-value'), formattedVolume);
+        setTextIfChanged(el.querySelector('.live-trades-value'), c.trade_count == null ? '—' : new Intl.NumberFormat('ar-SA').format(Number(c.trade_count)));
         const isLivePrice = c.price_source === 'Longbridge WebSocket';
         const sourceLabel = isLivePrice
           ? (isStaleQuote ? 'آخر سعر قديم من Longbridge' : 'آخر سعر من Longbridge')
@@ -423,7 +470,7 @@
         }
         const stopValue = el.querySelector('.stop-loss-value');
         setTextIfChanged(stopValue, c.shared_stop_loss == null ? (c.levels_status || 'غير متوفر') : String(c.shared_stop_loss) + (c.stop_source === 'atr' ? ' • وقف ATR' : c.stop_source === 'structural' ? ' • وقف هيكلي' : ''));
-        setTextIfChanged(el.querySelector('.smart-text'), c.smart_reading || '');
+        setTextIfChanged(el.querySelector('.smart-reading-text'), c.smart_reading || 'لا تتوفر قراءة ذكية حالياً.');
 
         const filtersNode = el.querySelector('.filters-list');
         const filters = Array.isArray(c.filters) ? c.filters : [];
