@@ -59,6 +59,23 @@ class VCPSourceAlignmentTests(unittest.TestCase):
         self.assertTrue(result["passed"])
         self.assertGreater(result["volume_slope_norm"], 0.0)
 
+
+    def test_relative_final_contraction_over_ten_percent_is_not_rejected_by_an_unsupported_cap(self):
+        frame = self._frame()
+        frame.loc[85:87, "volume"] = [500.0, 300.0, 500.0]
+        contractions = self._contractions()
+        contractions[-1]["low"] = 96.8
+        contractions[-1]["depth_pct"] = 12.0
+
+        with (
+            patch("analysis.vcp._find_swing_pivots", return_value=[]),
+            patch("analysis.vcp._extract_contractions", return_value=contractions),
+        ):
+            result = check_vcp(frame)
+
+        self.assertTrue(result["passed"])
+        self.assertAlmostEqual(result["contraction_depths"][-1], 12.0)
+
     def test_breakout_requires_volume_above_50_day_average_not_135_percent(self):
         frame = pd.DataFrame({
             "high": [102.0] * 51,
