@@ -11,6 +11,7 @@ import os
 import re
 import threading
 import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -277,6 +278,7 @@ class ScanController:
         self._lock = threading.RLock()
         self._state_cv = threading.Condition(self._lock)
         self._state_version = 0
+        self._instance_id = uuid.uuid4().hex
         self._stop_event = threading.Event()
         self._running = False
         self._market_session_label = self._detect_market_session()
@@ -2254,10 +2256,31 @@ class ScanController:
                 log.warning("Longbridge unsubscribe error for %s: %s", clean, exc)
 
     def snapshot(self) -> dict[str, Any]:
-        with self._lock:
+        # Reconcile the in-memory view with durable cards before every API/SSE
+        # snapshot. This recovers cards if a worker restarted or its in-memory
+        # state was recreated while the persistent SQLite database survived.
+        try:
+            persisted_cards = self.storage.load_watchlist_cards()
+        except Exception:
+            log.exception("Unable to reconcile persisted watchlist cards for state snapshot")
+            persisted_cards = []
+        with self._state_cv:
+            restored = 0
+            for card in persisted_cards:
+                symbol = str(card.get("symbol") or "").upper().strip()
+                if symbol and symbol not in self._cards:
+                    self._cards[symbol] = card
+                    restored += 1
+            if restored:
+                self._state_version += 1
+                log.warning(
+                    "Watchlist snapshot recovery: restored=%s total_cards=%s",
+                    restored, len(self._cards),
+                )
             self._market_session_label = self._detect_market_session()
             return {
                 "brand": "minervini",
+                "instance_id": self._instance_id,
                 "version": self._state_version,
                 "running": self._running,
                 "ws_connected": self._ws_connected,
@@ -2290,12 +2313,18 @@ controller = ScanController(
 
 @app.route("/")
 def index():
-    return render_template("index.html")
+    response = app.make_response(render_template("index.html"))
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    return response
 
 
 @app.route("/api/state")
 def api_state():
-    return jsonify(controller.snapshot())
+    response = jsonify(controller.snapshot())
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    return response
 
 
 @app.route("/api/stream")
@@ -2313,7 +2342,8 @@ def api_stream():
         stream_with_context(event_stream()),
         mimetype="text/event-stream",
         headers={
-            "Cache-Control": "no-cache",
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
             "X-Accel-Buffering": "no",
         },
     )
