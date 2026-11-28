@@ -385,6 +385,10 @@ class DailyScreener:
                 "percent": 100,
                 "current_symbol": "",
             })
+            # Keep the completed first-stage message visible to SSE clients
+            # before the second stage resets its progress back to zero.
+            if not (stop_callback and stop_callback()):
+                time.sleep(1.0)
 
         # A stopped or failed download is never silently replaced by old stored
         # candles. Failed symbols are excluded from both RS ranking and analysis.
