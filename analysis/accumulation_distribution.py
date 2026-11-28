@@ -10,7 +10,7 @@ def accumulation_distribution_summary(
     df: pd.DataFrame,
     lookback: int = 20,
     window_lookback: int = 50,
-    power_move_pct: float = 1.5,
+    power_move_pct: float = 0.0,
     require_structural: bool = True,
 ) -> dict:
     required = {"close", "volume"}
@@ -58,13 +58,13 @@ def accumulation_distribution_summary(
     )
 
     power_up_days = (
-        int(((w_pct >= power_move_pct) & (w_vol > w_avg_vol)).iloc[1:].sum())
+        int(((w_pct > power_move_pct) & (w_vol > w_avg_vol)).iloc[1:].sum())
         if pd.notna(w_avg_vol) and w_avg_vol > 0
         else 0
     )
 
     power_down_days = (
-        int(((w_pct <= -power_move_pct) & (w_vol > w_avg_vol)).iloc[1:].sum())
+        int(((w_pct < -power_move_pct) & (w_vol > w_avg_vol)).iloc[1:].sum())
         if pd.notna(w_avg_vol) and w_avg_vol > 0
         else 0
     )
@@ -88,7 +88,7 @@ def accumulation_distribution_summary(
     )
     acc_structural = bool(
         ratio_is_strong
-        and power_up_days >= power_down_days
+        and power_up_days > power_down_days
     )
 
     accumulation = acc_structural if require_structural else bool(acc_session or acc_structural)
