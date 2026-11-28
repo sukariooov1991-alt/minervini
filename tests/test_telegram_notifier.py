@@ -37,8 +37,10 @@ class TelegramNotifierConcurrencyTests(unittest.TestCase):
             "passed_all_filters": True,
             "shown_on_main_page": True,
             "entry_zones": [100, 101, 102, 103, 104],
-            "targets": [110, 112, 114, 116, 118],
+            "targets": [110, 113, 116, 119, 122],
             "shared_stop_loss": 95,
+            "levels_status": "جاهز",
+            "within_entry_range": True,
         }
         with patch("data.telegram_notifier.request.urlopen", side_effect=fake_urlopen):
             with ThreadPoolExecutor(max_workers=2) as pool:
