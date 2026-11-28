@@ -8,6 +8,28 @@ from data.telegram_notifier import TelegramNotifier
 
 
 class TelegramNotifierConcurrencyTests(unittest.TestCase):
+    def test_notification_requires_a_complete_in_range_plan_with_valid_risk(self):
+        card = {
+            "symbol": "AAPL",
+            "passed_all_filters": True,
+            "shown_on_main_page": True,
+            "entry_zones": [100, 101, 102, 103, 104],
+            "targets": [110, 113, 116, 119, 122],
+            "shared_stop_loss": 95,
+            "levels_status": "جاهز",
+            "within_entry_range": True,
+        }
+        self.assertTrue(TelegramNotifier.is_eligible_for_notification(card))
+        self.assertFalse(TelegramNotifier.is_eligible_for_notification({
+            **card, "levels_status": "غير مكتمل"
+        }))
+        self.assertFalse(TelegramNotifier.is_eligible_for_notification({
+            **card, "within_entry_range": False
+        }))
+        self.assertFalse(TelegramNotifier.is_eligible_for_notification({
+            **card, "shared_stop_loss": 89
+        }))
+
     def test_concurrent_entry_alerts_send_only_once_per_symbol(self):
         notifier = TelegramNotifier.__new__(TelegramNotifier)
         notifier.bot_token = "token"
