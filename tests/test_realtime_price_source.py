@@ -50,6 +50,18 @@ class RealtimePriceSourceTests(unittest.TestCase):
         self.assertEqual(controller._cards["AAPL"]["current_price"], 100.0)
         self.assertNotEqual(controller._cards["AAPL"].get("price_feed_source"), "longbridge_trade_websocket")
         self.assertEqual(controller._cards["AAPL"]["trade_count"], 2)
+        duplicate = {
+            "symbol": "AAPL",
+            "last_done": 101.40,
+            "source": "longbridge_trade_websocket",
+            "trade_session": "regular",
+            "trade_count_delta": 2,
+            "trade_count_sequence": 12345,
+        }
+        controller._on_realtime_quote(duplicate)
+        self.assertEqual(controller._cards["AAPL"]["trade_count"], 2)
+        controller._on_realtime_quote({**duplicate, "trade_count_delta": 1, "trade_count_sequence": 12346})
+        self.assertEqual(controller._cards["AAPL"]["trade_count"], 3)
         self.assertEqual(controller._realtime_pending, deque())
 
     def test_volume_only_quote_does_not_overwrite_price_or_timestamp(self):
