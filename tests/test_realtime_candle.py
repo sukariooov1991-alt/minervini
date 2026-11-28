@@ -298,7 +298,7 @@ class RealtimeCandleTests(unittest.TestCase):
         reading = controller._build_smart_reading_from_card(
             card, live, live_candle_included=True
         )
-        self.assertIn("ATR(14) يقارب 2.00", reading)
+        self.assertIn("متوسط المدى الحقيقي (14) يقارب 2.00", reading)
 
     def test_watchdog_uses_new_subscription_time_after_quiet_reconnect(self):
         self.assertEqual(_latest_realtime_activity(100.0, 200.0), 200.0)
@@ -488,7 +488,7 @@ class RealtimeCandleTests(unittest.TestCase):
         )
 
         self.assertIsNotNone(expected_atr)
-        self.assertIn(f"ATR(14) يقارب {expected_atr:.2f}", reading)
+        self.assertIn(f"متوسط المدى الحقيقي (14) يقارب {expected_atr:.2f}", reading)
 
     def test_startup_revalidation_clears_obsolete_pullback_entry_levels(self):
         controller = ScanController.__new__(ScanController)
