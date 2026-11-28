@@ -8,13 +8,15 @@ from analysis.vcp import check_breakout, check_vcp
 
 class VCPSourceAlignmentTests(unittest.TestCase):
     def _frame(self):
-        return pd.DataFrame({
+        frame = pd.DataFrame({
             "open": [100.0] * 90,
             "high": [110.0] * 90,
             "low": [90.0] * 90,
             "close": [100.0] * 90,
-            "volume": [500.0] * 50 + [1000.0] * 40,
+            "volume": [500.0] * 75 + [1000.0] * 15,
         })
+        frame.loc[75:84, "volume"] = 1000.0
+        return frame
 
     def _contractions(self):
         return [
@@ -40,7 +42,7 @@ class VCPSourceAlignmentTests(unittest.TestCase):
         # The final contraction is quieter than the 50-day average, but the
         # only exceptionally quiet day occurs before that contraction begins.
         frame.loc[83, "volume"] = 100.0
-        frame.loc[85:87, "volume"] = 700.0
+        frame.loc[85:87, "volume"] = 500.0
 
         result = self._check_with_patched_structure(frame)
 
@@ -49,8 +51,7 @@ class VCPSourceAlignmentTests(unittest.TestCase):
 
     def test_quiet_day_inside_final_contraction_confirms_dry_up_even_if_long_slope_is_positive(self):
         frame = self._frame()
-        frame.loc[85:87, "volume"] = 700.0
-        frame.loc[86, "volume"] = 500.0
+        frame.loc[85:87, "volume"] = [500.0, 300.0, 500.0]
 
         result = self._check_with_patched_structure(frame)
 
