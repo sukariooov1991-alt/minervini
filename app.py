@@ -23,7 +23,7 @@ from data.market_time import MarketTime, get_us_equity_market_close
 from data.trade_levels import build_trade_levels, compute_atr, evaluate_entry_range
 from data.sp500_symbols import SP500_SYMBOLS
 from data.telegram_notifier import TelegramNotifier
-from screener import DailyScreener
+from screener import DailyScreener, _entry_ready_from_plan
 from analysis.vcp import check_vcp, check_breakout
 from analysis.accumulation_distribution import accumulation_distribution_summary
 from analysis.pullback import check_pullback
@@ -635,11 +635,13 @@ class ScanController:
             final_low=active_low,
         ).to_dict()
         market_favorable = bool(card.get("market_favorable", False))
-        entry_ready = bool(
-            watchlist_eligible
-            and entry_confirmation
-            and market_favorable
-            and plan.get("within_entry_range") is True
+        entry_ready = _entry_ready_from_plan(
+            trend_template_passed,
+            accumulation_passed,
+            earnings_passed,
+            entry_confirmation,
+            market_favorable,
+            plan,
         )
         card.update({
             "current_price": round(current_price, 4),
@@ -745,13 +747,13 @@ class ScanController:
                 try:
                     self.lb_client.reconnect(symbols)
                     with self._state_cv:
-                        self._latest_quote_timestamp.clear()
+                        getattr(self, "_latest_quote_timestamp", {}).clear()
                         getattr(self, "_live_volume_sequence", {}).clear()
                         getattr(self, "_live_volume_timestamp", {}).clear()
-                        self._processed_quote_timestamp.clear()
-                        self._ws_seen_symbols.clear()
-                        self._ws_last_log_at.clear()
-                        self._ws_symbol_recovery_at.clear()
+                        getattr(self, "_processed_quote_timestamp", {}).clear()
+                        getattr(self, "_ws_seen_symbols", set()).clear()
+                        getattr(self, "_ws_last_log_at", {}).clear()
+                        getattr(self, "_ws_symbol_recovery_at", {}).clear()
                         self._last_ws_subscription_monotonic = time.monotonic()
                         self._ws_connected = False
                         self._notify_state_changed_locked()
@@ -883,15 +885,23 @@ class ScanController:
             current_card_price = existing_card.get("current_price")
         if raw_price is None:
             if current_card_price is None:
-                return
-            price = float(current_card_price)
+                if not is_trade_push:
+                    return
+                price = None
+            else:
+                try:
+                    price = float(current_card_price)
+                except (TypeError, ValueError):
+                    price = None
         else:
             try:
                 price = float(raw_price)
             except (TypeError, ValueError):
                 return
-        if not (price > 0 and math.isfinite(price)):
-            return
+        if price is not None and not (price > 0 and math.isfinite(price)):
+            if not is_trade_push:
+                return
+            price = None
 
         now_mono = time.monotonic()
         quote_order = _quote_timestamp_order(quote.get("timestamp"))
@@ -942,24 +952,30 @@ class ScanController:
             self._ws_connected = True
             card = self._cards.get(sym)
             if card is not None:
-                if quote.get("source") == "longbridge_trade_websocket":
+                trade_count_sequences = getattr(self, "_trade_count_sequences", None)
+                if trade_count_sequences is None:
+                    trade_count_sequences = self._trade_count_sequences = {}
+                trade_count_sessions = getattr(self, "_trade_count_sessions", None)
+                if trade_count_sessions is None:
+                    trade_count_sessions = self._trade_count_sessions = {}
+                if is_trade_push:
                     try:
                         sequence = int(quote.get("trade_count_sequence"))
                         delta = int(quote.get("trade_count_delta") or 0)
                     except (TypeError, ValueError, OverflowError):
                         sequence, delta = 0, 0
                     session_key = str(quote.get("trade_session") or "regular")
-                    if self._trade_count_sessions.get(sym) != session_key:
-                        # Do not display a fabricated zero before the first
-                        # sequence-verifiable execution arrives for this session.
+                    if trade_count_sessions.get(sym) != session_key:
+                        # Count executions observed since monitoring began in this
+                        # session; this is not the provider's full-day market total.
                         card["trade_count"] = None
-                        self._trade_count_sequences.pop(sym, None)
-                        self._trade_count_sessions[sym] = session_key
-                    if sequence > self._trade_count_sequences.get(sym, 0) and delta > 0:
+                        trade_count_sequences.pop(sym, None)
+                        trade_count_sessions[sym] = session_key
+                    if sequence > trade_count_sequences.get(sym, 0) and delta > 0:
                         card["trade_count"] = int(card.get("trade_count") or 0) + delta
-                        self._trade_count_sequences[sym] = sequence
+                        trade_count_sequences[sym] = sequence
                 card.update({
-                    "current_price": round(price, 4),
+                    **({"current_price": round(price, 4)} if price is not None else {}),
                     "price_source": (
                         "Longbridge WebSocket" if is_price_tick
                         else previous_meta.get("price_source", "Stored daily data")
@@ -1345,8 +1361,8 @@ class ScanController:
                         # calculating. Do not leave an orphaned live candle or
                         # volume/order state behind after the queued tick exits.
                         self._live_candles.pop(sym, None)
-                        self._trade_count_sequences.pop(sym, None)
-                        self._trade_count_sessions.pop(sym, None)
+                        getattr(self, "_trade_count_sequences", {}).pop(sym, None)
+                        getattr(self, "_trade_count_sessions", {}).pop(sym, None)
                         getattr(self, "_live_volume_sequence", {}).pop(sym, None)
                         getattr(self, "_live_volume_timestamp", {}).pop(sym, None)
                         self._latest_quote_timestamp.pop(sym, None)
@@ -1394,11 +1410,13 @@ class ScanController:
                     entry_confirmation_passed = bool(
                         (vcp_passed and breakout_passed) or pullback_passed
                     )
-                    entry_ready = bool(
-                        watchlist_eligible
-                        and entry_confirmation_passed
-                        and market_favorable
-                        and plan.get("within_entry_range") is True
+                    entry_ready = _entry_ready_from_plan(
+                        trend_template_passed,
+                        accumulation_passed,
+                        earnings_passed,
+                        entry_confirmation_passed,
+                        market_favorable,
+                        plan,
                     )
                     card.update({
                         "current_price": round(price, 4),
@@ -1637,7 +1655,7 @@ class ScanController:
                     # actual stop fallback report the same volatility measure.
                     atr = compute_atr(average_df, period=14)
                     if atr is not None and np.isfinite(atr):
-                        sections.append(f"التذبذب والمخاطر: متوسط المدى الحقيقي ATR(14) يقارب {fmt(atr)}؛ لذلك يجب تقييم مسافة وقف الخسارة وحجم المركز وفق هذا التذبذب.")
+                        sections.append(f"التذبذب والمخاطر: متوسط المدى الحقيقي (14) يقارب {fmt(atr)}؛ لذلك يجب تقييم مسافة وقف الخسارة وحجم المركز وفق هذا التذبذب.")
                 else:
                     sections.append("التحليل الفني: عدد الشموع الصالحة غير كافٍ لاستخراج اتجاه ومستويات دعم ومقاومة موثوقة.")
             else:
@@ -1645,20 +1663,30 @@ class ScanController:
         else:
             sections.append("التحليل الفني: سجل الشموع اليومية غير متاح حاليًا؛ لا يمكن تأكيد الدعم والمقاومة أو المتوسطات.")
 
+        if card.get("watchlist_eligible") is False:
+            sections.append("الأهلية الحالية: السهم لا يستوفي حالياً شروط قائمة المراقبة؛ البطاقة محفوظة للمتابعة ولا توجد إشارة دخول.")
+        conditions = card.get("trend_conditions") or {}
+        if conditions:
+            passed_count = sum(bool(value) for value in conditions.values())
+            sections.append(f"شروط الاتجاه العام: اجتاز {passed_count} من {len(conditions)} شروط.")
+        if card.get("accumulation_passed") is not None:
+            sections.append("التجميع: " + ("متحقق." if card.get("accumulation_passed") else "غير متحقق حالياً."))
+        if card.get("earnings_passed") is not None:
+            sections.append("نمو الأرباح والمبيعات: " + ("متحقق." if card.get("earnings_passed") else "غير متحقق أو بياناته غير مكتملة."))
         if card.get("setup_passed") and not card.get("entry_confirmation_passed"):
             if card.get("vcp_passed"):
                 sections.append(
-                    "النموذج الفني: رُصدت بنية VCP، لكن اختراق نقطة الارتكاز لم يتأكد بعد؛ لا توجد إشارة دخول."
+                    "النموذج الفني: رُصد نموذج انكماش التذبذب، لكن اختراق نقطة الارتكاز لم يتأكد بعد؛ لا توجد إشارة دخول."
                 )
             else:
                 sections.append(
-                    "النموذج الفني: رُصد تراجع سعري مرشح لـPullback، لكن السعر لم يؤكد الانعطاف للأعلى بعد؛ لا توجد إشارة دخول."
+                    "النموذج الفني: رُصد تراجع سعري مرشح، لكن السعر لم يؤكد الانعطاف للأعلى بعد؛ لا توجد إشارة دخول."
                 )
         elif card.get("setup_passed"):
             setup = (
-                "VCP"
+                "نموذج انكماش التذبذب"
                 if card.get("vcp_passed") and card.get("breakout_passed")
-                else "Pullback"
+                else "نموذج التراجع السعري"
             )
             sections.append(
                 f"النموذج الفني: تأكد {setup}. نقطة الارتكاز المعتمدة {fmt(pivot)}"
@@ -1686,10 +1714,10 @@ class ScanController:
         else:
             sections.append("الأهداف: غير محددة بعد؛ لا يصح وضع أهداف رقمية قبل اكتمال نموذج الدخول ووجود ارتكاز صالح.")
         if stop:
-            stop_kind = "وقف هيكلي" if card.get("stop_source") == "structural" else "وقف ATR بديل" if card.get("stop_source") == "atr" else "وقف"
+            stop_kind = "وقف أسفل القاع الهيكلي" if card.get("stop_source") == "structural" else "وقف بديل حسب متوسط المدى الحقيقي" if card.get("stop_source") == "atr" else "وقف"
             sections.append(f"{stop_kind}: {fmt(stop)}.")
         else:
-            sections.append("وقف الخسارة: غير متاح حالياً؛ تبقى فرصة التحليل والتنبيه قائمة، وتُعرض المخاطرة على أنها غير محسوبة.")
+            sections.append("وقف الخسارة: غير متاح حالياً؛ تبقى البطاقة ظاهرة للمراقبة، لكن لا تُصنّف جاهزة للدخول حتى يتوفر وقف صالح.")
 
         market_text = {
             "CORRECTION_OR_DOWNTREND": "السوق العام في تصحيح أو اتجاه هابط، ما يرفع مخاطر نجاح الاختراقات.",
@@ -1809,10 +1837,13 @@ class ScanController:
             }
         )
 
-        entry_ready = bool(
-            entry_confirmation_passed
-            and market_favorable
-            and plan.get("within_entry_range") is True
+        entry_ready = _entry_ready_from_plan(
+            tt_passed,
+            ad_acc,
+            earn_passed,
+            entry_confirmation_passed,
+            market_favorable,
+            plan,
         )
         if not setup_passed:
             card_status = "انتظار — مراقبة VCP أو Pullback"
@@ -2015,6 +2046,11 @@ class ScanController:
                             card, checked_at, reason, row=row, trend_failure=failure
                         )
                         try:
+                            history = self.storage.get_candles_df(stale_symbol)
+                            card["smart_reading"] = self._build_smart_reading_from_card(card, history)
+                        except Exception:
+                            log.exception("Failed to refresh smart reading for ineligible card %s", stale_symbol)
+                        try:
                             self.storage.save_watchlist_card(card)
                         except Exception:
                             log.exception("Failed to persist ineligible watchlist card for %s", stale_symbol)
@@ -2109,8 +2145,8 @@ class ScanController:
         with self._state_cv:
             self._cards.pop(clean, None)
             self._live_candles.pop(clean, None)
-            self._trade_count_sequences.pop(clean, None)
-            self._trade_count_sessions.pop(clean, None)
+            getattr(self, "_trade_count_sequences", {}).pop(clean, None)
+            getattr(self, "_trade_count_sessions", {}).pop(clean, None)
             self._latest_quote_timestamp.pop(clean, None)
             self._processed_quote_timestamp.pop(clean, None)
             getattr(self, "_live_volume_sequence", {}).pop(clean, None)
