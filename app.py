@@ -774,11 +774,9 @@ class ScanController:
             try:
                 # Watch Quote callbacks specifically: a live Trade stream must
                 # not conceal a stalled price-quote subscription.
-                per_symbol_activity = getattr(
-                    self.lb_client,
-                    "symbol_last_quote_monotonic",
-                    self.lb_client.symbol_last_message_monotonic,
-                )
+                per_symbol_activity = getattr(self.lb_client, "symbol_last_quote_monotonic", None)
+                if per_symbol_activity is None:
+                    per_symbol_activity = getattr(self.lb_client, "symbol_last_message_monotonic", {})
                 recovery_candidates: list[tuple[str, float | None]] = []
                 for symbol in symbols:
                     last_symbol_push = per_symbol_activity.get(symbol)
