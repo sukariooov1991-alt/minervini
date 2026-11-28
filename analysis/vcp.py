@@ -196,8 +196,8 @@ def check_breakout(
     pivot: float = None,
     volume_average_period: int = 50,
     min_volume_mult: float = 1.0,
-    min_close_pos: float = 0.65,
-    breakout_buffer_pct: float = 0.25,
+    min_close_pos: float | None = None,
+    breakout_buffer_pct: float = 0.0,
     require_vcp_structure: bool = True,
 ) -> bool:
     required = {"high", "low", "close", "volume"}
@@ -236,9 +236,20 @@ def check_breakout(
     # Minervini's stated baseline is volume above its own 50-day average;
     # larger surges are preferable but are not a universal +35% requirement.
     vol_ok = volume > avg_vol * min_volume_mult
-    candle_range = high - low
-    close_pos_ok = (
-        candle_range > 0 and ((close - low) / candle_range) >= min_close_pos
-    )
+    # The source requires price to clear the pivot on above-average volume.
+    # It does not prescribe a universal 0.25% buffer or a fixed candle-close
+    # position threshold. Keep both as optional research overrides only.
+    close_pos_ok = True
+    if min_close_pos is not None:
+        try:
+            threshold = float(min_close_pos)
+        except (TypeError, ValueError):
+            return False
+        if not np.isfinite(threshold) or not 0.0 <= threshold <= 1.0:
+            return False
+        candle_range = high - low
+        close_pos_ok = bool(
+            candle_range > 0 and ((close - low) / candle_range) >= threshold
+        )
 
     return bool(price_ok and vol_ok and close_pos_ok)
