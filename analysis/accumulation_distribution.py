@@ -80,9 +80,11 @@ def accumulation_distribution_summary(
     )
     # A positive infinite ratio means there was buying volume but no
     # down-day volume; treat that as strong accumulation, not invalid data.
+    # The source describes more up-volume than down-volume, not a fixed
+    # 1.25x premium. A ratio strictly above 1.0 expresses that comparison.
     ratio_is_strong = (
         (np.isfinite(up_down_ratio) or np.isposinf(up_down_ratio))
-        and up_down_ratio >= 1.25
+        and up_down_ratio > 1.0
     )
     acc_structural = bool(
         ratio_is_strong
