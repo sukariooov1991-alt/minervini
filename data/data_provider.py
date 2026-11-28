@@ -25,6 +25,8 @@ _YAHOO_NEXT_REQUEST_AT = 0.0
 _YAHOO_MIN_REQUEST_INTERVAL = 1.25
 _DAILY_HISTORY_LOCKS_GUARD = threading.Lock()
 _DAILY_HISTORY_LOCKS: dict[str, threading.Lock] = {}
+_RESEARCH_LOCKS_GUARD = threading.Lock()
+_RESEARCH_LOCKS: dict[str, threading.Lock] = {}
 
 
 def _daily_history_lock(symbol: str) -> threading.Lock:
@@ -32,6 +34,12 @@ def _daily_history_lock(symbol: str) -> threading.Lock:
     with _DAILY_HISTORY_LOCKS_GUARD:
         return _DAILY_HISTORY_LOCKS.setdefault(clean, threading.Lock())
 
+
+
+def _research_lock(symbol: str) -> threading.Lock:
+    clean = str(symbol).upper().strip()
+    with _RESEARCH_LOCKS_GUARD:
+        return _RESEARCH_LOCKS.setdefault(clean, threading.Lock())
 
 
 def _wait_for_yahoo_request_slot() -> None:
@@ -166,6 +174,10 @@ class DataProvider:
     def __init__(self, symbol: str, storage: StorageManager | None = None):
         self.symbol = symbol.upper().strip()
         self.storage = storage or StorageManager()
+        # The screener and background research scheduler share providers.
+        # Serialize cache-check/fetch/write per symbol to avoid duplicate Yahoo
+        # requests and racing cache/event updates across those threads.
+        self._research_lock = _research_lock(self.symbol)
         self.last_source: str | None = None
         try:
             import yfinance as yf
@@ -534,6 +546,10 @@ class DataProvider:
             self.storage.add_event(self.symbol, "earnings", event_date, payload)
 
     def get_fundamentals_dataframe(self) -> pd.DataFrame:
+        with self._research_lock:
+            return self._get_fundamentals_dataframe_locked()
+
+    def _get_fundamentals_dataframe_locked(self) -> pd.DataFrame:
         """Return cached quarterly fundamentals; cache empty responses briefly to avoid request storms."""
         cache_key = f"fundamentals:v2:{self.symbol}"
         failure_key = f"fundamentals_failure:v2:{self.symbol}"
@@ -670,6 +686,10 @@ class DataProvider:
         return pd.DataFrame(rows).sort_values("period", ascending=False).reset_index(drop=True)
 
     def fetch_and_store_news(self) -> list[dict[str, Any]]:
+        with self._research_lock:
+            return self._fetch_and_store_news_locked()
+
+    def _fetch_and_store_news_locked(self) -> list[dict[str, Any]]:
         """Return durable news; refresh from Yahoo at most every four hours."""
         cache_key = f"news:{self.symbol}"
         cached = self.storage.get_cache(cache_key)
