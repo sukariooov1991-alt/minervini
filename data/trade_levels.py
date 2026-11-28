@@ -15,6 +15,7 @@ import pandas as pd
 
 MAX_ENTRY_RANGE_PCT: float = 5.0
 MAX_INITIAL_STOP_LOSS_PCT: float = 10.0
+ATR_STOP_MULTIPLE: float = 2.0
 NUM_ZONES: int = 5
 
 
@@ -30,6 +31,7 @@ class TradeLevelsPlan:
     entry_zones: list[float]
     targets: list[float]
     shared_stop_loss: float | None
+    stop_source: str | None
     status: str
     notes: list[str]
 
@@ -45,6 +47,7 @@ class TradeLevelsPlan:
             "entry_zones": self.entry_zones,
             "targets": self.targets,
             "shared_stop_loss": self.shared_stop_loss,
+            "stop_source": self.stop_source,
             "status": self.status,
             "notes": self.notes,
         }
@@ -198,12 +201,16 @@ def default_shared_stop_loss(
     if anchor is None or not np.isfinite(anchor) or anchor <= 0:
         return None
 
-    # A valid stop must come from the actual setup's structural low.
-    # Do not substitute an ATR-derived stop when the setup has no structural
-    # invalidation point; such a trade plan remains incomplete.
-    if final_low is None or not np.isfinite(final_low) or not 0 < float(final_low) < anchor:
-        return None
-    stop_val = float(final_low)
+    # Prefer the setup's own structural invalidation low. If absent or
+    # unusable, use a transparent volatility fallback: 2 x Wilder ATR(14)
+    # below the setup pivot. This is a project setting, not a universal
+    # Minervini-prescribed ATR formula.
+    if final_low is not None and np.isfinite(final_low) and 0 < float(final_low) < anchor:
+        stop_val = float(final_low)
+    else:
+        if atr_val is None or not np.isfinite(atr_val) or float(atr_val) <= 0:
+            return None
+        stop_val = anchor - (ATR_STOP_MULTIPLE * float(atr_val))
 
     if not np.isfinite(stop_val) or stop_val <= 0:
         return None
@@ -262,6 +269,7 @@ def build_trade_levels(
             entry_zones=[],
             targets=[],
             shared_stop_loss=None,
+            stop_source=None,
             status="غير مكتمل — نقطة الارتكاز غير متوفرة",
             notes=notes,
         )
@@ -276,6 +284,14 @@ def build_trade_levels(
     stop_val = active_stop_calc(entry_zones, cur_p, piv_p, atr_val, daily_move, candles_df, low_p)
     shared_stop: float | None = (
         float(stop_val) if stop_val is not None and np.isfinite(stop_val) else None
+    )
+    structural_low_valid = bool(
+        low_p is not None and np.isfinite(low_p) and 0 < low_p < piv_p
+    )
+    stop_source = (
+        "structural" if shared_stop is not None and structural_low_valid
+        else "atr" if shared_stop is not None and not structural_low_valid
+        else None
     )
     if target_calculator is None:
         targets = [
@@ -327,16 +343,18 @@ def build_trade_levels(
         else:
             notes.append("يوجد هدف غير صالح أو لا يتجاوز منطقة دخوله.")
     if not stop_beyond_entries:
-        if low_p is None or (piv_p is not None and low_p >= piv_p):
-            notes.append("لا يوجد قاع هيكلي صالح للنموذج؛ لا يتم اختراع وقف خسارة بديل.")
+        if stop_source is None and (atr_val is None or not np.isfinite(atr_val) or float(atr_val) <= 0):
+            notes.append("لا يوجد قاع هيكلي صالح ولا تتوفر قيمة ATR صالحة؛ الفرصة تبقى معروضة لكن وقف الخسارة غير متاح.")
         else:
-            notes.append("وقف الخسارة غير صالح أو ليس أسفل جميع مناطق الدخول.")
+            notes.append("وقف الخسارة المحسوب غير صالح أو ليس أسفل جميع مناطق الدخول.")
     elif not stop_within_max_loss:
         notes.append(
             f"أعلى نسبة مخاطرة بين مناطق الدخول إلى الوقف تبلغ {stop_risk_pct:.2f}%؛ "
             f"تتجاوز الحد الأقصى {MAX_INITIAL_STOP_LOSS_PCT:.0f}% ولا تُعتمد الخطة."
         )
     status = "جاهز" if has_complete_levels else "غير مكتمل"
+    if stop_source == "atr":
+        notes.append(f"لا يوجد قاع هيكلي صالح؛ استُخدم وقف ATR بديل بمقدار {ATR_STOP_MULTIPLE:.1f} × ATR(14) أسفل نقطة الارتكاز.")
 
     return TradeLevelsPlan(
         symbol=symbol.upper().strip(),
@@ -349,6 +367,7 @@ def build_trade_levels(
         entry_zones=entry_zones,
         targets=targets,
         shared_stop_loss=shared_stop,
+        stop_source=stop_source,
         status=status,
         notes=notes,
     )
