@@ -52,6 +52,7 @@ class RealtimeCandleTests(unittest.TestCase):
         self.assertFalse(result["accumulation_passed"])
         self.assertTrue(result["earnings_passed"])
         self.assertEqual(result["last_scan_eligibility"], "FAIL")
+        self.assertEqual(result["current_eligibility"], "FAIL")
         self.assertIn("البطاقة محفوظة للمراقبة", result["status"])
         self.assertFalse(result["filters"][1]["passed"])
 
