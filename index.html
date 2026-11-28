@@ -212,15 +212,25 @@
       <button class="btn-scan" id="startBtn" onclick="startScan()">فحص</button>
       <button class="btn-stop" id="stopBtn" onclick="stopScan()">إيقاف الفحص</button>
     </div>
-    <section class="scan-progress" id="scanProgress" aria-live="polite">
+    <section class="scan-progress" id="marketProgress" aria-live="polite">
       <div class="scan-progress-top">
-        <strong id="scanMessage">الفحص قيد التجهيز</strong>
-        <strong id="scanPercent">0%</strong>
+        <strong>المرحلة الأولى: فحص السوق وجلب البيانات</strong>
+        <strong id="marketPercent">0%</strong>
       </div>
-      <div class="progress-track" role="progressbar" aria-label="تقدم الفحص" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="scanProgressTrack">
-        <div class="progress-fill" id="scanProgressFill"></div>
+      <div class="progress-track" role="progressbar" aria-label="تقدم فحص السوق وجلب البيانات" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="marketProgressTrack">
+        <div class="progress-fill" id="marketProgressFill"></div>
       </div>
-      <div class="scan-message" id="scanDetails">اضغط «فحص» لبدء فحص الأسهم على دفعات من خمسة.</div>
+      <div class="scan-message" id="marketDetails">بانتظار بدء فحص السوق...</div>
+    </section>
+    <section class="scan-progress" id="candidateProgress" aria-live="polite">
+      <div class="scan-progress-top">
+        <strong>المرحلة الثانية: تحليل الأسهم المرشحة</strong>
+        <strong id="candidatePercent">0%</strong>
+      </div>
+      <div class="progress-track" role="progressbar" aria-label="تقدم تحليل الأسهم المرشحة" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="candidateProgressTrack">
+        <div class="progress-fill" id="candidateProgressFill"></div>
+      </div>
+      <div class="scan-message" id="candidateDetails">بانتظار اكتمال المرحلة الأولى...</div>
       <div class="scan-errors" id="scanErrors" aria-live="polite"></div>
     </section>
     <div class="cards" id="cardsContainer"></div>
@@ -240,13 +250,16 @@
       if (scanProgressHideTimer) clearTimeout(scanProgressHideTimer);
       scanProgressHideTimer = null;
       scanProgressDismissedPhase = null;
-      const message = document.getElementById('scanMessage');
-      message.textContent = 'بدأ الفحص...';
-      document.getElementById('scanProgress').classList.add('visible');
-      document.getElementById('scanProgressFill').style.width = '0%';
-      document.getElementById('scanPercent').textContent = '0%';
-      document.getElementById('scanProgressTrack').setAttribute('aria-valuenow', '0');
-      document.getElementById('scanDetails').textContent = 'جارٍ تجهيز فحص السوق والبيانات...';
+      for (const id of ['marketProgress', 'candidateProgress']) {
+        document.getElementById(id).classList.add('visible');
+      }
+      for (const prefix of ['market', 'candidate']) {
+        document.getElementById(prefix + 'ProgressFill').style.width = '0%';
+        document.getElementById(prefix + 'Percent').textContent = '0%';
+        document.getElementById(prefix + 'ProgressTrack').setAttribute('aria-valuenow', '0');
+      }
+      document.getElementById('marketDetails').textContent = 'جارٍ تجهيز فحص السوق والبيانات...';
+      document.getElementById('candidateDetails').textContent = 'بانتظار اكتمال المرحلة الأولى...';
       document.getElementById('scanErrors').textContent = '';
       try {
         const response = await fetch('/api/scan/start', {
@@ -272,66 +285,57 @@
       }
     }
 
-    function renderScanProgress(data) {
-      const p = data.scan_progress || {};
-      const box = document.getElementById('scanProgress');
-      const terminal = ['completed', 'stopped', 'error'].includes(p.phase);
-      if (terminal && scanProgressDismissedPhase === p.phase) {
-        box.classList.remove('visible');
-        return;
-      }
-      const hasProgress = Boolean(data.running || (p.phase && p.phase !== 'idle'));
-      box.classList.toggle('visible', hasProgress);
-      if (!hasProgress) return;
+    function renderOneStageProgress(data, stage, prefix) {
+      const progressMap = data.scan_progress_by_stage || {};
+      const p = progressMap[stage] || ((data.scan_progress || {}).stage === stage ? data.scan_progress : {});
+      const box = document.getElementById(prefix + 'Progress');
+      const active = Boolean(data.running || (p.phase && p.phase !== 'idle'));
+      box.classList.toggle('visible', active);
+      if (!active) return;
 
+      const percent = Math.max(0, Math.min(100, Number(p.percent) || 0));
+      document.getElementById(prefix + 'ProgressFill').style.width = percent + '%';
+      document.getElementById(prefix + 'Percent').textContent = percent + '%';
+      document.getElementById(prefix + 'ProgressTrack').setAttribute('aria-valuenow', String(percent));
+
+      const total = Number(p.total) || 0;
+      const completed = Number(p.completed) || 0;
+      let details = completed + '/' + total;
+      if (p.batch) details += ' — الدفعة ' + p.batch;
+      if (p.batch_total) details += ' — إجمالي الدفعات: ' + p.batch_total;
+      if (p.current_symbol) details += ' — السهم: ' + p.current_symbol;
+      if (p.error) details += '\\nخطأ: ' + p.error;
+      if (stage === 'market_data' && percent >= 100) details = 'اكتمل فحص السوق وجلب البيانات — ' + details;
+      if (stage === 'candidate_analysis' && percent >= 100) details = 'اكتمل تحليل الأسهم المرشحة — ' + details;
+      document.getElementById(prefix + 'Details').textContent = details;
+    }
+
+    function renderMarketProgress(data) {
+      renderOneStageProgress(data, 'market_data', 'market');
+    }
+
+    function renderCandidateProgress(data) {
+      renderOneStageProgress(data, 'candidate_analysis', 'candidate');
+      const errors = Array.isArray(data.scan_errors) ? data.scan_errors : [];
+      document.getElementById('scanErrors').textContent =
+        errors.slice(-5).map(e => e.symbol + ' [' + e.phase + ']: ' + e.message).join('\\n');
+    }
+
+    function renderScanProgress(data) {
+      renderMarketProgress(data);
+      renderCandidateProgress(data);
+      const p = data.scan_progress || {};
+      const terminal = ['completed', 'stopped', 'error'].includes(p.phase);
       if (!terminal) {
         if (scanProgressHideTimer) clearTimeout(scanProgressHideTimer);
         scanProgressHideTimer = null;
         scanProgressDismissedPhase = null;
+        return;
       }
-
-      const percent = Math.max(0, Math.min(100, Number(p.percent) || 0));
-      document.getElementById('scanProgressFill').style.width = percent + '%';
-      document.getElementById('scanPercent').textContent = percent + '%';
-      document.getElementById('scanProgressTrack').setAttribute('aria-valuenow', String(percent));
-      const labels = {
-        starting: 'بدأ الفحص...',
-        'فحص السوق وجلب البيانات': 'جارٍ فحص السوق وجلب بيانات الأسهم...',
-        'خطأ أثناء تحميل البيانات': 'تعذر تحميل بيانات سهم؛ يستمر الفحص لبقية الأسهم',
-        'اكتمل فحص السوق وجلب البيانات': 'تم الانتهاء من فحص السوق وجلب البيانات',
-        'تحليل الأسهم المرشحة': 'جارٍ تحليل الأسهم المرشحة...',
-        'خطأ في البيانات الأساسية': 'تعذر جلب بعض البيانات الأساسية؛ يستمر التحليل',
-        'خطأ أثناء تحليل السهم': 'حدث خطأ في تحليل سهم؛ يستمر الفحص',
-        'اكتمل تحليل الأسهم المرشحة': 'انتهى تحليل الأسهم بنجاح',
-        completed: 'انتهى الفحص بنجاح',
-        stopped: 'تم إيقاف الفحص',
-        error: 'انتهى الفحص مع وجود خطأ'
-      };
-      document.getElementById('scanMessage').textContent =
-        labels[p.phase] || (data.running ? 'الفحص جارٍ...' : 'انتهى الفحص');
-
-      const total = Number(p.total) || 0;
-      const completed = Number(p.completed) || 0;
-      let details = '';
-      if (p.stage === 'market_data') {
-        details = 'فحص السوق وجلب البيانات: ' + completed + '/' + total;
-      } else if (p.stage === 'candidate_analysis') {
-        details = 'تحليل الأسهم المرشحة: ' + completed + '/' + total;
-      }
-      if (p.batch) details += (details ? ' — ' : '') + 'الدفعة ' + p.batch;
-      if (p.batch_total) details += ' — إجمالي الدفعات: ' + p.batch_total;
-      if (p.current_symbol) details += (details ? ' — ' : '') + 'السهم: ' + p.current_symbol;
-      if (p.error) details += (details ? '\n' : '') + 'خطأ: ' + p.error;
-      document.getElementById('scanDetails').textContent = details;
-
-      const errors = Array.isArray(data.scan_errors) ? data.scan_errors : [];
-      document.getElementById('scanErrors').textContent =
-        errors.slice(-5).map(e => e.symbol + ' [' + e.phase + ']: ' + e.message).join('\n');
-
-      if (terminal && !scanProgressHideTimer) {
+      if (!scanProgressHideTimer) {
         scanProgressHideTimer = setTimeout(() => {
-          scanProgressDismissedPhase = p.phase;
-          box.classList.remove('visible');
+          document.getElementById('marketProgress').classList.remove('visible');
+          document.getElementById('candidateProgress').classList.remove('visible');
           scanProgressHideTimer = null;
         }, 2500);
       }
