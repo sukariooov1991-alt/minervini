@@ -77,7 +77,7 @@ class LongbridgeQuoteTests(unittest.TestCase):
         self.assertEqual(payload["trade_session"], "pre-market")
 
 
-    def test_trade_push_forwards_the_latest_execution_as_a_price_tick(self):
+    def test_trade_push_forwards_latest_execution_and_batch_count(self):
         captured = {}
 
         class FakeConfig:
@@ -126,6 +126,8 @@ class LongbridgeQuoteTests(unittest.TestCase):
         self.assertEqual(payload["sequence"], 777)
         self.assertEqual(payload["trade_session"], "pre-market")
         self.assertEqual(payload["source"], "longbridge_trade_websocket")
+        self.assertEqual(payload["trade_count_delta"], 2)
+        self.assertEqual(payload["trade_count_sequence"], 777)
         self.assertIsNone(payload["volume"])
 
     def test_volume_only_push_is_forwarded_without_inventing_a_price(self):
