@@ -2298,7 +2298,7 @@ class ScanController:
                 "market_status": self._market_status,
                 "last_error": self._last_error,
                 "scan_progress": self._scan_progress,
-                "scan_progress_by_stage": copy.deepcopy(self._scan_progress_by_stage),
+                "scan_progress_by_stage": copy.deepcopy(getattr(self, "_scan_progress_by_stage", {})),
                 "scan_errors": list(self._scan_errors),
                 # Nested filter rows/lists are mutated by realtime workers;
                 # return detached card snapshots before Flask serializes them.
