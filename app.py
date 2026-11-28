@@ -541,6 +541,7 @@ class ScanController:
             # A restored card's persisted WebSocket timestamp is historical,
             # not proof that a live quote is still arriving after restart.
             "price_source": "Stored daily data (Daily Close)",
+            "price_feed_source": None,
             "price_session": "daily-close",
             "price_timestamp": None,
             "price_received_at": None,
@@ -810,6 +811,10 @@ class ScanController:
                 # observation; preserve the timestamp of the last actual price.
                 "price_received_at": (
                     received_at if is_price_tick else previous_meta.get("price_received_at")
+                ),
+                "price_feed_source": (
+                    quote.get("source", "longbridge_websocket")
+                    if is_price_tick else previous_meta.get("price_feed_source")
                 ),
             }
             # Volume-only Quote pushes may update volume, but they do not
@@ -1281,6 +1286,10 @@ class ScanController:
                         "price_received_at": (
                             received_at if is_price_tick else card.get("price_received_at")
                         ),
+                        "price_feed_source": (
+                            quote.get("source", "longbridge_websocket")
+                            if is_price_tick else card.get("price_feed_source")
+                        ),
                         "pivot_price": plan["pivot_price"],
                         "final_low": plan["final_low"],
                         "entry_zones": plan["entry_zones"],
@@ -1369,6 +1378,7 @@ class ScanController:
                         card["current_price"] = round(price, 4)
                         if is_price_tick:
                             card["price_source"] = "Longbridge WebSocket"
+                            card["price_feed_source"] = quote.get("source", "longbridge_websocket")
                         if is_price_tick:
                             card["price_session"] = (
                                 quote.get("trade_session")
@@ -1614,7 +1624,7 @@ class ScanController:
         )
         live_quote_metadata = {
             key: existing_card.get(key)
-            for key in ("price_session", "price_timestamp", "price_received_at", "price_tag")
+            for key in ("price_session", "price_timestamp", "price_received_at", "price_tag", "price_feed_source")
             if existing_card.get(key) is not None
         }
 
@@ -1679,6 +1689,7 @@ class ScanController:
             "symbol": sym,
             "current_price": round(current_price, 4),
             "price_source": price_source,
+            "price_feed_source": live_quote_metadata.get("price_feed_source") if live_p is not None else None,
             "price_session": live_quote_metadata.get("price_session", "regular") if live_p is not None else "daily-close",
             "price_timestamp": live_quote_metadata.get("price_timestamp") if live_p is not None else None,
             "price_received_at": live_quote_metadata.get("price_received_at") if live_p is not None else None,
